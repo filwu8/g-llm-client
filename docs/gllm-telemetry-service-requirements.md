@@ -13,21 +13,21 @@
 - 可与现有 G-LLM 管理后台共用服务器和数据库。
 - 不建议放在 `https://llm.gprophet.com/v1` 下，避免和模型网关职责混在一起。
 
-## 客户端已约定的上报地址
+## 客户端当前默认上报地址
 
 ```text
-POST https://telemetry.gprophet.com/v1/events
+POST https://llm.gprophet.com/v1/events
 ```
 
-开发环境可通过环境变量覆盖：
+后续如果独立统计服务部署到推荐域名，可以通过构建或运行环境变量切换：
 
 ```text
-GLLM_TELEMETRY_ENDPOINT=http://localhost:3000/v1/events
+GLLM_TELEMETRY_ENDPOINT=https://telemetry.gprophet.com/v1/events
 ```
 
 ## 上报开关
 
-客户端默认关闭匿名统计。用户在设置页开启后才会上报。
+客户端默认开启匿名统计。用户可以在设置页关闭，关闭后客户端不再发送后续匿名统计事件。
 
 服务端无需保存用户个人身份，只保存 `installation_id` 作为匿名安装 ID，用于统计装机和活跃。
 

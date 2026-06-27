@@ -68,6 +68,15 @@ function getAppBuildCode(): string {
   }
 }
 
+function canOpenExternalUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url)
+    return ['http:', 'https:', 'mailto:'].includes(parsed.protocol)
+  } catch {
+    return false
+  }
+}
+
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
     width: 1280,
@@ -90,7 +99,9 @@ function createWindow(): void {
   mainWindow.setMenuBarVisibility(false)
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url)
+    if (canOpenExternalUrl(url)) {
+      void shell.openExternal(url)
+    }
     return { action: 'deny' }
   })
 
