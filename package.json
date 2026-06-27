@@ -3,9 +3,10 @@
   "version": "1.0.0",
   "description": "WujiJie / G-LLM desktop client",
   "main": "./out/main/index.js",
-  "author": "GPROPHET LIMITED",
+  "author": "GPROPHET LIMITED <licensing@gprophet.com>",
   "license": "AGPL-3.0-only",
   "homepage": "https://llm.gprophet.com",
+  "desktopName": "G-LLM",
   "private": true,
   "type": "module",
   "scripts": {
@@ -88,6 +89,7 @@
     "linux": {
       "icon": "build/icon.png",
       "category": "Utility",
+      "syncDesktopName": true,
       "target": [
         "AppImage",
         "deb"
