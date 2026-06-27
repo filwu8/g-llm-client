@@ -1,0 +1,20 @@
+﻿G-LLM User Agreement
+
+Welcome to G-LLM. This software is a local AI desktop client for connecting your configured model providers, managing assistants, conversations, attachments, local knowledge base and long-term memory.
+
+1. Local data
+Your conversations, assistant configuration, local knowledge base, long-term memory and provider settings are stored locally on this device by default. In standard mode, data is stored in the Windows user data directory. In portable mode, data is stored in the UserData folder under the installation directory. Please back up important data and keep your API keys safe.
+
+2. Model providers
+The software sends your messages, parsed attachment content and necessary context to the model provider you choose. Data processing by each provider is governed by that provider's own terms and policies. Do not upload or send content you are not authorized to process.
+
+3. User responsibility
+AI output may contain errors, omissions or outdated information. For medical, legal, financial, engineering or other high-risk scenarios, consult qualified professionals or authoritative sources.
+
+4. Anonymous usage statistics
+Anonymous usage statistics are enabled by default to help us understand version activity, feature usage and error categories. They do not include chat content, API keys, uploaded file content or knowledge base content. You can turn this off at any time in Provider Settings.
+
+5. Updates and uninstalling
+In standard mode, uninstalling the application does not delete user data by default. In portable mode, data is stored with the installation folder. Before moving or deleting that folder, make sure the UserData folder has been backed up if needed.
+
+By clicking "I Agree" or continuing installation, you confirm that you have read and accepted this agreement.
