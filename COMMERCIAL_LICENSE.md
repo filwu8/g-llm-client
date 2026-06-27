@@ -1,6 +1,6 @@
 # G-LLM Commercial Licensing
 
-This document explains the licensing model for G-LLM Desktop Client. It is a practical business summary, not a replacement for the full license text or legal advice.
+This document explains the licensing model for G-LLM Desktop Client, published by GPROPHET LIMITED. It is a practical business summary, not a replacement for the full license text or legal advice.
 
 ## Community License
 
@@ -19,7 +19,7 @@ See [LICENSE](./LICENSE) for the full license text.
 
 ## Commercial License
 
-If you want to use G-LLM Desktop Client without AGPL obligations, you need a separate commercial license from the copyright holder.
+If you want to use G-LLM Desktop Client without AGPL obligations, you need a separate commercial license from GPROPHET LIMITED or another authorized copyright holder.
 
 Typical cases that require a commercial license include:
 
@@ -57,14 +57,23 @@ See [TRADEMARKS.md](./TRADEMARKS.md) for brand usage rules.
 For commercial licensing, OEM cooperation, enterprise deployment, or white-label authorization, contact the project owner:
 
 ```text
-G-LLM / WujiJie
+GPROPHET LIMITED
+Email: licensing@gprophet.com
 Website: https://llm.gprophet.com/
 ```
 
 ## Chinese Summary
 
-G-LLM 桌面客户端社区版采用 AGPL-3.0-only 许可证。你可以商用、修改和分发，但必须遵守 AGPL 的开源义务。
+G-LLM 桌面客户端由 GPROPHET LIMITED 发布。社区版采用 AGPL-3.0-only 许可证。你可以商用、修改和分发，但必须遵守 AGPL 的开源义务。
 
-如果你希望闭源分发、白标改造、嵌入自有商业产品、向客户交付私有定制版，或不希望承担 AGPL 的源码开放义务，需要向版权方取得单独的商业授权。
+如果你希望闭源分发、白标改造、嵌入自有商业产品、向客户交付私有定制版，或不希望承担 AGPL 的源码开放义务，需要向 GPROPHET LIMITED 或其他授权版权方取得单独的商业授权。
 
 AGPL 许可证不自动授权使用 "G-LLM"、"WujiJie"、"无极界" 及相关 Logo、品牌、商标或官方服务。
+
+商业授权、OEM 合作、企业部署、白标授权请联系：
+
+```text
+GPROPHET LIMITED
+Email: licensing@gprophet.com
+Website: https://llm.gprophet.com/
+```

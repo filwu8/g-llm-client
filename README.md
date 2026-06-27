@@ -1,5 +1,7 @@
 # 无极界 / G-LLM Client
 
+[简体中文](./README.md) | [English](./README.en-US.md)
+
 当前版本：V1.0（1.0.0）
 
 G-LLM 自有桌面客户端，从零开发。当前阶段聚焦“助手优先”的使用体验：用户打开客户端后先选择或创建适合场景的助手，再开始对话。
@@ -71,10 +73,18 @@ Authorization: Bearer {apiKey}
 
 ## License
 
-G-LLM Desktop Client 社区版采用 [AGPL-3.0-only](./LICENSE) 许可证。
+G-LLM Desktop Client 由 GPROPHET LIMITED 发布，社区版采用 [AGPL-3.0-only](./LICENSE) 许可证。
 
 你可以在遵守 AGPL-3.0-only 的前提下使用、修改、分发和商用本项目。若你希望闭源分发、白标改造、嵌入商业产品、交付私有定制版，或免除 AGPL 的源码开放义务，需要取得单独的商业授权。
 
 商业授权说明见 [COMMERCIAL_LICENSE.md](./COMMERCIAL_LICENSE.md)。
+
+商业授权、OEM 合作、企业部署、白标授权请联系：
+
+```text
+GPROPHET LIMITED
+Email: licensing@gprophet.com
+Website: https://llm.gprophet.com/
+```
 
 源码许可证不自动授权使用 "G-LLM"、"WujiJie"、"无极界" 及相关 Logo、图标、宣传语或品牌资产。品牌和商标使用规则见 [TRADEMARKS.md](./TRADEMARKS.md)。

@@ -1,10 +1,10 @@
 # Trademark and Brand Policy
 
-This project contains source code licensed under AGPL-3.0-only. The license to the source code does not grant a license to use G-LLM brand assets.
+This project contains source code licensed under AGPL-3.0-only. The license to the source code does not grant a license to use G-LLM brand assets owned or controlled by GPROPHET LIMITED.
 
 ## Protected Brand Assets
 
-The following names, marks, and assets are reserved by the project owner:
+The following names, marks, and assets are reserved by GPROPHET LIMITED:
 
 - G-LLM
 - WujiJie
@@ -49,14 +49,23 @@ White-label use, OEM distribution, joint branding, or use of official G-LLM bran
 Contact:
 
 ```text
-G-LLM / WujiJie
+GPROPHET LIMITED
+Email: licensing@gprophet.com
 Website: https://llm.gprophet.com/
 ```
 
 ## 中文说明
 
-本仓库源码采用 AGPL-3.0-only 许可证，但源码许可证不等于品牌、商标、Logo 授权。
+本仓库源码采用 AGPL-3.0-only 许可证，但源码许可证不等于品牌、商标、Logo 授权。G-LLM、WujiJie、无极界及相关品牌资产由 GPROPHET LIMITED 保留权利。
 
 未经书面授权，不得使用 "G-LLM"、"WujiJie"、"无极界" 或相关 Logo、图标、宣传语、视觉资产发布修改版、白标版、商业发行版或对外服务。
 
 如果你基于本项目进行二次开发和分发，请使用自己的产品名称和 Logo，并清楚说明该版本是基于 G-LLM 开源项目的衍生版本。
+
+品牌授权、白标合作或联合品牌使用请联系：
+
+```text
+GPROPHET LIMITED
+Email: licensing@gprophet.com
+Website: https://llm.gprophet.com/
+```
