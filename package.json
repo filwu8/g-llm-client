@@ -4,6 +4,7 @@
   "description": "WujiJie / G-LLM desktop client",
   "main": "./out/main/index.js",
   "author": "G-LLM",
+  "license": "AGPL-3.0-only",
   "homepage": "https://g-llm.com",
   "private": true,
   "type": "module",

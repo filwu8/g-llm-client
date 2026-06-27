@@ -68,3 +68,13 @@ Authorization: Bearer {apiKey}
 ```
 
 兼容标准 OpenAI `/models` 返回格式，也兼容简单字符串数组。
+
+## License
+
+G-LLM Desktop Client 社区版采用 [AGPL-3.0-only](./LICENSE) 许可证。
+
+你可以在遵守 AGPL-3.0-only 的前提下使用、修改、分发和商用本项目。若你希望闭源分发、白标改造、嵌入商业产品、交付私有定制版，或免除 AGPL 的源码开放义务，需要取得单独的商业授权。
+
+商业授权说明见 [COMMERCIAL_LICENSE.md](./COMMERCIAL_LICENSE.md)。
+
+源码许可证不自动授权使用 "G-LLM"、"WujiJie"、"无极界" 及相关 Logo、图标、宣传语或品牌资产。品牌和商标使用规则见 [TRADEMARKS.md](./TRADEMARKS.md)。
