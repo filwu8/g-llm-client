@@ -86,6 +86,11 @@ button {
   height: 50px;
 }
 
+.mac-window .brand {
+  padding-left: 64px;
+  -webkit-app-region: drag;
+}
+
 .brand .icon-button {
   margin-left: auto;
 }
@@ -350,6 +355,21 @@ button {
   gap: 18px;
   border-bottom: 1px solid #dfe7e3;
   padding: 16px 28px;
+}
+
+.mac-window.boot,
+.mac-window .topbar {
+  -webkit-app-region: drag;
+}
+
+.mac-window button,
+.mac-window input,
+.mac-window select,
+.mac-window textarea,
+.mac-window a,
+.mac-window label,
+.mac-window [role='button'] {
+  -webkit-app-region: no-drag;
 }
 
 .topbar-left {

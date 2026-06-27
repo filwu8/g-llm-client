@@ -23,6 +23,7 @@ import type {
 } from '../shared/types'
 
 const api = {
+  platform: process.platform,
   getState: (): Promise<AppStateSnapshot> => ipcRenderer.invoke('app:get-state'),
   saveSettings: (settings: AppSettings): Promise<AppSettings> => ipcRenderer.invoke('settings:save', settings),
   saveProvider: (provider: ApiProvider): Promise<ApiProvider> => ipcRenderer.invoke('provider:save', provider),

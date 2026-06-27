@@ -13,8 +13,8 @@
     "build": "tsc --noEmit && electron-vite build",
     "preview": "electron-vite preview",
     "package:win": "pnpm build && electron-builder --win --x64 --publish never",
-    "package:mac": "npm run build && electron-builder --mac --arm64 --x64",
-    "package:linux": "npm run build && electron-builder --linux --x64"
+    "package:mac": "pnpm build && electron-builder --mac --arm64 --x64 --publish never",
+    "package:linux": "pnpm build && electron-builder --linux --x64 --publish never"
   },
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",
@@ -82,9 +82,11 @@
       "deleteAppDataOnUninstall": false
     },
     "mac": {
+      "icon": "build/icon.icns",
       "category": "public.app-category.productivity"
     },
     "linux": {
+      "icon": "build/icon.png",
       "category": "Utility",
       "target": [
         "AppImage",

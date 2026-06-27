@@ -584,6 +584,7 @@ function getEffectiveProvider(
 }
 
 export default function App() {
+  const isMac = window.gllm.platform === 'darwin'
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const [providers, setProviders] = useState<ApiProvider[]>([DEFAULT_PROVIDER])
   const [assistants, setAssistants] = useState<Assistant[]>(DEFAULT_ASSISTANTS)
@@ -1362,14 +1363,16 @@ export default function App() {
 
   if (!settings) {
     return (
-      <div className="boot">
+      <div className={`boot ${isMac ? 'mac-window' : ''}`}>
         <img src={logo} alt="G-LLM" />
       </div>
     )
   }
 
   return (
-    <div className={`app-shell ${railCollapsed ? 'rail-collapsed' : ''} ${historyCollapsed ? 'history-collapsed' : ''}`}>
+    <div
+      className={`app-shell ${isMac ? 'mac-window' : ''} ${railCollapsed ? 'rail-collapsed' : ''} ${historyCollapsed ? 'history-collapsed' : ''}`}
+    >
       {!railCollapsed && (
         <aside className="rail">
           <div className="brand">
