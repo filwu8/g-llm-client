@@ -54,10 +54,9 @@ import {
   useRef,
   useState
 } from 'react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
 
 import logo from './assets/gllm-logo.png'
+import { MarkdownMessage } from './MarkdownMessage'
 import {
   ASSISTANT_PRESET_CATEGORIES,
   findAssistantPreset,
@@ -549,23 +548,6 @@ function getComparableProvider(provider: ApiProvider) {
   }
 }
 
-function MarkdownMessage({ content }: { content: string }) {
-  return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      components={{
-        a: ({ children, ...props }) => (
-          <a {...props} target="_blank" rel="noreferrer">
-            {children}
-          </a>
-        )
-      }}
-    >
-      {content}
-    </ReactMarkdown>
-  )
-}
-
 function getEffectiveProvider(
   selection: Pick<Assistant | Conversation, 'modelProviderId' | 'modelId'>,
   fallbackProvider: ApiProvider,
@@ -593,7 +575,6 @@ export default function App() {
   const [memories, setMemories] = useState<AssistantMemory[]>([])
   const [tools, setTools] = useState<ToolConfig[]>([])
   const [appVersion, setAppVersion] = useState('1.0.0')
-  const [appBuildCode, setAppBuildCode] = useState('')
   const [dataLocation, setDataLocation] = useState<DataLocationInfo | null>(null)
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
   const [activeAssistantId, setActiveAssistantId] = useState(DEFAULT_ASSISTANTS[0].id)
@@ -689,7 +670,6 @@ export default function App() {
       const nextProviders = state.providers.length > 0 ? state.providers : [DEFAULT_PROVIDER]
       const provider = getProviderById(state.settings.activeProviderId, nextProviders)
       setAppVersion(state.appVersion || '1.0.0')
-      setAppBuildCode(state.appBuildCode || '')
       setDataLocation(state.dataLocation)
       setSettings(state.settings)
       setProviders(nextProviders)
@@ -755,6 +735,27 @@ export default function App() {
     })
     return unsubscribe
   }, [])
+
+  useEffect(() => {
+    return window.gllm.onConversationChanged((change) => {
+      setConversations(change.conversations)
+      if (change.action === 'deleted') {
+        setActiveConversationId((current) => {
+          if (current !== change.conversationId) return current
+
+          const next = change.conversations.find((conversation) => conversation.assistantId === activeAssistantId)
+          return next?.id ?? null
+        })
+        return
+      }
+
+      const changedConversation = change.conversations.find((conversation) => conversation.id === change.conversationId)
+      if (changedConversation) {
+        setActiveAssistantId(changedConversation.assistantId)
+      }
+      setActiveConversationId(change.conversationId)
+    })
+  }, [activeAssistantId])
 
   useEffect(() => {
     if (!selectionMenu) return
@@ -1897,7 +1898,6 @@ export default function App() {
       {settingsOpen && (
         <SettingsPanel
           appVersion={appVersion}
-          appBuildCode={appBuildCode}
           dataLocation={dataLocation}
           settings={settings}
           providers={providers}
@@ -3135,7 +3135,6 @@ function AddProviderDialog({
 
 function SettingsPanel({
   appVersion,
-  appBuildCode,
   dataLocation,
   settings,
   providers,
@@ -3148,7 +3147,6 @@ function SettingsPanel({
   onDataLocationChange
 }: {
   appVersion: string
-  appBuildCode: string
   dataLocation: DataLocationInfo | null
   settings: AppSettings
   providers: ApiProvider[]
@@ -3478,9 +3476,6 @@ function SettingsPanel({
                   </button>
                 ))}
               </div>
-              <div className="settings-footer-meta provider-version-meta">
-                <strong>版本 V{appVersion.split('.').slice(0, 2).join('.')}（{appBuildCode || '构建中'}）</strong>
-              </div>
             </div>
 
             <div className="provider-form">
@@ -3801,7 +3796,7 @@ function SettingsPanel({
               </p>
               <div className="about-system-meta">
                 <span>版本</span>
-                <strong>V{appVersion.split('.').slice(0, 2).join('.')}（{appBuildCode || '构建中'}）</strong>
+                <strong>V{appVersion}</strong>
               </div>
             </section>
 

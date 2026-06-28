@@ -285,6 +285,12 @@ export interface ChatChunk {
   error?: string
 }
 
+export interface ConversationChangeEvent {
+  action: 'saved' | 'deleted'
+  conversationId: string
+  conversations: Conversation[]
+}
+
 export interface AppStateSnapshot {
   appVersion: string
   appBuildCode: string

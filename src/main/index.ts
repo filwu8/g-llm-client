@@ -110,6 +110,8 @@ function registerExternalLinkHandler(window: BrowserWindow): void {
 }
 
 function createWindow(): BrowserWindow {
+  quickWindow?.hide()
+
   if (mainWindow && !mainWindow.isDestroyed()) {
     if (mainWindow.isMinimized()) mainWindow.restore()
     mainWindow.show()
@@ -216,6 +218,10 @@ function createQuickWindow(anchorBounds?: Rectangle): BrowserWindow {
 }
 
 function showQuickWindow(anchorBounds?: Rectangle): void {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.hide()
+  }
+
   const window = createQuickWindow(anchorBounds)
   window.setBounds(getQuickWindowBounds(anchorBounds), false)
   window.show()
@@ -269,6 +275,18 @@ function broadcastActiveAssistantChange(): void {
   for (const window of BrowserWindow.getAllWindows()) {
     if (!window.isDestroyed()) {
       window.webContents.send('assistant:active-changed', activeAssistantId)
+    }
+  }
+}
+
+function broadcastConversationChange(conversationId: string, action: 'saved' | 'deleted'): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) {
+      window.webContents.send('conversation:changed', {
+        action,
+        conversationId,
+        conversations: getConversations()
+      })
     }
   }
 }
@@ -434,8 +452,15 @@ app.whenReady().then(() => {
   ipcMain.handle('assistant:save', (_, assistant) => saveAssistant(assistant))
   ipcMain.handle('assistant:delete', (_, id: string) => deleteAssistant(id))
   ipcMain.handle('assistant:suggest', (_, request) => generateAssistantSuggestion(request))
-  ipcMain.handle('conversation:save', (_, conversation) => saveConversation(conversation))
-  ipcMain.handle('conversation:delete', (_, id: string) => deleteConversation(id))
+  ipcMain.handle('conversation:save', (_, conversation) => {
+    const saved = saveConversation(conversation)
+    broadcastConversationChange(saved.id, 'saved')
+    return saved
+  })
+  ipcMain.handle('conversation:delete', (_, id: string) => {
+    deleteConversation(id)
+    broadcastConversationChange(id, 'deleted')
+  })
   ipcMain.handle('note:save', (_, note) => saveNote(note))
   ipcMain.handle('note:delete', (_, id: string) => deleteNote(id))
   ipcMain.handle('memory:save', (_, memory) => saveMemory(memory))

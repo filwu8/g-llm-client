@@ -13,6 +13,7 @@ import type {
   ChatRequest,
   ClipboardAttachmentInput,
   Conversation,
+  ConversationChangeEvent,
   DataArchiveResult,
   DataLocationChangeResult,
   DataLocationInfo,
@@ -71,6 +72,11 @@ const api = {
     const handler = (_event: Electron.IpcRendererEvent, chunk: ChatChunk) => listener(chunk)
     ipcRenderer.on('chat:chunk', handler)
     return () => ipcRenderer.removeListener('chat:chunk', handler)
+  },
+  onConversationChanged: (listener: (event: ConversationChangeEvent) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, change: ConversationChangeEvent) => listener(change)
+    ipcRenderer.on('conversation:changed', handler)
+    return () => ipcRenderer.removeListener('conversation:changed', handler)
   }
 }
 

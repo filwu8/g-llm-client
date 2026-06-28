@@ -1,12 +1,13 @@
-import { ArrowUp, ExternalLink, MessageSquarePlus, Settings, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, ExternalLink, MessageSquarePlus, Settings, X } from 'lucide-react'
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
 
 import logo from './assets/gllm-logo.png'
+import { MarkdownMessage } from './MarkdownMessage'
 import { DEFAULT_ASSISTANTS, getAssistantById } from '@shared/assistants'
 import { DEFAULT_PROVIDER, getProviderById } from '@shared/providers'
 import type { ApiProvider, AppSettings, Assistant, AssistantMemory, ChatChunk, ChatMessage, Conversation } from '@shared/types'
+
+const quickBottomFollowThreshold = 72
 
 function createId(prefix: string): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2)}`
@@ -91,16 +92,12 @@ function applyChatChunk(conversation: Conversation, chunk: ChatChunk): Conversat
   }
 }
 
-function getLatestQuickConversation(conversations: Conversation[], assistantId: string): Conversation | null {
+function getLatestAssistantConversation(conversations: Conversation[], assistantId: string): Conversation | null {
   return (
     conversations
-      .filter((conversation) => conversation.assistantId === assistantId && conversation.title.startsWith('快速对话'))
+      .filter((conversation) => conversation.assistantId === assistantId)
       .sort((first, second) => second.updatedAt - first.updatedAt)[0] ?? null
   )
-}
-
-function QuickMarkdown({ content }: { content: string }) {
-  return <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
 }
 
 export default function QuickChat() {
@@ -114,6 +111,8 @@ export default function QuickChat() {
   const [draft, setDraft] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
   const [status, setStatus] = useState('')
+  const [autoFollowMessages, setAutoFollowMessages] = useState(true)
+  const [isNearMessageBottom, setIsNearMessageBottom] = useState(true)
   const messagesRef = useRef<HTMLDivElement>(null)
   const conversationRef = useRef<Conversation | null>(null)
 
@@ -141,7 +140,7 @@ export default function QuickChat() {
       setConversations(state.conversations)
       setMemories(state.memories ?? [])
       setActiveAssistantId(quickAssistant.id)
-      setConversation(getLatestQuickConversation(state.conversations, quickAssistant.id))
+      setConversation(getLatestAssistantConversation(state.conversations, quickAssistant.id))
     })
   }, [])
 
@@ -155,12 +154,38 @@ export default function QuickChat() {
 
   useEffect(() => {
     if (isStreaming) return
-    setConversation(getLatestQuickConversation(conversations, assistant.id))
+    setConversation(getLatestAssistantConversation(conversations, assistant.id))
   }, [assistant.id, conversations, isStreaming])
+
+  useEffect(() => {
+    return window.gllm.onConversationChanged((change) => {
+      setConversations(change.conversations)
+      setConversation((current) => {
+        if (change.action === 'deleted' && current?.id === change.conversationId) {
+          return getLatestAssistantConversation(change.conversations, assistant.id)
+        }
+
+        const updated = change.conversations.find((item) => item.id === (current?.id ?? change.conversationId))
+        if (updated) return updated
+
+        if (!current || current.id === change.conversationId) {
+          return getLatestAssistantConversation(change.conversations, assistant.id)
+        }
+
+        return current
+      })
+    })
+  }, [assistant.id])
 
   useEffect(() => {
     conversationRef.current = conversation
   }, [conversation])
+
+  useEffect(() => {
+    setAutoFollowMessages(true)
+    setIsNearMessageBottom(true)
+    window.requestAnimationFrame(() => scrollToLatest('auto'))
+  }, [conversation?.id])
 
   useEffect(() => {
     const unsubscribe = window.gllm.onChatChunk((chunk) => {
@@ -186,10 +211,31 @@ export default function QuickChat() {
   }, [])
 
   useEffect(() => {
+    if (!autoFollowMessages) return
     const container = messagesRef.current
     if (!container) return
-    container.scrollTo({ top: container.scrollHeight, behavior: isStreaming ? 'auto' : 'smooth' })
-  }, [isStreaming, messages.length, messages.at(-1)?.content])
+    window.requestAnimationFrame(() => scrollToLatest(isStreaming ? 'auto' : 'smooth'))
+  }, [autoFollowMessages, isStreaming, messages.length, messages.at(-1)?.content])
+
+  function getDistanceToMessageBottom() {
+    const container = messagesRef.current
+    if (!container) return 0
+    return container.scrollHeight - container.scrollTop - container.clientHeight
+  }
+
+  function updateMessageScrollState() {
+    const isNearBottom = getDistanceToMessageBottom() <= quickBottomFollowThreshold
+    setIsNearMessageBottom(isNearBottom)
+    setAutoFollowMessages(isNearBottom)
+  }
+
+  function scrollToLatest(behavior: ScrollBehavior = 'smooth') {
+    const container = messagesRef.current
+    if (!container) return
+    container.scrollTo({ top: container.scrollHeight, behavior })
+    setIsNearMessageBottom(true)
+    setAutoFollowMessages(true)
+  }
 
   async function openMainWindow() {
     await window.gllm.showMainWindow()
@@ -272,7 +318,7 @@ export default function QuickChat() {
         </div>
       </header>
 
-      <main className="quick-content" ref={messagesRef}>
+      <main className="quick-content" ref={messagesRef} onScroll={updateMessageScrollState}>
         {messages.length === 0 ? (
           <section className="quick-empty">
             <p><span>你好</span></p>
@@ -289,7 +335,7 @@ export default function QuickChat() {
           messages.map((message) => (
             <article key={message.id} className={`quick-message ${message.role}`}>
               <div className="quick-message-bubble">
-                <QuickMarkdown content={message.content || (message.role === 'assistant' ? '正在思考...' : '')} />
+                <MarkdownMessage content={message.content || (message.role === 'assistant' ? '正在思考...' : '')} />
               </div>
             </article>
           ))
@@ -304,6 +350,13 @@ export default function QuickChat() {
           </article>
         )}
       </main>
+
+      {messages.length > 0 && !isNearMessageBottom && (
+        <button className="quick-scroll-latest-button" type="button" onClick={() => scrollToLatest('smooth')}>
+          <ArrowDown size={15} />
+          <span>{isStreaming ? 'AI 正在回复' : '回到底部'}</span>
+        </button>
+      )}
 
       {status && (
         <div className="quick-status">

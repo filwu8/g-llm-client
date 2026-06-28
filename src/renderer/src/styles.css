@@ -782,6 +782,46 @@ button {
   font-weight: 700;
 }
 
+.mermaid-diagram-shell {
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid #d8e2de;
+  border-radius: 8px;
+  background: #fbfdfc;
+  padding: 12px;
+}
+
+.mermaid-diagram-shell.loading {
+  min-height: 120px;
+}
+
+.mermaid-diagram-shell.failed {
+  display: grid;
+  gap: 8px;
+  border-color: #f1c6c6;
+  background: #fff7f7;
+}
+
+.mermaid-diagram-shell.failed pre {
+  margin: 0;
+}
+
+.mermaid-diagram-shell.failed small {
+  color: #9f3434;
+  font-size: 12px;
+  white-space: normal;
+}
+
+.mermaid-diagram {
+  min-width: max-content;
+}
+
+.mermaid-diagram svg {
+  display: block;
+  max-width: none;
+  height: auto;
+}
+
 .message.user .markdown-body blockquote {
   border-left-color: #bfcac5;
   color: #4f5b56;
@@ -2904,30 +2944,6 @@ button {
   padding-top: 14px;
 }
 
-.settings-footer-meta {
-  display: flex;
-  width: 100%;
-  min-height: 24px;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 14px;
-  color: #66736f;
-  line-height: 1.35;
-}
-
-.settings-footer-meta strong {
-  color: #25302c;
-  font-size: 13px;
-  font-weight: 700;
-  text-align: left;
-  white-space: nowrap;
-}
-
-.provider-version-meta {
-  border-top: 1px solid #dfe7e3;
-  padding: 12px 2px 0;
-}
-
 .provider-footer-actions {
   display: grid;
   width: 100%;
@@ -4316,7 +4332,9 @@ button {
 .quick-message-bubble p,
 .quick-message-bubble ul,
 .quick-message-bubble ol,
-.quick-message-bubble pre {
+.quick-message-bubble pre,
+.quick-message-bubble table,
+.quick-message-bubble .mermaid-diagram-shell {
   margin: 0 0 10px;
 }
 
@@ -4348,6 +4366,59 @@ button {
 .quick-message-bubble pre code {
   background: transparent;
   padding: 0;
+}
+
+.quick-message-bubble table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+
+.quick-message-bubble th,
+.quick-message-bubble td {
+  border: 1px solid #d8e2de;
+  padding: 7px 9px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.quick-message-bubble th {
+  background: #f1f6f4;
+  font-weight: 700;
+}
+
+.quick-message-bubble .mermaid-diagram-shell {
+  background: #fbfdfc;
+}
+
+.quick-scroll-latest-button {
+  position: fixed;
+  left: 50%;
+  bottom: 112px;
+  z-index: 20;
+  display: inline-flex;
+  height: 34px;
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid #d8e2de;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.96);
+  box-shadow: 0 10px 28px rgb(16 20 24 / 0.14);
+  color: #31403a;
+  font-size: 13px;
+  font-weight: 650;
+  padding: 0 13px;
+  transform: translateX(-50%);
+  backdrop-filter: blur(8px);
+}
+
+.quick-scroll-latest-button:hover {
+  border-color: #1ea896;
+  background: #f7fbfa;
+  color: #0f766e;
 }
 
 .quick-thinking {
