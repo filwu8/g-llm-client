@@ -50,13 +50,16 @@
     },
     "extraResources": [
       {
-        "from": "resources",
-        "to": "resources"
+        "from": "resources/app-icon.png",
+        "to": "resources/app-icon.png"
+      },
+      {
+        "from": "resources/tray-icon-template.png",
+        "to": "resources/tray-icon-template.png"
       }
     ],
     "files": [
-      "out/**/*",
-      "resources/**/*"
+      "out/**/*"
     ],
     "artifactName": "G-LLM-Setup-${version}-${arch}.${ext}",
     "win": {

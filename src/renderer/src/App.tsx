@@ -711,6 +711,10 @@ export default function App() {
   }, [])
 
   useEffect(() => {
+    void window.gllm.setActiveAssistantId(activeAssistantId)
+  }, [activeAssistantId])
+
+  useEffect(() => {
     const unsubscribe = window.gllm.onChatChunk((chunk) => {
       setConversations((current) => {
         let updatedConversation: Conversation | null = null

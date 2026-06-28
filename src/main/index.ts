@@ -1,5 +1,5 @@
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
-import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, screen, shell, Tray, type Rectangle } from 'electron'
 import { statSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -45,6 +45,16 @@ function getAppIconPath(): string {
   return is.dev ? join(process.cwd(), 'resources/app-icon.png') : join(process.resourcesPath, 'resources/app-icon.png')
 }
 
+function getTrayIconPath(): string {
+  return is.dev ? join(process.cwd(), 'resources/tray-icon-template.png') : join(process.resourcesPath, 'resources/tray-icon-template.png')
+}
+
+let mainWindow: BrowserWindow | null = null
+let quickWindow: BrowserWindow | null = null
+let tray: Tray | null = null
+let isQuitting = false
+let activeAssistantId = 'general'
+
 function formatBuildCode(date: Date): string {
   const parts = [
     date.getFullYear() % 100,
@@ -77,8 +87,37 @@ function canOpenExternalUrl(url: string): boolean {
   }
 }
 
-function createWindow(): void {
-  const mainWindow = new BrowserWindow({
+function loadRenderer(window: BrowserWindow, hash?: string): void {
+  if (is.dev && process.env.ELECTRON_RENDERER_URL) {
+    const url = hash ? `${process.env.ELECTRON_RENDERER_URL}#${hash}` : process.env.ELECTRON_RENDERER_URL
+    void window.loadURL(url)
+  } else {
+    if (hash) {
+      void window.loadFile(join(__dirname, '../renderer/index.html'), { hash })
+    } else {
+      void window.loadFile(join(__dirname, '../renderer/index.html'))
+    }
+  }
+}
+
+function registerExternalLinkHandler(window: BrowserWindow): void {
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    if (canOpenExternalUrl(url)) {
+      void shell.openExternal(url)
+    }
+    return { action: 'deny' }
+  })
+}
+
+function createWindow(): BrowserWindow {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.show()
+    mainWindow.focus()
+    return mainWindow
+  }
+
+  mainWindow = new BrowserWindow({
     width: 1280,
     height: 820,
     minWidth: 980,
@@ -97,18 +136,140 @@ function createWindow(): void {
 
   mainWindow.setMenu(null)
   mainWindow.setMenuBarVisibility(false)
-
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (canOpenExternalUrl(url)) {
-      void shell.openExternal(url)
-    }
-    return { action: 'deny' }
+  mainWindow.on('closed', () => {
+    mainWindow = null
   })
 
-  if (is.dev && process.env.ELECTRON_RENDERER_URL) {
-    void mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
-  } else {
-    void mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+  registerExternalLinkHandler(mainWindow)
+  loadRenderer(mainWindow)
+  return mainWindow
+}
+
+function getQuickWindowBounds(anchorBounds?: Rectangle): Rectangle {
+  const width = 760
+  const height = 680
+  const display = anchorBounds
+    ? screen.getDisplayNearestPoint({
+        x: Math.round(anchorBounds.x + anchorBounds.width / 2),
+        y: Math.round(anchorBounds.y + anchorBounds.height / 2)
+      })
+    : screen.getPrimaryDisplay()
+  const workArea = display.workArea
+  const preferredX = anchorBounds ? Math.round(anchorBounds.x + anchorBounds.width / 2 - width / 2) : Math.round(workArea.x + (workArea.width - width) / 2)
+  const x = Math.min(Math.max(preferredX, workArea.x + 10), workArea.x + workArea.width - width - 10)
+  const y = anchorBounds ? Math.min(anchorBounds.y + anchorBounds.height + 8, workArea.y + workArea.height - height - 10) : Math.round(workArea.y + 40)
+
+  return {
+    x,
+    y: Math.max(y, workArea.y + 8),
+    width,
+    height
+  }
+}
+
+function createQuickWindow(anchorBounds?: Rectangle): BrowserWindow {
+  if (quickWindow && !quickWindow.isDestroyed()) {
+    quickWindow.setBounds(getQuickWindowBounds(anchorBounds), false)
+    return quickWindow
+  }
+
+  quickWindow = new BrowserWindow({
+    ...getQuickWindowBounds(anchorBounds),
+    show: false,
+    frame: false,
+    resizable: false,
+    movable: true,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    hasShadow: true,
+    transparent: true,
+    title: 'G-LLM 快速对话',
+    backgroundColor: '#00000000',
+    icon: getAppIconPath(),
+    vibrancy: process.platform === 'darwin' ? 'under-window' : undefined,
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.mjs'),
+      sandbox: false,
+      contextIsolation: true
+    }
+  })
+
+  quickWindow.setMenu(null)
+  quickWindow.setMenuBarVisibility(false)
+  quickWindow.setAlwaysOnTop(true, 'floating')
+  quickWindow.on('close', (event) => {
+    if (!isQuitting) {
+      event.preventDefault()
+      quickWindow?.hide()
+    }
+  })
+  quickWindow.on('closed', () => {
+    quickWindow = null
+  })
+
+  registerExternalLinkHandler(quickWindow)
+  loadRenderer(quickWindow, 'quick')
+  return quickWindow
+}
+
+function showQuickWindow(anchorBounds?: Rectangle): void {
+  const window = createQuickWindow(anchorBounds)
+  window.setBounds(getQuickWindowBounds(anchorBounds), false)
+  window.show()
+  window.focus()
+}
+
+function toggleQuickWindow(anchorBounds?: Rectangle): void {
+  if (quickWindow?.isVisible()) {
+    quickWindow.hide()
+    return
+  }
+
+  showQuickWindow(anchorBounds)
+}
+
+function handleTrayClick(anchorBounds?: Rectangle): void {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    quickWindow?.hide()
+    createWindow()
+    return
+  }
+
+  toggleQuickWindow(anchorBounds)
+}
+
+function setupTray(): void {
+  if (process.platform !== 'darwin' || tray) return
+
+  const icon = nativeImage.createFromPath(getTrayIconPath()).resize({ height: 19, quality: 'best' })
+  icon.setTemplateImage(true)
+  tray = new Tray(icon)
+  tray.setToolTip('G-LLM 快速对话')
+  tray.on('click', (_, bounds) => handleTrayClick(bounds))
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: '打开快速对话', click: () => showQuickWindow(tray?.getBounds()) },
+      { label: '打开主窗口', click: () => createWindow() },
+      { type: 'separator' },
+      {
+        label: '退出 G-LLM',
+        click: () => {
+          isQuitting = true
+          app.quit()
+        }
+      }
+    ])
+  )
+}
+
+function broadcastActiveAssistantChange(): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) {
+      window.webContents.send('assistant:active-changed', activeAssistantId)
+    }
   }
 }
 
@@ -213,6 +374,21 @@ app.whenReady().then(() => {
     app.relaunch()
     app.exit(0)
   })
+  ipcMain.handle('app:show-main-window', () => {
+    createWindow()
+  })
+  ipcMain.handle('app:hide-quick-panel', () => {
+    quickWindow?.hide()
+  })
+  ipcMain.handle('assistant:get-active', () => activeAssistantId)
+  ipcMain.handle('assistant:set-active', (_, id: string) => {
+    const nextId = id.trim()
+    if (!nextId || nextId === activeAssistantId) return activeAssistantId
+
+    activeAssistantId = nextId
+    broadcastActiveAssistantChange()
+    return activeAssistantId
+  })
 
   ipcMain.handle('settings:save', async (_, settings) => {
     const previous = getSettings()
@@ -312,12 +488,17 @@ app.whenReady().then(() => {
     }
   })
 
+  setupTray()
   createWindow()
   void trackTelemetryEvent('app_started')
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    createWindow()
   })
+})
+
+app.on('before-quit', () => {
+  isQuitting = true
 })
 
 app.on('window-all-closed', () => {

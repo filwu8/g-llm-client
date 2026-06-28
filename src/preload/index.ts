@@ -57,7 +57,16 @@ const api = {
   exportDataArchive: (): Promise<DataArchiveResult | null> => ipcRenderer.invoke('storage:export-data-archive'),
   importDataArchive: (): Promise<DataArchiveResult | null> => ipcRenderer.invoke('storage:import-data-archive'),
   relaunchApp: (): Promise<void> => ipcRenderer.invoke('app:relaunch'),
+  showMainWindow: (): Promise<void> => ipcRenderer.invoke('app:show-main-window'),
+  hideQuickPanel: (): Promise<void> => ipcRenderer.invoke('app:hide-quick-panel'),
+  getActiveAssistantId: (): Promise<string> => ipcRenderer.invoke('assistant:get-active'),
+  setActiveAssistantId: (id: string): Promise<string> => ipcRenderer.invoke('assistant:set-active', id),
   streamChat: (request: ChatRequest): void => ipcRenderer.send('chat:stream', request),
+  onActiveAssistantChanged: (listener: (id: string) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, id: string) => listener(id)
+    ipcRenderer.on('assistant:active-changed', handler)
+    return () => ipcRenderer.removeListener('assistant:active-changed', handler)
+  },
   onChatChunk: (listener: (chunk: ChatChunk) => void): (() => void) => {
     const handler = (_event: Electron.IpcRendererEvent, chunk: ChatChunk) => listener(chunk)
     ipcRenderer.on('chat:chunk', handler)
