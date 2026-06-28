@@ -154,7 +154,8 @@ export function getModelCapabilities(providerOrModel: ApiProvider | string): Mod
 
 export function getAttachmentSupportLabel(attachment: PreparedAttachment, capabilities: ModelCapabilities): string {
   if (attachment.kind === 'image') {
-    return capabilities.imageInput ? '模型可识别图片' : '当前模型可能不支持图片理解'
+    if (!attachment.dataUrl) return '图片过大或读取失败，无法直接识别'
+    return capabilities.imageInput ? '模型可识别图片' : '将尝试作为视觉输入发送'
   }
 
   if (attachment.text) return '已抽取文本'

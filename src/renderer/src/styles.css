@@ -3085,6 +3085,7 @@ button {
   padding-right: 2px;
 }
 
+.personalization-settings-panel,
 .storage-settings-panel,
 .about-settings-panel {
   display: flex;
@@ -3803,6 +3804,78 @@ button {
   display: grid;
   gap: 10px;
   margin-bottom: 18px;
+}
+
+.preference-section {
+  display: grid;
+  gap: 14px;
+  border: 1px solid #d8e2de;
+  border-radius: 8px;
+  background: #fff;
+  margin-bottom: 18px;
+  padding: 12px;
+}
+
+.preference-section .data-location-head > span {
+  display: inline-flex;
+  height: 30px;
+  align-items: center;
+  border-radius: 999px;
+  background: #e8f8f4;
+  color: #04786f;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+.shortcut-option-list {
+  display: grid;
+  gap: 10px;
+}
+
+.shortcut-option {
+  display: grid !important;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: flex-start;
+  gap: 10px !important;
+  cursor: pointer;
+  border: 1px solid #d8e2de;
+  border-radius: 8px;
+  background: #fbfcfb;
+  margin: 0 !important;
+  padding: 12px;
+}
+
+.shortcut-option:hover,
+.shortcut-option.active {
+  border-color: #96d9ce;
+  background: #f2fbf8;
+}
+
+.shortcut-option input {
+  width: 16px !important;
+  height: 16px;
+  margin-top: 2px;
+}
+
+.shortcut-option span,
+.shortcut-option strong,
+.shortcut-option small {
+  display: block;
+  min-width: 0;
+}
+
+.shortcut-option strong {
+  color: #20262b;
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+
+.shortcut-option small {
+  color: #64706c;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .privacy-section {

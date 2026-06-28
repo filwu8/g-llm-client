@@ -56,6 +56,7 @@ import {
 } from 'react'
 
 import logo from './assets/gllm-logo.png'
+import { getMessageSendShortcutLabel, shouldSendMessageFromKeyboard } from './keyboard'
 import { MarkdownMessage } from './MarkdownMessage'
 import {
   ASSISTANT_PRESET_CATEGORIES,
@@ -146,13 +147,36 @@ interface SelectionContextMenu {
   text: string
 }
 
-type SettingsTab = 'providers' | 'storage' | 'about'
+type SettingsTab = 'providers' | 'personalization' | 'storage' | 'about'
 
 const settingsTabs: Array<{ id: SettingsTab; label: string }> = [
   { id: 'providers', label: '模型供应商设置' },
+  { id: 'personalization', label: '个性设置' },
   { id: 'storage', label: '数据存储设置' },
   { id: 'about', label: '关于本系统' }
 ]
+
+function ModalBackdrop({
+  className = 'assistant-modal-backdrop',
+  closeOnBackdropClick = true,
+  children,
+  onClose
+}: {
+  className?: string
+  closeOnBackdropClick?: boolean
+  children: ReactNode
+  onClose: () => void
+}) {
+  return (
+    <div className={className} onClick={closeOnBackdropClick ? onClose : undefined}>
+      {children}
+    </div>
+  )
+}
+
+function stopModalClick(event: ReactMouseEvent) {
+  event.stopPropagation()
+}
 
 function createId(prefix: string): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2)}`
@@ -522,6 +546,7 @@ function getComparableSettings(settings: AppSettings) {
     enableTemperature: settings.enableTemperature,
     maxTokens: Number(settings.maxTokens),
     enableMaxTokens: settings.enableMaxTokens,
+    messageSendShortcut: settings.messageSendShortcut,
     telemetryEnabled: settings.telemetryEnabled,
     setupCompleted: settings.setupCompleted
   }
@@ -634,6 +659,8 @@ export default function App() {
   const showScrollToLatest = Boolean(activeConversation?.messages.length && !isNearMessageBottom)
   const waitingForAssistantResponse = Boolean(isStreaming && activeConversation?.messages.at(-1)?.role === 'user')
   const modelCapabilities = useMemo(() => getModelCapabilities(conversationProvider), [conversationProvider])
+  const messageSendShortcut = settings?.messageSendShortcut ?? 'enter'
+  const messageSendShortcutLabel = getMessageSendShortcutLabel(messageSendShortcut)
   const activeAssistantNotes = useMemo(
     () => notes.filter((note) => note.assistantId === activeAssistant.id),
     [activeAssistant.id, notes]
@@ -839,14 +866,13 @@ export default function App() {
       if (picked.length === 0) return
 
       setPendingAttachments((current) => [...current, ...picked].slice(0, 8))
-      const unsupportedImageCount = picked.filter((attachment) => attachment.kind === 'image' && !modelCapabilities.imageInput).length
       const unreadableCount = picked.filter((attachment) => attachment.kind === 'file' && !attachment.text).length
       const imageWithoutDataCount = picked.filter((attachment) => attachment.kind === 'image' && !attachment.dataUrl).length
 
-      if (unsupportedImageCount) {
-        showToolNotice('已添加图片，但当前模型可能不支持图片理解，请切换视觉模型')
-      } else if (unreadableCount || imageWithoutDataCount) {
-        showToolNotice('已添加附件；部分文件过大或格式暂不能解析正文')
+      if (imageWithoutDataCount) {
+        showToolNotice('已添加附件；部分图片过大或读取失败，无法直接识别')
+      } else if (unreadableCount) {
+        showToolNotice('已添加附件；部分文件暂不能解析正文')
       } else {
         showToolNotice(`已添加 ${picked.length} 个附件`)
       }
@@ -892,11 +918,14 @@ export default function App() {
       setPendingAttachments((current) => [...current, ...pasted].slice(0, 8))
       const imageCount = pasted.filter((attachment) => attachment.kind === 'image').length
       const unreadableCount = pasted.filter((attachment) => attachment.kind === 'file' && !attachment.text).length
+      const imageWithoutDataCount = pasted.filter((attachment) => attachment.kind === 'image' && !attachment.dataUrl).length
 
-      if (imageCount > 0 && !modelCapabilities.imageInput) {
-        showToolNotice('已从剪贴板添加图片，但当前模型可能不支持图片理解')
+      if (imageWithoutDataCount > 0) {
+        showToolNotice('已从剪贴板添加附件；部分图片过大或读取失败，无法直接识别')
       } else if (unreadableCount > 0) {
         showToolNotice('已从剪贴板添加附件；部分文件暂不能解析正文')
+      } else if (imageCount > 0) {
+        showToolNotice(`已从剪贴板添加 ${pasted.length} 个附件，图片会作为视觉输入发送`)
       } else {
         showToolNotice(`已从剪贴板添加 ${pasted.length} 个附件`)
       }
@@ -960,7 +989,7 @@ export default function App() {
       }
 
       setPendingAttachments((current) => [...current, screenshot].slice(0, 8))
-      showToolNotice(modelCapabilities.imageInput ? '已添加截图' : '已添加截图，但当前模型可能不支持图片理解')
+      showToolNotice(screenshot.dataUrl ? '已添加截图，发送时会作为视觉输入' : '已添加截图，但图片数据读取失败，无法直接识别')
     } catch (error) {
       showToolNotice(error instanceof Error ? error.message : '截图失败')
     } finally {
@@ -1747,7 +1776,7 @@ export default function App() {
                 {pendingAttachments.map((attachment) => (
                   <span
                     key={attachment.id}
-                    className={`attachment-chip ${attachment.kind === 'image' && !modelCapabilities.imageInput ? 'warning' : ''}`}
+                    className={`attachment-chip ${attachment.kind === 'image' && !attachment.dataUrl ? 'warning' : ''}`}
                     title={`${attachment.name} · ${formatAttachmentSize(attachment.size)} · ${getAttachmentSupportLabel(attachment, modelCapabilities)}`}
                   >
                     {attachment.kind === 'image' ? <ImagePlus size={14} /> : <Paperclip size={14} />}
@@ -1778,7 +1807,7 @@ export default function App() {
                 onChange={(event) => setDraft(event.target.value)}
                 onPaste={(event) => void handleComposerPaste(event)}
                 onKeyDown={(event) => {
-                  if (event.key === 'Enter' && !event.shiftKey) {
+                  if (shouldSendMessageFromKeyboard(event, messageSendShortcut)) {
                     event.preventDefault()
                     sendMessage()
                   }
@@ -1792,7 +1821,7 @@ export default function App() {
                   (!draft.trim() && pendingAttachments.length === 0 && pendingQuoteRefs.length === 0 && pendingKnowledgeRefs.length === 0) ||
                   isStreaming
                 }
-                title="发送"
+                title={`发送（${messageSendShortcutLabel}）`}
               >
                 <Send size={18} />
               </button>
@@ -2308,8 +2337,8 @@ function AddAssistantDialog({
   }
 
   return (
-    <div className="assistant-modal-backdrop">
-      <section className="add-assistant-modal">
+    <ModalBackdrop onClose={onClose}>
+      <section className="add-assistant-modal" onClick={stopModalClick}>
         <header>
           <div>
             <p>G-LLM</p>
@@ -2411,7 +2440,7 @@ function AddAssistantDialog({
 
         {assistantStatus && <div className="assistant-status">{assistantStatus}</div>}
       </section>
-    </div>
+    </ModalBackdrop>
   )
 }
 
@@ -2631,8 +2660,8 @@ function KnowledgeBaseDialog({
   }
 
   return (
-    <div className="assistant-modal-backdrop">
-      <section className="knowledge-modal">
+    <ModalBackdrop onClose={onClose}>
+      <section className="knowledge-modal" onClick={stopModalClick}>
         <header>
           <div>
             <p>{assistant.name}</p>
@@ -2743,7 +2772,7 @@ function KnowledgeBaseDialog({
         )}
         {status && <div className="assistant-status">{status}</div>}
       </section>
-    </div>
+    </ModalBackdrop>
   )
 }
 
@@ -2841,8 +2870,8 @@ function ToolConfigDialog({
   }
 
   return (
-    <div className="assistant-modal-backdrop">
-      <section className="tool-center-modal">
+    <ModalBackdrop onClose={onClose}>
+      <section className="tool-center-modal" onClick={stopModalClick}>
         <header>
           <div>
             <p>无极界</p>
@@ -2922,7 +2951,7 @@ function ToolConfigDialog({
 
         {status && <div className="assistant-status">{status}</div>}
       </section>
-    </div>
+    </ModalBackdrop>
   )
 }
 
@@ -3004,8 +3033,8 @@ function AddProviderDialog({
   const hasVisibleTemplates = PROVIDER_TEMPLATES.some(matchesTemplate)
 
   return (
-    <div className="provider-add-backdrop">
-      <section className="provider-add-modal">
+    <ModalBackdrop className="provider-add-backdrop" onClose={onClose}>
+      <section className="provider-add-modal" onClick={stopModalClick}>
         <header>
           <div>
             <p>G-LLM</p>
@@ -3129,7 +3158,7 @@ function AddProviderDialog({
           </div>
         </div>
       </section>
-    </div>
+    </ModalBackdrop>
   )
 }
 
@@ -3682,6 +3711,61 @@ function SettingsPanel({
                   </button>
                 </div>
               </div>
+            </div>
+          </div>
+        )}
+
+        {activeSettingsTab === 'personalization' && (
+          <div className="settings-tab-panel personalization-settings-panel">
+            <section className="preference-section">
+              <div className="data-location-head">
+                <div>
+                  <strong>消息发送方式</strong>
+                  <small>用于主窗口和小窗口输入框。中文输入法正在组词时，回车只确认输入，不会发送消息。</small>
+                </div>
+                <span>{getMessageSendShortcutLabel(settingsDraft.messageSendShortcut)}</span>
+              </div>
+
+              <div className="shortcut-option-list">
+                <label className={`shortcut-option ${settingsDraft.messageSendShortcut === 'enter' ? 'active' : ''}`}>
+                  <input
+                    checked={settingsDraft.messageSendShortcut === 'enter'}
+                    name="message-send-shortcut"
+                    type="radio"
+                    value="enter"
+                    onChange={() => setSettingsDraft({ ...settingsDraft, messageSendShortcut: 'enter' })}
+                  />
+                  <span>
+                    <strong>按 Enter 发送</strong>
+                    <small>适合短消息和快速问答；需要换行时按 Shift + Enter。</small>
+                  </span>
+                </label>
+
+                <label className={`shortcut-option ${settingsDraft.messageSendShortcut === 'ctrl-enter' ? 'active' : ''}`}>
+                  <input
+                    checked={settingsDraft.messageSendShortcut === 'ctrl-enter'}
+                    name="message-send-shortcut"
+                    type="radio"
+                    value="ctrl-enter"
+                    onChange={() => setSettingsDraft({ ...settingsDraft, messageSendShortcut: 'ctrl-enter' })}
+                  />
+                  <span>
+                    <strong>按 Ctrl + Enter 发送</strong>
+                    <small>适合长文本编辑；普通 Enter 保留为换行，macOS 也支持 Command + Enter。</small>
+                  </span>
+                </label>
+              </div>
+            </section>
+
+            <div className="form-actions settings-panel-actions">
+              <button className="secondary-action" onClick={onClose} type="button">
+                <X size={17} />
+                不保存关闭
+              </button>
+              <button className="primary-action" disabled={!configChanged} onClick={saveAll} type="button">
+                <Save size={17} />
+                保存配置
+              </button>
             </div>
           </div>
         )}

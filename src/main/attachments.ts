@@ -1,6 +1,6 @@
 import type { BrowserWindow } from 'electron'
 import { dialog } from 'electron'
-import { DOMMatrix, ImageData, Path2D } from '@napi-rs/canvas'
+import { createCanvas, DOMMatrix, ImageData, loadImage, Path2D } from '@napi-rs/canvas'
 import mammoth from 'mammoth'
 import { readFile, stat } from 'node:fs/promises'
 import { basename, extname } from 'node:path'
@@ -10,6 +10,8 @@ import type { AttachmentKind, ClipboardAttachmentInput, PreparedAttachment } fro
 const maxTextBytes = 2 * 1024 * 1024
 const maxDocumentBytes = 12 * 1024 * 1024
 const maxImageBytes = 8 * 1024 * 1024
+const maxImageSide = 2048
+const sendableImageMimeTypes = new Set(['image/png', 'image/jpeg', 'image/webp'])
 
 const textExtensions = new Set([
   '.txt',
@@ -109,6 +111,70 @@ function normalizeText(text: string): string {
   return text.replace(/\u0000/g, '').slice(0, 40_000)
 }
 
+function normalizeImageMimeType(mimeType: string): string {
+  return mimeType === 'image/jpg' ? 'image/jpeg' : mimeType
+}
+
+async function compressImageForVision(buffer: Buffer): Promise<{ dataUrl: string; mimeType: string; size: number }> {
+  const image = await loadImage(buffer)
+  const sourceWidth = Math.max(1, image.width)
+  const sourceHeight = Math.max(1, image.height)
+  let targetSide = Math.min(maxImageSide, Math.max(sourceWidth, sourceHeight))
+  let quality = 0.88
+  let best: Buffer | null = null
+
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const scale = Math.min(1, targetSide / Math.max(sourceWidth, sourceHeight))
+    const width = Math.max(1, Math.round(sourceWidth * scale))
+    const height = Math.max(1, Math.round(sourceHeight * scale))
+    const canvas = createCanvas(width, height)
+    const context = canvas.getContext('2d')
+
+    context.fillStyle = '#fff'
+    context.fillRect(0, 0, width, height)
+    context.imageSmoothingEnabled = true
+    context.imageSmoothingQuality = 'high'
+    context.drawImage(image, 0, 0, width, height)
+
+    const output = canvas.toBuffer('image/jpeg', quality)
+    if (!best || output.length < best.length) best = output
+    if (output.length <= maxImageBytes) {
+      return {
+        dataUrl: `data:image/jpeg;base64,${output.toString('base64')}`,
+        mimeType: 'image/jpeg',
+        size: output.length
+      }
+    }
+
+    if (quality > 0.62) {
+      quality -= 0.1
+    } else {
+      targetSide = Math.max(768, Math.floor(targetSide * 0.75))
+      quality = 0.82
+    }
+  }
+
+  if (!best) throw new Error('图片压缩失败')
+  return {
+    dataUrl: `data:image/jpeg;base64,${best.toString('base64')}`,
+    mimeType: 'image/jpeg',
+    size: best.length
+  }
+}
+
+async function prepareImageForVision(buffer: Buffer, mimeType: string): Promise<{ dataUrl: string; mimeType: string; size: number }> {
+  const normalizedMimeType = normalizeImageMimeType(mimeType)
+  if (buffer.length <= maxImageBytes && sendableImageMimeTypes.has(normalizedMimeType)) {
+    return {
+      dataUrl: `data:${normalizedMimeType};base64,${buffer.toString('base64')}`,
+      mimeType: normalizedMimeType,
+      size: buffer.length
+    }
+  }
+
+  return compressImageForVision(buffer)
+}
+
 async function readPdfText(filePath: string): Promise<string> {
   const buffer = await readFile(filePath)
   const { PDFParse } = await loadPdfParse()
@@ -153,6 +219,20 @@ function parseDataUrl(dataUrl?: string): Buffer | null {
   return match[2] ? Buffer.from(payload, 'base64') : Buffer.from(decodeURIComponent(payload), 'utf8')
 }
 
+function getMimeTypeFromDataUrl(dataUrl: string, fallbackMimeType: string): string {
+  return normalizeImageMimeType(dataUrl.match(/^data:([^;,]+)?[;,]/)?.[1] || fallbackMimeType)
+}
+
+export async function prepareImageDataUrlForVision(
+  dataUrl: string,
+  fallbackMimeType = 'image/png'
+): Promise<{ dataUrl: string; mimeType: string; size: number } | null> {
+  const buffer = parseDataUrl(dataUrl)
+  if (!buffer) return null
+
+  return prepareImageForVision(buffer, getMimeTypeFromDataUrl(dataUrl, fallbackMimeType)).catch(() => null)
+}
+
 async function readAttachment(filePath: string, kind: AttachmentKind): Promise<PreparedAttachment> {
   const fileStat = await stat(filePath)
   const extension = extname(filePath).toLowerCase()
@@ -167,11 +247,14 @@ async function readAttachment(filePath: string, kind: AttachmentKind): Promise<P
   }
 
   if (actualKind === 'image') {
-    if (fileStat.size > maxImageBytes) return base
     const buffer = await readFile(filePath)
+    const image = await prepareImageForVision(buffer, mimeType).catch(() => null)
+    if (!image) return base
     return {
       ...base,
-      dataUrl: `data:${mimeType};base64,${buffer.toString('base64')}`
+      mimeType: image.mimeType,
+      size: image.size,
+      dataUrl: image.dataUrl
     }
   }
 
@@ -224,10 +307,14 @@ async function prepareClipboardAttachment(input: ClipboardAttachmentInput, index
   }
 
   if (actualKind === 'image') {
-    if (!input.dataUrl || size > maxImageBytes) return base
+    if (!buffer) return base
+    const image = await prepareImageForVision(buffer, mimeType).catch(() => null)
+    if (!image) return base
     return {
       ...base,
-      dataUrl: input.dataUrl
+      mimeType: image.mimeType,
+      size: image.size,
+      dataUrl: image.dataUrl
     }
   }
 

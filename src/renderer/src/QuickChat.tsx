@@ -2,6 +2,7 @@ import { ArrowDown, ArrowUp, ExternalLink, MessageSquarePlus, Settings, X } from
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react'
 
 import logo from './assets/gllm-logo.png'
+import { getMessageSendShortcutLabel, shouldSendMessageFromKeyboard } from './keyboard'
 import { MarkdownMessage } from './MarkdownMessage'
 import { DEFAULT_ASSISTANTS, getAssistantById } from '@shared/assistants'
 import { DEFAULT_PROVIDER, getProviderById } from '@shared/providers'
@@ -126,6 +127,8 @@ export default function QuickChat() {
     [providers, settings]
   )
   const needsApiKey = Boolean(settings && provider.requiresApiKey && !provider.apiKey.trim())
+  const messageSendShortcut = settings?.messageSendShortcut ?? 'enter'
+  const messageSendShortcutLabel = getMessageSendShortcutLabel(messageSendShortcut)
   const messages = conversation?.messages ?? []
 
   useEffect(() => {
@@ -287,7 +290,7 @@ export default function QuickChat() {
   }
 
   function handleDraftKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key !== 'Enter' || event.shiftKey) return
+    if (!shouldSendMessageFromKeyboard(event, messageSendShortcut)) return
     event.preventDefault()
     sendMessage()
   }
@@ -382,7 +385,7 @@ export default function QuickChat() {
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={handleDraftKeyDown}
         />
-        <button disabled={!draft.trim() || isStreaming || !settings} title="发送" type="submit">
+        <button disabled={!draft.trim() || isStreaming || !settings} title={`发送（${messageSendShortcutLabel}）`} type="submit">
           <ArrowUp size={18} />
         </button>
       </form>

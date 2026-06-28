@@ -21,6 +21,7 @@ import type {
   DataLocationChangeResult,
   DataLocationInfo,
   KnowledgeReference,
+  MessageSendShortcut,
   KnowledgeNote,
   PreparedAttachment,
   ProviderModel,
@@ -493,6 +494,7 @@ export const defaultSettings: AppSettings = {
   enableTemperature: false,
   maxTokens: 4096,
   enableMaxTokens: false,
+  messageSendShortcut: 'enter',
   telemetryEnabled: true,
   setupCompleted: false
 }
@@ -647,6 +649,10 @@ function sanitizeWebSearchActivity(activity?: WebSearchActivity): WebSearchActiv
     error: activity.error ? String(activity.error).trim().slice(0, 300) : undefined,
     searchedAt: Number.isFinite(activity.searchedAt) ? Number(activity.searchedAt) : undefined
   }
+}
+
+function sanitizeMessageSendShortcut(value: unknown): MessageSendShortcut {
+  return value === 'ctrl-enter' ? 'ctrl-enter' : 'enter'
 }
 
 function sanitizeMessage(message: ChatMessage): ChatMessage {
@@ -847,6 +853,7 @@ export function getSettings(): AppSettings {
     enableTemperature: Boolean(saved.enableTemperature),
     maxTokens: Number.isFinite(saved.maxTokens) ? Math.max(1, Math.round(Number(saved.maxTokens))) : defaultSettings.maxTokens,
     enableMaxTokens: Boolean(saved.enableMaxTokens),
+    messageSendShortcut: sanitizeMessageSendShortcut(saved.messageSendShortcut),
     telemetryEnabled:
       saved.telemetryEnabled === undefined ? defaultSettings.telemetryEnabled : Boolean(saved.telemetryEnabled),
     setupCompleted: Boolean(saved.setupCompleted)
@@ -871,6 +878,7 @@ export function setSettings(settings: AppSettings): AppSettings {
       ? Math.max(1, Math.round(Number(settings.maxTokens)))
       : defaultSettings.maxTokens,
     enableMaxTokens: Boolean(settings.enableMaxTokens),
+    messageSendShortcut: sanitizeMessageSendShortcut(settings.messageSendShortcut),
     telemetryEnabled:
       settings.telemetryEnabled === undefined ? defaultSettings.telemetryEnabled : Boolean(settings.telemetryEnabled),
     setupCompleted: settings.setupCompleted

@@ -1,4 +1,5 @@
 export type Role = 'system' | 'user' | 'assistant'
+export type MessageSendShortcut = 'enter' | 'ctrl-enter'
 
 export interface ChatMessage {
   id: string
@@ -227,6 +228,7 @@ export interface AppSettings {
   enableTemperature: boolean
   maxTokens: number
   enableMaxTokens: boolean
+  messageSendShortcut: MessageSendShortcut
   telemetryEnabled: boolean
   setupCompleted: boolean
 }

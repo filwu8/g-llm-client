@@ -12,7 +12,7 @@ import type {
   WebSearchActivity,
   WebSearchResult
 } from '../shared/types'
-import { getModelCapabilities, inferModelCapabilitiesFromMetadata, inferModelTypeFromMetadata } from '../shared/modelCapabilities'
+import { inferModelCapabilitiesFromMetadata, inferModelTypeFromMetadata } from '../shared/modelCapabilities'
 
 interface ChatStreamEvent {
   content?: string
@@ -53,14 +53,14 @@ function formatAttachmentSize(size: number): string {
   return `${size} B`
 }
 
-function getAttachmentContext(attachments: PreparedAttachment[] = [], supportsImageInput = true): string {
+function getAttachmentContext(attachments: PreparedAttachment[] = [], imagesWillBeSent = true): string {
   const blocks = attachments
     .map((attachment, index) => {
       const head = `附件 ${index + 1}：${attachment.name}（${attachment.mimeType}，${formatAttachmentSize(attachment.size)}）`
       if (attachment.kind === 'image') {
-        return supportsImageInput
+        return imagesWillBeSent && attachment.dataUrl
           ? `${head}\n该图片已作为视觉输入随消息发送。`
-          : `${head}\n当前模型可能不支持图片视觉输入，无法直接读取图片内容。请提示用户切换支持视觉输入的模型，或让用户补充图片文字说明。`
+          : `${head}\n当前版本未能读取该图片数据，无法直接识别图片内容。请提示用户重新上传较小的图片，或补充图片文字说明。`
       }
       return attachment.text ? `${head}\n${attachment.text}` : `${head}\n当前版本未能解析该文件正文，只能提供文件名和类型。`
     })
@@ -94,12 +94,12 @@ function getKnowledgeContext(message: ChatMessage): string {
   return `${quoteContext}${knowledgeContext}`
 }
 
-function toOpenAiContent(message: ChatMessage, extraContext = '', supportsImageInput = true): OpenAiMessageContent {
+function toOpenAiContent(message: ChatMessage, extraContext = '', sendImages = true): OpenAiMessageContent {
   const attachments = message.attachments ?? []
-  const imageAttachments = supportsImageInput
+  const imageAttachments = sendImages
     ? attachments.filter((attachment) => attachment.kind === 'image' && attachment.dataUrl)
     : []
-  const text = `${message.content}${getKnowledgeContext(message)}${getAttachmentContext(attachments, supportsImageInput)}${extraContext}`.trim()
+  const text = `${message.content}${getKnowledgeContext(message)}${getAttachmentContext(attachments, imageAttachments.length > 0)}${extraContext}`.trim()
 
   if (imageAttachments.length === 0) return text
 
@@ -125,7 +125,7 @@ function toOpenAiMessages(
   assistant: Assistant,
   messages: ChatMessage[],
   webContext = '',
-  supportsImageInput = true,
+  sendImages = true,
   assistantMemories: AssistantMemory[] = []
 ) {
   const lastUserIndex = messages.map((message) => message.role).lastIndexOf('user')
@@ -142,10 +142,16 @@ function toOpenAiMessages(
         role: message.role,
         content:
           message.role === 'user'
-            ? toOpenAiContent(message, index === lastUserIndex ? webContext : '', supportsImageInput)
+            ? toOpenAiContent(message, index === lastUserIndex ? webContext : '', sendImages)
             : message.content
       }))
   ]
+}
+
+function hasSendableImageAttachments(messages: ChatMessage[]): boolean {
+  return messages.some((message) =>
+    message.attachments?.some((attachment) => attachment.kind === 'image' && Boolean(attachment.dataUrl))
+  )
 }
 
 function getProviderHeaders(provider: ApiProvider): Record<string, string> {
@@ -631,21 +637,22 @@ export async function* streamGllmChat(request: ChatRequest): AsyncGenerator<Chat
     }
   }
 
-  const capabilities = getModelCapabilities(request.provider)
   const endpoint = buildProviderUrl(request.provider, request.provider.chatCompletionsPath ?? '/chat/completions')
-  const requestBody = {
+  const buildRequestBody = (sendImages: boolean) => ({
     model: request.provider.defaultModel,
     messages: toOpenAiMessages(
       request.assistant,
       request.messages,
       webContext,
-      capabilities.imageInput,
+      sendImages,
       request.assistantMemories ?? []
     ),
     ...(request.settings.enableTemperature ? { temperature: request.settings.temperature } : {}),
     ...(request.settings.enableMaxTokens ? { max_tokens: request.settings.maxTokens } : {}),
     stream: true
-  }
+  })
+  const hasImages = hasSendableImageAttachments(request.messages)
+  let requestBody = buildRequestBody(true)
   let response = await fetch(endpoint, {
     method: 'POST',
     headers: getProviderHeaders(request.provider),
@@ -656,6 +663,15 @@ export async function* streamGllmChat(request: ChatRequest): AsyncGenerator<Chat
   })
 
   if (!response.ok && (response.status === 400 || response.status === 422)) {
+    response = await fetch(endpoint, {
+      method: 'POST',
+      headers: getProviderHeaders(request.provider),
+      body: JSON.stringify(requestBody)
+    })
+  }
+
+  if (!response.ok && hasImages && (response.status === 400 || response.status === 415 || response.status === 422)) {
+    requestBody = buildRequestBody(false)
     response = await fetch(endpoint, {
       method: 'POST',
       headers: getProviderHeaders(request.provider),

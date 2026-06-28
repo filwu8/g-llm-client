@@ -1,6 +1,7 @@
 import { clipboard, shell } from 'electron'
 
 import type { PreparedAttachment } from '../shared/types'
+import { prepareImageDataUrlForVision } from './attachments'
 
 const screenshotTimeoutMs = 45_000
 const pollIntervalMs = 350
@@ -51,13 +52,14 @@ export async function captureScreenshot(): Promise<PreparedAttachment | null> {
   const dataUrl = await waitForNewClipboardImage(previousDataUrl)
 
   if (!dataUrl) return null
+  const image = await prepareImageDataUrlForVision(dataUrl, 'image/png')
 
   return {
     id: createAttachmentId(),
     name: getScreenshotName(),
-    mimeType: 'image/png',
-    size: estimateDataUrlSize(dataUrl),
+    mimeType: image?.mimeType ?? 'image/png',
+    size: image?.size ?? estimateDataUrlSize(dataUrl),
     kind: 'image',
-    dataUrl
+    dataUrl: image?.dataUrl ?? dataUrl
   }
 }
