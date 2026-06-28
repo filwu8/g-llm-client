@@ -1,9 +1,9 @@
 import type { BrowserWindow } from 'electron'
 import { dialog } from 'electron'
+import { DOMMatrix, ImageData, Path2D } from '@napi-rs/canvas'
 import mammoth from 'mammoth'
 import { readFile, stat } from 'node:fs/promises'
 import { basename, extname } from 'node:path'
-import { PDFParse } from 'pdf-parse'
 
 import type { AttachmentKind, ClipboardAttachmentInput, PreparedAttachment } from '../shared/types'
 
@@ -50,6 +50,22 @@ const imageExtensions = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif'])
 const pdfExtensions = new Set(['.pdf'])
 const wordExtensions = new Set(['.docx'])
 
+type PdfParseModule = typeof import('pdf-parse')
+
+let pdfParseModulePromise: Promise<PdfParseModule> | null = null
+
+function installPdfDomPolyfills(): void {
+  globalThis.DOMMatrix ??= DOMMatrix as unknown as typeof globalThis.DOMMatrix
+  globalThis.ImageData ??= ImageData as unknown as typeof globalThis.ImageData
+  globalThis.Path2D ??= Path2D as unknown as typeof globalThis.Path2D
+}
+
+async function loadPdfParse(): Promise<PdfParseModule> {
+  installPdfDomPolyfills()
+  pdfParseModulePromise ??= import('pdf-parse')
+  return pdfParseModulePromise
+}
+
 const mimeByExtension: Record<string, string> = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
@@ -95,6 +111,7 @@ function normalizeText(text: string): string {
 
 async function readPdfText(filePath: string): Promise<string> {
   const buffer = await readFile(filePath)
+  const { PDFParse } = await loadPdfParse()
   const parser = new PDFParse({ data: buffer })
 
   try {
@@ -111,6 +128,7 @@ async function readWordText(filePath: string): Promise<string> {
 }
 
 async function readPdfTextFromBuffer(buffer: Buffer): Promise<string> {
+  const { PDFParse } = await loadPdfParse()
   const parser = new PDFParse({ data: buffer })
 
   try {
