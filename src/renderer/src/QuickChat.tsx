@@ -1,14 +1,43 @@
-import { ArrowDown, ArrowUp, ExternalLink, MessageSquarePlus, Settings, X } from 'lucide-react'
-import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react'
+import { ArrowDown, ArrowUp, AtSign, Copy, ExternalLink, MessageSquarePlus, Settings, X } from 'lucide-react'
+import {
+  type KeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+  type WheelEvent as ReactWheelEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState
+} from 'react'
 
 import logo from './assets/gllm-logo.png'
+import {
+  getMessageSelectionSnapshot,
+  writePlainTextToClipboard,
+  writeRichTextToClipboard,
+  type MessageSelectionSnapshot
+} from './clipboard'
+import {
+  persistComposerDraft,
+  QUICK_COMPOSER_DRAFT_KEY,
+  readComposerDraft,
+  resizeComposerTextarea
+} from './composerInput'
 import { getMessageSendShortcutLabel, shouldSendMessageFromKeyboard } from './keyboard'
 import { MarkdownMessage } from './MarkdownMessage'
 import { DEFAULT_ASSISTANTS, getAssistantById } from '@shared/assistants'
 import { DEFAULT_PROVIDER, getProviderById } from '@shared/providers'
-import type { ApiProvider, AppSettings, Assistant, AssistantMemory, ChatChunk, ChatMessage, Conversation } from '@shared/types'
+import type { ApiProvider, AppSettings, Assistant, AssistantMemory, ChatChunk, ChatMessage, Conversation, KnowledgeReference } from '@shared/types'
 
 const quickBottomFollowThreshold = 72
+const quoteReferencePrefix = 'quote_'
+
+interface SelectionContextMenu {
+  x: number
+  y: number
+  text: string
+  html: string
+  source: 'selection' | 'message'
+}
 
 function createId(prefix: string): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2)}`
@@ -27,15 +56,31 @@ function estimateTokenCount(text: string): number {
   return Math.max(1, Math.ceil(cjkCount + nonCjkTokens * 0.75))
 }
 
-function createMessage(role: ChatMessage['role'], content: string): ChatMessage {
+function getKnowledgeReferenceText(knowledgeRefs: KnowledgeReference[] = []): string {
+  return knowledgeRefs.map((reference) => `${reference.title}\n${reference.content}`).join('\n\n')
+}
+
+function getQuoteReferenceTitle(content: string): string {
+  const firstLine =
+    content
+      .split('\n')
+      .map((line) => line.trim())
+      .find(Boolean) ?? '引用内容'
+  const collapsed = firstLine.replace(/\s+/g, ' ')
+  return `引用内容：${collapsed.length > 22 ? `${collapsed.slice(0, 22)}...` : collapsed}`
+}
+
+function createMessage(role: ChatMessage['role'], content: string, knowledgeRefs: KnowledgeReference[] = []): ChatMessage {
   const contentTokens = estimateTokenCount(content)
-  const inputTokens = role === 'assistant' ? 0 : contentTokens
+  const knowledgeTokens = role === 'assistant' ? 0 : estimateTokenCount(getKnowledgeReferenceText(knowledgeRefs))
+  const inputTokens = role === 'assistant' ? 0 : contentTokens + knowledgeTokens
   const outputTokens = role === 'assistant' ? contentTokens : 0
 
   return {
     id: createId('message'),
     role,
     content,
+    knowledgeRefs: knowledgeRefs.length > 0 ? knowledgeRefs : undefined,
     createdAt: Date.now(),
     tokenCount: inputTokens + outputTokens,
     inputTokens,
@@ -109,12 +154,16 @@ export default function QuickChat() {
   const [memories, setMemories] = useState<AssistantMemory[]>([])
   const [activeAssistantId, setActiveAssistantId] = useState(DEFAULT_ASSISTANTS[0].id)
   const [conversation, setConversation] = useState<Conversation | null>(null)
-  const [draft, setDraft] = useState('')
+  const [draft, setDraft] = useState(() => readComposerDraft(QUICK_COMPOSER_DRAFT_KEY))
   const [isStreaming, setIsStreaming] = useState(false)
   const [status, setStatus] = useState('')
+  const [selectionMenu, setSelectionMenu] = useState<SelectionContextMenu | null>(null)
+  const [pendingQuoteRefs, setPendingQuoteRefs] = useState<KnowledgeReference[]>([])
   const [autoFollowMessages, setAutoFollowMessages] = useState(true)
   const [isNearMessageBottom, setIsNearMessageBottom] = useState(true)
   const messagesRef = useRef<HTMLDivElement>(null)
+  const draftTextareaRef = useRef<HTMLTextAreaElement>(null)
+  const autoFollowMessagesRef = useRef(true)
   const conversationRef = useRef<Conversation | null>(null)
 
   const assistant = useMemo(() => getAssistantById(activeAssistantId, assistants), [activeAssistantId, assistants])
@@ -151,9 +200,36 @@ export default function QuickChat() {
     return window.gllm.onActiveAssistantChanged((id) => {
       setActiveAssistantId(id)
       setDraft('')
+      setPendingQuoteRefs([])
       setStatus('')
     })
   }, [])
+
+  useEffect(() => {
+    persistComposerDraft(QUICK_COMPOSER_DRAFT_KEY, draft)
+  }, [draft])
+
+  useEffect(() => {
+    resizeComposerTextarea(draftTextareaRef.current)
+  }, [draft])
+
+  useEffect(() => {
+    if (!selectionMenu) return
+
+    const closeMenu = () => setSelectionMenu(null)
+    const closeMenuOnEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') closeMenu()
+    }
+
+    window.addEventListener('click', closeMenu)
+    window.addEventListener('resize', closeMenu)
+    window.addEventListener('keydown', closeMenuOnEscape)
+    return () => {
+      window.removeEventListener('click', closeMenu)
+      window.removeEventListener('resize', closeMenu)
+      window.removeEventListener('keydown', closeMenuOnEscape)
+    }
+  }, [selectionMenu])
 
   useEffect(() => {
     if (isStreaming) return
@@ -185,9 +261,9 @@ export default function QuickChat() {
   }, [conversation])
 
   useEffect(() => {
-    setAutoFollowMessages(true)
+    setMessageAutoFollow(true)
     setIsNearMessageBottom(true)
-    window.requestAnimationFrame(() => scrollToLatest('auto'))
+    window.requestAnimationFrame(() => scrollToLatest('auto', { resumeAutoFollow: true }))
   }, [conversation?.id])
 
   useEffect(() => {
@@ -217,7 +293,7 @@ export default function QuickChat() {
     if (!autoFollowMessages) return
     const container = messagesRef.current
     if (!container) return
-    window.requestAnimationFrame(() => scrollToLatest(isStreaming ? 'auto' : 'smooth'))
+    window.requestAnimationFrame(() => scrollToLatest(isStreaming ? 'auto' : 'smooth', { requireAutoFollow: true, resumeAutoFollow: false }))
   }, [autoFollowMessages, isStreaming, messages.length, messages.at(-1)?.content])
 
   function getDistanceToMessageBottom() {
@@ -226,18 +302,51 @@ export default function QuickChat() {
     return container.scrollHeight - container.scrollTop - container.clientHeight
   }
 
-  function updateMessageScrollState() {
-    const isNearBottom = getDistanceToMessageBottom() <= quickBottomFollowThreshold
-    setIsNearMessageBottom(isNearBottom)
-    setAutoFollowMessages(isNearBottom)
+  function setMessageAutoFollow(enabled: boolean) {
+    autoFollowMessagesRef.current = enabled
+    setAutoFollowMessages(enabled)
   }
 
-  function scrollToLatest(behavior: ScrollBehavior = 'smooth') {
+  function pauseMessageAutoFollow() {
+    setSelectionMenu(null)
+    setIsNearMessageBottom(false)
+    setMessageAutoFollow(false)
+  }
+
+  function handleMessageWheel(event: ReactWheelEvent<HTMLDivElement>) {
+    const container = messagesRef.current
+    if (event.deltaY < 0 && container && container.scrollTop > 0) pauseMessageAutoFollow()
+  }
+
+  function updateMessageScrollState() {
+    setSelectionMenu(null)
+    const distanceToBottom = getDistanceToMessageBottom()
+    const isAtBottom = distanceToBottom <= 4
+    const isNearBottom = distanceToBottom <= quickBottomFollowThreshold
+
+    if (!autoFollowMessagesRef.current) {
+      setIsNearMessageBottom(isAtBottom)
+      if (isAtBottom) setMessageAutoFollow(true)
+      return
+    }
+
+    setIsNearMessageBottom(isNearBottom)
+    setMessageAutoFollow(isNearBottom)
+  }
+
+  function scrollToLatest(
+    behavior: ScrollBehavior = 'smooth',
+    options: { requireAutoFollow?: boolean; resumeAutoFollow?: boolean } = {}
+  ) {
+    if (options.requireAutoFollow && !autoFollowMessagesRef.current) return
+
     const container = messagesRef.current
     if (!container) return
     container.scrollTo({ top: container.scrollHeight, behavior })
-    setIsNearMessageBottom(true)
-    setAutoFollowMessages(true)
+    if (options.resumeAutoFollow ?? true) {
+      setIsNearMessageBottom(true)
+      setMessageAutoFollow(true)
+    }
   }
 
   async function openMainWindow() {
@@ -248,6 +357,7 @@ export default function QuickChat() {
   function startNewQuickChat() {
     setConversation(null)
     setDraft('')
+    setPendingQuoteRefs([])
     setStatus('')
   }
 
@@ -261,18 +371,20 @@ export default function QuickChat() {
     }
 
     const text = content.trim()
-    if (!text) return
+    if (!text && pendingQuoteRefs.length === 0) return
+    const messageText = text || '请结合我引用的对话内容回答。'
 
-    const baseConversation = conversation ?? createQuickConversation(assistant, `快速对话：${text.slice(0, 18)}`)
-    const userMessage = createMessage('user', text)
+    const baseConversation = conversation ?? createQuickConversation(assistant, `快速对话：${messageText.slice(0, 18)}`)
+    const userMessage = createMessage('user', messageText, pendingQuoteRefs)
     const nextConversation: Conversation = {
       ...baseConversation,
-      title: baseConversation.messages.length === 0 ? `快速对话：${text.slice(0, 18)}` : baseConversation.title,
+      title: baseConversation.messages.length === 0 ? `快速对话：${messageText.slice(0, 18)}` : baseConversation.title,
       messages: [...baseConversation.messages, userMessage],
       updatedAt: Date.now()
     }
 
     setDraft('')
+    setPendingQuoteRefs([])
     setStatus('')
     setIsStreaming(true)
     setConversation(nextConversation)
@@ -293,6 +405,77 @@ export default function QuickChat() {
     if (!shouldSendMessageFromKeyboard(event, messageSendShortcut)) return
     event.preventDefault()
     sendMessage()
+  }
+
+  function getMessageSelectionForMessage(messageId: string): MessageSelectionSnapshot | null {
+    return getMessageSelectionSnapshot(document.querySelector(`[data-message-id="${messageId}"]`))
+  }
+
+  function openSelectionContextMenu(event: ReactMouseEvent, message: ChatMessage) {
+    if (message.role !== 'assistant') {
+      setSelectionMenu(null)
+      return
+    }
+
+    const selection = getMessageSelectionForMessage(message.id)
+    const text = selection?.text || message.content.trim()
+    if (!text) {
+      setSelectionMenu(null)
+      return
+    }
+
+    event.preventDefault()
+    setSelectionMenu({
+      x: Math.min(event.clientX, window.innerWidth - 164),
+      y: Math.min(event.clientY, window.innerHeight - 96),
+      text,
+      html: selection?.html ?? '',
+      source: selection ? 'selection' : 'message'
+    })
+  }
+
+  async function copySelectionMenuText() {
+    if (!selectionMenu) return
+
+    try {
+      if (selectionMenu.source === 'selection') {
+        await writeRichTextToClipboard(selectionMenu)
+      } else {
+        await writePlainTextToClipboard(selectionMenu.text)
+      }
+      setStatus(selectionMenu.source === 'selection' ? '已复制选中富文本' : '已复制回复 Markdown')
+    } catch {
+      setStatus('复制失败，请手动选择文本复制')
+    } finally {
+      setSelectionMenu(null)
+    }
+  }
+
+  function addQuoteReference(content: string) {
+    const trimmed = content.trim()
+    if (!trimmed) return
+
+    setPendingQuoteRefs((current) => [
+      ...current,
+      {
+        id: `${quoteReferencePrefix}${createId('quick_quote')}`,
+        title: getQuoteReferenceTitle(trimmed),
+        content: trimmed
+      }
+    ].slice(-4))
+    window.requestAnimationFrame(() => draftTextareaRef.current?.focus())
+  }
+
+  function removePendingQuoteRef(id: string) {
+    setPendingQuoteRefs((current) => current.filter((reference) => reference.id !== id))
+  }
+
+  function quoteSelectionMenuText() {
+    if (!selectionMenu) return
+
+    addQuoteReference(selectionMenu.text)
+    setStatus(selectionMenu.source === 'selection' ? '已添加选中引用，发送时会作为上下文' : '已添加回复引用，发送时会作为上下文')
+    setSelectionMenu(null)
   }
 
   return (
@@ -321,7 +504,7 @@ export default function QuickChat() {
         </div>
       </header>
 
-      <main className="quick-content" ref={messagesRef} onScroll={updateMessageScrollState}>
+      <main className="quick-content" ref={messagesRef} onScroll={updateMessageScrollState} onWheel={handleMessageWheel}>
         {messages.length === 0 ? (
           <section className="quick-empty">
             <p><span>你好</span></p>
@@ -336,7 +519,12 @@ export default function QuickChat() {
           </section>
         ) : (
           messages.map((message) => (
-            <article key={message.id} className={`quick-message ${message.role}`}>
+            <article
+              key={message.id}
+              className={`quick-message ${message.role}`}
+              data-message-id={message.id}
+              onContextMenu={(event) => openSelectionContextMenu(event, message)}
+            >
               <div className="quick-message-bubble">
                 <MarkdownMessage content={message.content || (message.role === 'assistant' ? '正在思考...' : '')} />
               </div>
@@ -361,6 +549,24 @@ export default function QuickChat() {
         </button>
       )}
 
+      {selectionMenu && (
+        <div
+          className="selection-context-menu"
+          style={{ left: selectionMenu.x, top: selectionMenu.y }}
+          onClick={(event) => event.stopPropagation()}
+          onMouseDown={(event) => event.preventDefault()}
+        >
+          <button type="button" onClick={() => void copySelectionMenuText()}>
+            <Copy size={15} />
+            复制
+          </button>
+          <button type="button" onClick={quoteSelectionMenuText}>
+            <AtSign size={15} />
+            引用
+          </button>
+        </div>
+      )}
+
       {status && (
         <div className="quick-status">
           <span>{status}</span>
@@ -377,7 +583,26 @@ export default function QuickChat() {
           sendMessage()
         }}
       >
+        {pendingQuoteRefs.length > 0 && (
+          <div className="quick-composer-quote-cards composer-quote-cards">
+            {pendingQuoteRefs.map((reference) => (
+              <div key={reference.id} className="composer-quote-card">
+                <div className="composer-quote-card-header">
+                  <span className="composer-quote-card-title">
+                    <AtSign size={14} />
+                    <span>{reference.title}</span>
+                  </span>
+                  <button onClick={() => removePendingQuoteRef(reference.id)} title="移除引用" type="button">
+                    <X size={13} />
+                  </button>
+                </div>
+                <p>{reference.content}</p>
+              </div>
+            ))}
+          </div>
+        )}
         <textarea
+          ref={draftTextareaRef}
           value={draft}
           disabled={!settings}
           rows={1}
@@ -385,7 +610,7 @@ export default function QuickChat() {
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={handleDraftKeyDown}
         />
-        <button disabled={!draft.trim() || isStreaming || !settings} title={`发送（${messageSendShortcutLabel}）`} type="submit">
+        <button disabled={(!draft.trim() && pendingQuoteRefs.length === 0) || isStreaming || !settings} title={`发送（${messageSendShortcutLabel}）`} type="submit">
           <ArrowUp size={18} />
         </button>
       </form>

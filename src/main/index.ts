@@ -57,7 +57,7 @@ let activeAssistantId = 'general'
 
 function formatBuildCode(date: Date): string {
   const parts = [
-    date.getFullYear() % 100,
+    date.getFullYear(),
     date.getMonth() + 1,
     date.getDate(),
     date.getHours(),

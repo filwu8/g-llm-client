@@ -4,10 +4,14 @@ import remarkGfm from 'remark-gfm'
 
 let mermaidInitialized = false
 
+const MARKDOWN_DOCUMENT_FENCE_LANGUAGES = new Set(['markdown', 'md', 'mdx', 'gfm', 'commonmark'])
+const PLAIN_TEXT_FENCE_LANGUAGES = new Set(['text', 'txt', 'plain', 'plaintext'])
+
 export function normalizeMarkdownForDisplay(input: string): string {
   if (!input) return input
 
-  const lines = input.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n')
+  const normalizedInput = unwrapMarkdownDocumentFence(input.replace(/\r\n/g, '\n').replace(/\r/g, '\n'))
+  const lines = normalizedInput.split('\n')
   const expanded: string[] = []
   let inFence = false
   let fenceMarker = ''
@@ -37,7 +41,47 @@ export function normalizeMarkdownForDisplay(input: string): string {
     }
   }
 
+  if (inFence && fenceMarker) {
+    expanded.push(fenceMarker)
+  }
+
   return normalizeMarkdownTableSeparators(expanded).join('\n')
+}
+
+function unwrapMarkdownDocumentFence(input: string): string {
+  const trimmed = input.trim()
+  if (!trimmed) return input
+
+  const lines = trimmed.split('\n')
+  const opening = lines[0]?.trim() ?? ''
+  const marker = fenceLineMarker(opening)
+  if (!marker) return input
+
+  const info = fenceLineInfo(opening, marker)
+  const closingIndex = lines.findIndex((line, index) => index > 0 && line.trim() === marker)
+  if (closingIndex > 0 && closingIndex !== lines.length - 1) return input
+
+  const bodyLines = closingIndex === lines.length - 1 ? lines.slice(1, -1) : lines.slice(1)
+  const body = bodyLines.join('\n').trim()
+  if (!body) return input
+
+  if (MARKDOWN_DOCUMENT_FENCE_LANGUAGES.has(info)) return body
+  if ((info === '' || PLAIN_TEXT_FENCE_LANGUAGES.has(info)) && looksLikeRenderableMarkdown(body)) return body
+
+  return input
+}
+
+function fenceLineInfo(trimmed: string, marker: string): string {
+  return (trimmed.slice(marker.length).trim().split(/\s+/)[0] ?? '').toLowerCase()
+}
+
+function looksLikeRenderableMarkdown(value: string): boolean {
+  const lines = value.split('\n')
+  if (lines.some((line, index) => index > 0 && isMarkdownTableSeparatorRow(line) && isMarkdownTableRow(lines[index - 1] ?? ''))) {
+    return true
+  }
+
+  return /(^|\n)\s{0,3}(#{1,6}\s+\S|[-*+]\s+\S|\d{1,3}\.\s+\S|>\s+\S)/.test(value) || /(\*\*|__)[^*_]+(\*\*|__)/.test(value)
 }
 
 function expandSingleLineFence(line: string): string[] {

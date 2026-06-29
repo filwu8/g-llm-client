@@ -633,13 +633,16 @@ button {
 
 .message-stack {
   display: flex;
-  width: max-content;
-  max-width: min(720px, 78%);
+  width: min(100%, 82%);
+  min-width: 0;
+  max-width: none;
   flex-direction: column;
   align-items: stretch;
 }
 
 .message-bubble {
+  width: 100%;
+  box-sizing: border-box;
   max-width: 100%;
   overflow-wrap: anywhere;
   border-radius: 8px;
@@ -1419,6 +1422,7 @@ button {
   flex: 1;
   max-height: 160px;
   min-height: 42px;
+  overflow-y: auto;
   resize: none;
   border: 0;
   outline: 0;
@@ -2297,9 +2301,31 @@ button {
   white-space: nowrap;
 }
 
+.assistant-simple-search .assistant-ai-generate-button {
+  border: 0;
+  background:
+    linear-gradient(135deg, #16a34a 0%, #0ea5e9 45%, #8b5cf6 72%, #f43f5e 100%);
+  box-shadow: 0 10px 24px rgb(14 165 233 / 0.22);
+  color: #fff;
+  font-weight: 750;
+}
+
+.assistant-simple-search .assistant-ai-generate-button:hover:not(:disabled) {
+  filter: saturate(1.08) brightness(1.03);
+  transform: translateY(-1px);
+}
+
 .assistant-simple-search button:disabled {
-  cursor: wait;
-  opacity: 0.7;
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
+.assistant-simple-search .assistant-ai-generate-button:disabled {
+  background: #c9d2cf;
+  box-shadow: none;
+  color: #f6faf8;
+  filter: none;
+  transform: none;
 }
 
 .assistant-create-model {
@@ -4383,7 +4409,9 @@ button {
 }
 
 .quick-message-bubble {
-  max-width: min(620px, 86%);
+  width: min(100%, 88%);
+  box-sizing: border-box;
+  max-width: none;
   overflow-wrap: anywhere;
   border: 1px solid #e0e8e5;
   border-radius: 14px;
@@ -4563,6 +4591,33 @@ button {
   padding: 12px;
 }
 
+.quick-composer-quote-cards {
+  grid-column: 1 / -1;
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+.quick-composer .composer-quote-card {
+  box-shadow: none;
+}
+
+.quick-composer .composer-quote-card button {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  cursor: pointer;
+  place-items: center;
+  border-radius: 999px;
+  background: transparent;
+  color: #66716c;
+}
+
+.quick-composer .composer-quote-card button:hover {
+  background: #e2f2ee;
+  color: #20262b;
+}
+
 .quick-composer:focus-within {
   border-color: #1ea896;
   box-shadow: 0 0 0 3px rgb(30 168 150 / 0.12);
@@ -4571,6 +4626,7 @@ button {
 .quick-composer textarea {
   min-height: 42px;
   max-height: 126px;
+  overflow-y: auto;
   resize: none;
   border: 0;
   outline: 0;

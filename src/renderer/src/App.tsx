@@ -49,6 +49,7 @@ import {
   type ClipboardEvent as ReactClipboardEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
+  type WheelEvent as ReactWheelEvent,
   useEffect,
   useMemo,
   useRef,
@@ -56,6 +57,18 @@ import {
 } from 'react'
 
 import logo from './assets/gllm-logo.png'
+import {
+  getMessageSelectionSnapshot,
+  writePlainTextToClipboard,
+  writeRichTextToClipboard,
+  type MessageSelectionSnapshot
+} from './clipboard'
+import {
+  MAIN_COMPOSER_DRAFT_KEY,
+  persistComposerDraft,
+  readComposerDraft,
+  resizeComposerTextarea
+} from './composerInput'
 import { getMessageSendShortcutLabel, shouldSendMessageFromKeyboard } from './keyboard'
 import { MarkdownMessage } from './MarkdownMessage'
 import {
@@ -145,6 +158,7 @@ interface SelectionContextMenu {
   x: number
   y: number
   text: string
+  html: string
 }
 
 type SettingsTab = 'providers' | 'personalization' | 'storage' | 'about'
@@ -600,10 +614,11 @@ export default function App() {
   const [memories, setMemories] = useState<AssistantMemory[]>([])
   const [tools, setTools] = useState<ToolConfig[]>([])
   const [appVersion, setAppVersion] = useState('1.0.0')
+  const [appBuildCode, setAppBuildCode] = useState('')
   const [dataLocation, setDataLocation] = useState<DataLocationInfo | null>(null)
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
   const [activeAssistantId, setActiveAssistantId] = useState(DEFAULT_ASSISTANTS[0].id)
-  const [draft, setDraft] = useState('')
+  const [draft, setDraft] = useState(() => readComposerDraft(MAIN_COMPOSER_DRAFT_KEY))
   const [isStreaming, setIsStreaming] = useState(false)
   const [isPickingAttachment, setIsPickingAttachment] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -628,6 +643,8 @@ export default function App() {
   const [composerHeight, setComposerHeight] = useState(0)
   const listRef = useRef<HTMLDivElement>(null)
   const composerRef = useRef<HTMLFormElement>(null)
+  const composerTextareaRef = useRef<HTMLTextAreaElement>(null)
+  const autoFollowMessagesRef = useRef(true)
   const toolNoticeTimerRef = useRef<number | null>(null)
   const streamingConversationDraftsRef = useRef<Record<string, Conversation>>({})
 
@@ -697,6 +714,7 @@ export default function App() {
       const nextProviders = state.providers.length > 0 ? state.providers : [DEFAULT_PROVIDER]
       const provider = getProviderById(state.settings.activeProviderId, nextProviders)
       setAppVersion(state.appVersion || '1.0.0')
+      setAppBuildCode(state.appBuildCode || '')
       setDataLocation(state.dataLocation)
       setSettings(state.settings)
       setProviders(nextProviders)
@@ -720,6 +738,14 @@ export default function App() {
   useEffect(() => {
     void window.gllm.setActiveAssistantId(activeAssistantId)
   }, [activeAssistantId])
+
+  useEffect(() => {
+    persistComposerDraft(MAIN_COMPOSER_DRAFT_KEY, draft)
+  }, [draft])
+
+  useEffect(() => {
+    resizeComposerTextarea(composerTextareaRef.current)
+  }, [draft])
 
   useEffect(() => {
     const unsubscribe = window.gllm.onChatChunk((chunk) => {
@@ -803,9 +829,9 @@ export default function App() {
   }, [selectionMenu])
 
   useEffect(() => {
-    setAutoFollowMessages(true)
+    setMessageAutoFollow(true)
     setIsNearMessageBottom(true)
-    window.requestAnimationFrame(() => scrollToLatest('auto'))
+    window.requestAnimationFrame(() => scrollToLatest('auto', { resumeAutoFollow: true }))
   }, [activeConversationId])
 
   useEffect(() => {
@@ -821,7 +847,7 @@ export default function App() {
 
   useEffect(() => {
     if (!autoFollowMessages) return
-    window.requestAnimationFrame(() => scrollToLatest(isStreaming ? 'auto' : 'smooth'))
+    window.requestAnimationFrame(() => scrollToLatest(isStreaming ? 'auto' : 'smooth', { requireAutoFollow: true, resumeAutoFollow: false }))
   }, [
     autoFollowMessages,
     isStreaming,
@@ -842,19 +868,51 @@ export default function App() {
     return list.scrollHeight - list.scrollTop - list.clientHeight
   }
 
-  function updateMessageScrollState() {
-    setSelectionMenu(null)
-    const isNearBottom = getDistanceToMessageBottom() <= bottomFollowThreshold
-    setIsNearMessageBottom(isNearBottom)
-    setAutoFollowMessages(isNearBottom)
+  function setMessageAutoFollow(enabled: boolean) {
+    autoFollowMessagesRef.current = enabled
+    setAutoFollowMessages(enabled)
   }
 
-  function scrollToLatest(behavior: ScrollBehavior = 'smooth') {
+  function pauseMessageAutoFollow() {
+    setSelectionMenu(null)
+    setIsNearMessageBottom(false)
+    setMessageAutoFollow(false)
+  }
+
+  function handleMessageWheel(event: ReactWheelEvent<HTMLDivElement>) {
+    const list = listRef.current
+    if (event.deltaY < 0 && list && list.scrollTop > 0) pauseMessageAutoFollow()
+  }
+
+  function updateMessageScrollState() {
+    setSelectionMenu(null)
+    const distanceToBottom = getDistanceToMessageBottom()
+    const isAtBottom = distanceToBottom <= 4
+    const isNearBottom = distanceToBottom <= bottomFollowThreshold
+
+    if (!autoFollowMessagesRef.current) {
+      setIsNearMessageBottom(isAtBottom)
+      if (isAtBottom) setMessageAutoFollow(true)
+      return
+    }
+
+    setIsNearMessageBottom(isNearBottom)
+    setMessageAutoFollow(isNearBottom)
+  }
+
+  function scrollToLatest(
+    behavior: ScrollBehavior = 'smooth',
+    options: { requireAutoFollow?: boolean; resumeAutoFollow?: boolean } = {}
+  ) {
+    if (options.requireAutoFollow && !autoFollowMessagesRef.current) return
+
     const list = listRef.current
     if (!list) return
     list.scrollTo({ top: list.scrollHeight, behavior })
-    setIsNearMessageBottom(true)
-    setAutoFollowMessages(true)
+    if (options.resumeAutoFollow ?? true) {
+      setIsNearMessageBottom(true)
+      setMessageAutoFollow(true)
+    }
   }
 
   async function pickComposerAttachments(kind: AttachmentKind) {
@@ -1042,25 +1100,17 @@ export default function App() {
   }
 
   function getSelectedTextForMessage(messageId: string): string {
-    const selection = window.getSelection()
-    const selectedText = selection?.toString().trim() ?? ''
-    if (!selection || selection.rangeCount === 0 || !selectedText) return ''
-
-    const messageElement = document.querySelector(`[data-message-id="${messageId}"]`)
-    if (!messageElement) return ''
-
-    const anchorInside = selection.anchorNode ? messageElement.contains(selection.anchorNode) : false
-    const focusInside = selection.focusNode ? messageElement.contains(selection.focusNode) : false
-    return anchorInside && focusInside ? selectedText : ''
+    return getMessageSelectionForMessage(messageId)?.text ?? ''
   }
 
-  async function copyMessage(content: string, messageId?: string) {
-    const selectedText = messageId ? getSelectedTextForMessage(messageId) : ''
-    const textToCopy = selectedText || content
+  function getMessageSelectionForMessage(messageId: string): MessageSelectionSnapshot | null {
+    return getMessageSelectionSnapshot(document.querySelector(`[data-message-id="${messageId}"]`))
+  }
 
+  async function copyMessage(content: string) {
     try {
-      await navigator.clipboard.writeText(textToCopy)
-      showToolNotice(selectedText ? '已复制选中内容' : '已复制到剪贴板')
+      await writePlainTextToClipboard(content)
+      showToolNotice('已复制 Markdown 到剪贴板')
     } catch {
       showToolNotice('复制失败，请手动选择文本复制')
     }
@@ -1073,8 +1123,8 @@ export default function App() {
   }
 
   function openSelectionContextMenu(event: ReactMouseEvent, message: ChatMessage) {
-    const selectedText = getSelectedTextForMessage(message.id)
-    if (!selectedText || message.role !== 'assistant') {
+    const selection = getMessageSelectionForMessage(message.id)
+    if (!selection || message.role !== 'assistant') {
       setSelectionMenu(null)
       return
     }
@@ -1083,7 +1133,8 @@ export default function App() {
     setSelectionMenu({
       x: Math.min(event.clientX, window.innerWidth - 156),
       y: Math.min(event.clientY, window.innerHeight - 94),
-      text: selectedText
+      text: selection.text,
+      html: selection.html
     })
   }
 
@@ -1091,8 +1142,8 @@ export default function App() {
     if (!selectionMenu) return
 
     try {
-      await navigator.clipboard.writeText(selectionMenu.text)
-      showToolNotice('已复制选中内容')
+      await writeRichTextToClipboard(selectionMenu)
+      showToolNotice('已复制选中富文本')
     } catch {
       showToolNotice('复制失败，请手动选择文本复制')
     } finally {
@@ -1386,11 +1437,11 @@ export default function App() {
     return saved
   }
 
-  async function suggestAssistant(keyword: string): Promise<AssistantSuggestion> {
+  async function suggestAssistant(keyword: string, provider: ApiProvider): Promise<AssistantSuggestion> {
     if (!settings) throw new Error('设置尚未加载')
     return window.gllm.suggestAssistant({
       keyword,
-      provider: activeProvider,
+      provider,
       settings
     })
   }
@@ -1515,7 +1566,7 @@ export default function App() {
         </header>
 
         <section className="chat-panel">
-          <div className="messages" ref={listRef} onScroll={updateMessageScrollState}>
+          <div className="messages" ref={listRef} onScroll={updateMessageScrollState} onWheel={handleMessageWheel}>
             {needsApiKey && (
               <div className="setup-banner">
                 <KeyRound size={18} />
@@ -1598,7 +1649,7 @@ export default function App() {
                       </div>
                       <div className="message-footer">
                         <div className="message-actions" onMouseDown={(event) => event.preventDefault()}>
-                          <button title="复制选中内容或整条消息" type="button" onClick={() => void copyMessage(message.content, message.id)}>
+                          <button title="复制整条原始 Markdown" type="button" onClick={() => void copyMessage(message.content)}>
                             <Copy size={16} />
                           </button>
                           {message.role === 'assistant' && (
@@ -1803,6 +1854,7 @@ export default function App() {
             )}
             <div className="composer-input-row">
               <textarea
+                ref={composerTextareaRef}
                 value={draft}
                 onChange={(event) => setDraft(event.target.value)}
                 onPaste={(event) => void handleComposerPaste(event)}
@@ -1927,6 +1979,7 @@ export default function App() {
       {settingsOpen && (
         <SettingsPanel
           appVersion={appVersion}
+          appBuildCode={appBuildCode}
           dataLocation={dataLocation}
           settings={settings}
           providers={providers}
@@ -2245,7 +2298,7 @@ function AddAssistantDialog({
   providers: ApiProvider[]
   onClose: () => void
   onSave: (assistant: Assistant) => Promise<Assistant>
-  onSuggest: (keyword: string) => Promise<AssistantSuggestion>
+  onSuggest: (keyword: string, provider: ApiProvider) => Promise<AssistantSuggestion>
 }) {
   const [keyword, setKeyword] = useState('')
   const [activePresetCategory, setActivePresetCategory] = useState(ASSISTANT_PRESET_CATEGORIES[0])
@@ -2255,6 +2308,13 @@ function AddAssistantDialog({
   const [assistantStatus, setAssistantStatus] = useState('')
   const [isWorking, setIsWorking] = useState(false)
   const modelOptions = getModelOptions(selectedProvider, modelId)
+  const selectedModel = modelId.trim() || selectedProvider.defaultModel.trim()
+  const aiGenerateUnavailableReason = !selectedModel
+    ? '请先选择或填写一个可用模型'
+    : selectedProvider.requiresApiKey && !selectedProvider.apiKey.trim()
+      ? `请先在模型供应商设置中填写「${selectedProvider.name}」API Key`
+      : ''
+  const canGenerateAssistant = !isWorking && Boolean(keyword.trim()) && !aiGenerateUnavailableReason
   const visiblePresets = keyword.trim()
     ? searchAssistantPresets(keyword, '')
     : searchAssistantPresets('', activePresetCategory)
@@ -2267,7 +2327,6 @@ function AddAssistantDialog({
 
   function createAssistantFromSuggestion(suggestion: AssistantSuggestion): Assistant {
     const now = Date.now()
-    const selectedModel = modelId.trim() || selectedProvider.defaultModel
 
     return {
       id: createId('assistant'),
@@ -2313,6 +2372,11 @@ function AddAssistantDialog({
       return
     }
 
+    if (aiGenerateUnavailableReason) {
+      setAssistantStatus(aiGenerateUnavailableReason)
+      return
+    }
+
     const matchedPreset = findAssistantPreset(text)
     if (matchedPreset) {
       setActivePresetCategory(matchedPreset.featured ? '精选' : matchedPreset.category)
@@ -2325,7 +2389,11 @@ function AddAssistantDialog({
     setAssistantStatus(`正在生成「${text}」助手...`)
 
     try {
-      const suggestion = await onSuggest(text)
+      const suggestion = await onSuggest(text, {
+        ...selectedProvider,
+        defaultModel: selectedModel,
+        models: getModelOptions(selectedProvider, selectedModel)
+      })
       const saved = await onSave(createAssistantFromSuggestion(suggestion))
       setAssistantStatus(`已添加「${saved.name}」`)
       onClose()
@@ -2364,7 +2432,16 @@ function AddAssistantDialog({
               }
             }}
           />
-          <button disabled={isWorking} onClick={() => void generateAssistant()} type="button">
+          <button
+            className="assistant-ai-generate-button"
+            disabled={!canGenerateAssistant}
+            onClick={() => void generateAssistant()}
+            title={
+              aiGenerateUnavailableReason ||
+              (keyword.trim() ? `使用 ${selectedProvider.name} · ${selectedModel} 生成助手配置` : '请输入助手关键词')
+            }
+            type="button"
+          >
             <Sparkles size={16} />
             AI 生成添加
           </button>
@@ -3164,6 +3241,7 @@ function AddProviderDialog({
 
 function SettingsPanel({
   appVersion,
+  appBuildCode,
   dataLocation,
   settings,
   providers,
@@ -3176,6 +3254,7 @@ function SettingsPanel({
   onDataLocationChange
 }: {
   appVersion: string
+  appBuildCode: string
   dataLocation: DataLocationInfo | null
   settings: AppSettings
   providers: ApiProvider[]
@@ -3880,7 +3959,7 @@ function SettingsPanel({
               </p>
               <div className="about-system-meta">
                 <span>版本</span>
-                <strong>V{appVersion}</strong>
+                <strong>V{appVersion}{appBuildCode ? `(${appBuildCode})` : ''}</strong>
               </div>
             </section>
 
