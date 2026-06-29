@@ -1,6 +1,6 @@
 {
   "name": "g-llm-client",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "WujiJie / G-LLM desktop client",
   "main": "./out/main/index.js",
   "author": "GPROPHET LIMITED <licensing@gprophet.com>",
@@ -80,6 +80,14 @@
       {
         "from": "resources/tray-icon-template.png",
         "to": "resources/tray-icon-template.png"
+      },
+      {
+        "from": "resources/tray-icon.png",
+        "to": "resources/tray-icon.png"
+      },
+      {
+        "from": "build/icon.ico",
+        "to": "resources/icon.ico"
       }
     ],
     "files": [

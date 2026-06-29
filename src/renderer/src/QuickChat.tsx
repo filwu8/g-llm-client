@@ -412,11 +412,6 @@ export default function QuickChat() {
   }
 
   function openSelectionContextMenu(event: ReactMouseEvent, message: ChatMessage) {
-    if (message.role !== 'assistant') {
-      setSelectionMenu(null)
-      return
-    }
-
     const selection = getMessageSelectionForMessage(message.id)
     const text = selection?.text || message.content.trim()
     if (!text) {
@@ -443,7 +438,7 @@ export default function QuickChat() {
       } else {
         await writePlainTextToClipboard(selectionMenu.text)
       }
-      setStatus(selectionMenu.source === 'selection' ? '已复制选中富文本' : '已复制回复 Markdown')
+      setStatus(selectionMenu.source === 'selection' ? '已复制选中富文本' : '已复制消息 Markdown')
     } catch {
       setStatus('复制失败，请手动选择文本复制')
     } finally {
@@ -474,7 +469,7 @@ export default function QuickChat() {
     if (!selectionMenu) return
 
     addQuoteReference(selectionMenu.text)
-    setStatus(selectionMenu.source === 'selection' ? '已添加选中引用，发送时会作为上下文' : '已添加回复引用，发送时会作为上下文')
+    setStatus(selectionMenu.source === 'selection' ? '已添加选中引用，发送时会作为上下文' : '已添加消息引用，发送时会作为上下文')
     setSelectionMenu(null)
   }
 

@@ -1,5 +1,5 @@
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, screen, shell, Tray, type Rectangle } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, screen, shell, Tray, type Point, type Rectangle } from 'electron'
 import { statSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -45,15 +45,31 @@ function getAppIconPath(): string {
   return is.dev ? join(process.cwd(), 'resources/app-icon.png') : join(process.resourcesPath, 'resources/app-icon.png')
 }
 
+function getWindowsShortcutIconPath(): string {
+  return is.dev ? join(process.cwd(), 'build/icon.ico') : join(process.resourcesPath, 'resources/icon.ico')
+}
+
 function getTrayIconPath(): string {
-  return is.dev ? join(process.cwd(), 'resources/tray-icon-template.png') : join(process.resourcesPath, 'resources/tray-icon-template.png')
+  return process.platform === 'win32'
+    ? getWindowsShortcutIconPath()
+    : is.dev
+      ? join(process.cwd(), 'resources/tray-icon-template.png')
+      : join(process.resourcesPath, 'resources/tray-icon-template.png')
 }
 
 let mainWindow: BrowserWindow | null = null
 let quickWindow: BrowserWindow | null = null
+let floatingLogoWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let isQuitting = false
 let activeAssistantId = 'general'
+let mainHiddenMode: 'none' | 'tray' | 'floating' = 'none'
+let lastMainWindowBounds: Rectangle | null = null
+let floatingLogoBounds: Rectangle | null = null
+let floatingLogoDragOffset: Point | null = null
+
+const FLOATING_LOGO_SIZE = 88
+const FLOATING_LOGO_EDGE_GAP = 8
 
 function formatBuildCode(date: Date): string {
   const parts = [
@@ -111,6 +127,8 @@ function registerExternalLinkHandler(window: BrowserWindow): void {
 
 function createWindow(): BrowserWindow {
   quickWindow?.hide()
+  hideFloatingLogo()
+  mainHiddenMode = 'none'
 
   if (mainWindow && !mainWindow.isDestroyed()) {
     if (mainWindow.isMinimized()) mainWindow.restore()
@@ -138,13 +156,253 @@ function createWindow(): BrowserWindow {
 
   mainWindow.setMenu(null)
   mainWindow.setMenuBarVisibility(false)
+  mainWindow.on('move', () => {
+    if (mainWindow && !mainWindow.isMinimized()) lastMainWindowBounds = mainWindow.getBounds()
+  })
+  mainWindow.on('resize', () => {
+    if (mainWindow && !mainWindow.isMinimized()) lastMainWindowBounds = mainWindow.getBounds()
+  })
+  mainWindow.on('minimize', () => {
+    if (process.platform !== 'win32' || isQuitting) return
+
+    if (mainWindow) lastMainWindowBounds = mainWindow.getNormalBounds()
+    mainHiddenMode = 'floating'
+    mainWindow?.hide()
+    quickWindow?.hide()
+    showFloatingLogo()
+  })
+  mainWindow.on('close', (event) => {
+    if (process.platform !== 'win32' || isQuitting) return
+
+    event.preventDefault()
+    if (mainWindow) lastMainWindowBounds = mainWindow.getNormalBounds()
+    mainHiddenMode = 'tray'
+    mainWindow?.hide()
+    quickWindow?.hide()
+    hideFloatingLogo()
+  })
   mainWindow.on('closed', () => {
     mainWindow = null
   })
 
   registerExternalLinkHandler(mainWindow)
   loadRenderer(mainWindow)
+  lastMainWindowBounds = mainWindow.getBounds()
   return mainWindow
+}
+
+function getFloatingLogoBounds(): Rectangle {
+  if (floatingLogoBounds) {
+    floatingLogoBounds = normalizeFloatingLogoBounds(floatingLogoBounds)
+    return floatingLogoBounds
+  }
+
+  const display =
+    lastMainWindowBounds
+      ? screen.getDisplayMatching(lastMainWindowBounds)
+      : mainWindow && !mainWindow.isDestroyed()
+        ? screen.getDisplayMatching(mainWindow.getBounds())
+      : screen.getPrimaryDisplay()
+  const workArea = display.workArea
+
+  return {
+    x: workArea.x + workArea.width - FLOATING_LOGO_SIZE - 20,
+    y: workArea.y + workArea.height - FLOATING_LOGO_SIZE - 20,
+    width: FLOATING_LOGO_SIZE,
+    height: FLOATING_LOGO_SIZE
+  }
+}
+
+function clamp(value: number, min: number, max: number): number {
+  if (max < min) return min
+  return Math.min(Math.max(value, min), max)
+}
+
+function getFloatingLogoDisplay(bounds: Rectangle): Electron.Display {
+  return screen.getDisplayNearestPoint({
+    x: Math.round(bounds.x + bounds.width / 2),
+    y: Math.round(bounds.y + bounds.height / 2)
+  })
+}
+
+function normalizeFloatingLogoBounds(bounds: Rectangle): Rectangle {
+  const display = getFloatingLogoDisplay(bounds)
+  const workArea = display.workArea
+  const width = FLOATING_LOGO_SIZE
+  const height = FLOATING_LOGO_SIZE
+
+  return {
+    x: clamp(bounds.x, workArea.x + FLOATING_LOGO_EDGE_GAP, workArea.x + workArea.width - width - FLOATING_LOGO_EDGE_GAP),
+    y: clamp(bounds.y, workArea.y + FLOATING_LOGO_EDGE_GAP, workArea.y + workArea.height - height - FLOATING_LOGO_EDGE_GAP),
+    width,
+    height
+  }
+}
+
+function snapFloatingLogoBounds(bounds: Rectangle): Rectangle {
+  const normalized = normalizeFloatingLogoBounds(bounds)
+  const display = getFloatingLogoDisplay(normalized)
+  const workArea = display.workArea
+  const distances = [
+    { edge: 'left', value: Math.abs(normalized.x - workArea.x) },
+    { edge: 'right', value: Math.abs(workArea.x + workArea.width - (normalized.x + normalized.width)) },
+    { edge: 'top', value: Math.abs(normalized.y - workArea.y) },
+    { edge: 'bottom', value: Math.abs(workArea.y + workArea.height - (normalized.y + normalized.height)) }
+  ].sort((a, b) => a.value - b.value)
+  const snapped = { ...normalized }
+
+  switch (distances[0]?.edge) {
+    case 'left':
+      snapped.x = workArea.x + FLOATING_LOGO_EDGE_GAP
+      break
+    case 'right':
+      snapped.x = workArea.x + workArea.width - snapped.width - FLOATING_LOGO_EDGE_GAP
+      break
+    case 'top':
+      snapped.y = workArea.y + FLOATING_LOGO_EDGE_GAP
+      break
+    case 'bottom':
+      snapped.y = workArea.y + workArea.height - snapped.height - FLOATING_LOGO_EDGE_GAP
+      break
+  }
+
+  return snapped
+}
+
+function setFloatingLogoBounds(bounds: Rectangle): void {
+  floatingLogoBounds = normalizeFloatingLogoBounds(bounds)
+  if (floatingLogoWindow && !floatingLogoWindow.isDestroyed()) {
+    floatingLogoWindow.setBounds(floatingLogoBounds, false)
+  }
+}
+
+function beginFloatingLogoDrag(): void {
+  if (!floatingLogoWindow || floatingLogoWindow.isDestroyed()) return
+
+  const cursor = screen.getCursorScreenPoint()
+  const bounds = floatingLogoWindow.getBounds()
+  floatingLogoDragOffset = {
+    x: cursor.x - bounds.x,
+    y: cursor.y - bounds.y
+  }
+}
+
+function moveFloatingLogoDrag(): void {
+  if (!floatingLogoDragOffset || !floatingLogoWindow || floatingLogoWindow.isDestroyed()) return
+
+  const cursor = screen.getCursorScreenPoint()
+  setFloatingLogoBounds({
+    x: cursor.x - floatingLogoDragOffset.x,
+    y: cursor.y - floatingLogoDragOffset.y,
+    width: FLOATING_LOGO_SIZE,
+    height: FLOATING_LOGO_SIZE
+  })
+}
+
+function endFloatingLogoDrag(): void {
+  if (!floatingLogoWindow || floatingLogoWindow.isDestroyed()) {
+    floatingLogoDragOffset = null
+    return
+  }
+
+  const currentBounds = floatingLogoBounds ?? floatingLogoWindow.getBounds()
+  floatingLogoDragOffset = null
+  setFloatingLogoBounds(snapFloatingLogoBounds(currentBounds))
+}
+
+function createFloatingLogoWindow(): BrowserWindow {
+  if (floatingLogoWindow && !floatingLogoWindow.isDestroyed()) {
+    floatingLogoWindow.setBounds(getFloatingLogoBounds(), false)
+    return floatingLogoWindow
+  }
+
+  floatingLogoWindow = new BrowserWindow({
+    ...getFloatingLogoBounds(),
+    show: false,
+    frame: false,
+    resizable: false,
+    movable: true,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    hasShadow: false,
+    paintWhenInitiallyHidden: true,
+    transparent: true,
+    title: 'G-LLM',
+    backgroundColor: '#00000000',
+    icon: getAppIconPath(),
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.mjs'),
+      sandbox: false,
+      contextIsolation: true
+    }
+  })
+
+  floatingLogoWindow.setMenu(null)
+  floatingLogoWindow.setMenuBarVisibility(false)
+  floatingLogoWindow.setAlwaysOnTop(true, 'floating')
+  floatingLogoWindow.on('close', (event) => {
+    if (!isQuitting) {
+      event.preventDefault()
+      floatingLogoWindow?.hide()
+    }
+  })
+  floatingLogoWindow.on('closed', () => {
+    floatingLogoWindow = null
+  })
+
+  registerExternalLinkHandler(floatingLogoWindow)
+  loadRenderer(floatingLogoWindow, 'floating-logo')
+  return floatingLogoWindow
+}
+
+function revealFloatingLogoWindow(window: BrowserWindow): void {
+  window.setBounds(getFloatingLogoBounds(), false)
+  window.setAlwaysOnTop(true, 'floating')
+  window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  window.showInactive()
+  window.moveTop()
+}
+
+function showFloatingLogo(): void {
+  if (process.platform !== 'win32' || isQuitting) return
+
+  const window = createFloatingLogoWindow()
+  if (window.webContents.isLoading()) {
+    window.webContents.once('did-finish-load', () => {
+      if (!window.isDestroyed() && mainHiddenMode === 'floating') {
+        revealFloatingLogoWindow(window)
+      }
+    })
+    return
+  }
+
+  revealFloatingLogoWindow(window)
+}
+
+function hideFloatingLogo(): void {
+  if (floatingLogoWindow && !floatingLogoWindow.isDestroyed()) {
+    floatingLogoWindow.hide()
+  }
+}
+
+function hideFloatingLogoToTray(): void {
+  mainHiddenMode = 'tray'
+  hideFloatingLogo()
+}
+
+function showFloatingLogoFromTray(): void {
+  if (process.platform !== 'win32') return
+
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (!mainWindow.isMinimized()) lastMainWindowBounds = mainWindow.getNormalBounds()
+    mainWindow.hide()
+  }
+  quickWindow?.hide()
+  mainHiddenMode = 'floating'
+  showFloatingLogo()
 }
 
 function getQuickWindowBounds(anchorBounds?: Rectangle): Rectangle {
@@ -205,7 +463,7 @@ function createQuickWindow(anchorBounds?: Rectangle): BrowserWindow {
   quickWindow.on('close', (event) => {
     if (!isQuitting) {
       event.preventDefault()
-      quickWindow?.hide()
+      hideQuickWindow()
     }
   })
   quickWindow.on('closed', () => {
@@ -221,6 +479,7 @@ function showQuickWindow(anchorBounds?: Rectangle): void {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.hide()
   }
+  hideFloatingLogo()
 
   const window = createQuickWindow(anchorBounds)
   window.setBounds(getQuickWindowBounds(anchorBounds), false)
@@ -228,9 +487,38 @@ function showQuickWindow(anchorBounds?: Rectangle): void {
   window.focus()
 }
 
+function hideQuickWindow(): void {
+  quickWindow?.hide()
+
+  if (mainHiddenMode === 'floating') {
+    showFloatingLogo()
+  }
+}
+
+function showFloatingLogoContextMenu(): void {
+  if (!floatingLogoWindow || floatingLogoWindow.isDestroyed()) return
+
+  const menu = Menu.buildFromTemplate([
+    {
+      label: '打开',
+      click: () => showQuickWindow(floatingLogoWindow?.getBounds())
+    },
+    {
+      label: '隐藏',
+      click: () => hideFloatingLogoToTray()
+    },
+    { type: 'separator' },
+    {
+      label: '退出',
+      click: () => quitApp()
+    }
+  ])
+  menu.popup({ window: floatingLogoWindow })
+}
+
 function toggleQuickWindow(anchorBounds?: Rectangle): void {
   if (quickWindow?.isVisible()) {
-    quickWindow.hide()
+    hideQuickWindow()
     return
   }
 
@@ -248,10 +536,12 @@ function handleTrayClick(anchorBounds?: Rectangle): void {
 }
 
 function setupTray(): void {
-  if (process.platform !== 'darwin' || tray) return
+  if (!['darwin', 'win32'].includes(process.platform) || tray) return
 
-  const icon = nativeImage.createFromPath(getTrayIconPath()).resize({ height: 19, quality: 'best' })
-  icon.setTemplateImage(true)
+  const icon = nativeImage.createFromPath(getTrayIconPath()).resize(
+    process.platform === 'darwin' ? { height: 19, quality: 'best' } : { width: 16, height: 16, quality: 'best' }
+  )
+  if (process.platform === 'darwin') icon.setTemplateImage(true)
   tray = new Tray(icon)
   tray.setToolTip('G-LLM 快速对话')
   tray.on('click', (_, bounds) => handleTrayClick(bounds))
@@ -259,16 +549,22 @@ function setupTray(): void {
     Menu.buildFromTemplate([
       { label: '打开快速对话', click: () => showQuickWindow(tray?.getBounds()) },
       { label: '打开主窗口', click: () => createWindow() },
+      ...(process.platform === 'win32'
+        ? [{ label: '显示悬浮窗', click: () => showFloatingLogoFromTray() }]
+        : []),
       { type: 'separator' },
       {
         label: '退出 G-LLM',
-        click: () => {
-          isQuitting = true
-          app.quit()
-        }
+        click: () => quitApp()
       }
     ])
   )
+}
+
+function quitApp(): void {
+  isQuitting = true
+  mainHiddenMode = 'none'
+  app.quit()
 }
 
 function broadcastActiveAssistantChange(): void {
@@ -392,11 +688,29 @@ app.whenReady().then(() => {
     app.relaunch()
     app.exit(0)
   })
+  ipcMain.handle('app:quit', () => {
+    quitApp()
+  })
   ipcMain.handle('app:show-main-window', () => {
     createWindow()
   })
+  ipcMain.handle('app:show-quick-panel', () => {
+    showQuickWindow(floatingLogoWindow?.getBounds())
+  })
   ipcMain.handle('app:hide-quick-panel', () => {
-    quickWindow?.hide()
+    hideQuickWindow()
+  })
+  ipcMain.handle('app:show-floating-logo-menu', () => {
+    showFloatingLogoContextMenu()
+  })
+  ipcMain.on('app:floating-logo-drag-start', (event) => {
+    if (BrowserWindow.fromWebContents(event.sender) === floatingLogoWindow) beginFloatingLogoDrag()
+  })
+  ipcMain.on('app:floating-logo-drag-move', (event) => {
+    if (BrowserWindow.fromWebContents(event.sender) === floatingLogoWindow) moveFloatingLogoDrag()
+  })
+  ipcMain.on('app:floating-logo-drag-end', (event) => {
+    if (BrowserWindow.fromWebContents(event.sender) === floatingLogoWindow) endFloatingLogoDrag()
   })
   ipcMain.handle('assistant:get-active', () => activeAssistantId)
   ipcMain.handle('assistant:set-active', (_, id: string) => {
@@ -515,7 +829,14 @@ app.whenReady().then(() => {
 
   setupTray()
   createWindow()
+  if (process.platform === 'win32') createFloatingLogoWindow()
   void trackTelemetryEvent('app_started')
+
+  screen.on('display-metrics-changed', () => {
+    if (floatingLogoWindow?.isVisible()) {
+      floatingLogoWindow.setBounds(getFloatingLogoBounds(), false)
+    }
+  })
 
   app.on('activate', () => {
     createWindow()
@@ -527,5 +848,5 @@ app.on('before-quit', () => {
 })
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit()
+  if (process.platform !== 'darwin' && isQuitting) app.quit()
 })

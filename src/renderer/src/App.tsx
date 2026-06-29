@@ -1124,7 +1124,7 @@ export default function App() {
 
   function openSelectionContextMenu(event: ReactMouseEvent, message: ChatMessage) {
     const selection = getMessageSelectionForMessage(message.id)
-    if (!selection || message.role !== 'assistant') {
+    if (!selection) {
       setSelectionMenu(null)
       return
     }
@@ -3517,6 +3517,15 @@ function SettingsPanel({
     await window.gllm.relaunchApp()
   }
 
+  const isWindows = window.gllm.platform === 'win32'
+
+  async function quitApp() {
+    const confirmed = window.confirm('确定退出 G-LLM 吗？关闭主窗口只会隐藏到托盘，最小化会显示右下角浮动 Logo。退出会关闭主窗口、小窗口和浮动 Logo。')
+    if (!confirmed) return
+
+    await window.gllm.quitApp()
+  }
+
   return (
     <div className="drawer-backdrop" onClick={onClose}>
       <section className="settings-drawer provider-drawer" onClick={(event) => event.stopPropagation()}>
@@ -3977,6 +3986,23 @@ function SettingsPanel({
               </label>
               <p>关闭后，客户端不会继续发送匿名使用统计。已关闭状态会保存在本地设置中。</p>
             </section>
+
+            {isWindows && (
+              <section className="app-lifecycle-section">
+                <div className="data-location-head">
+                  <div>
+                    <strong>应用驻留与退出</strong>
+                    <small>
+                      Windows 下关闭主窗口会隐藏到系统托盘；最小化会显示右下角浮动 Logo。托盘菜单可重新显示悬浮窗，退出请使用这里、托盘菜单或浮动 Logo 右键菜单。
+                    </small>
+                  </div>
+                </div>
+                <button className="danger-action app-quit-button" onClick={quitApp} type="button">
+                  <Power size={16} />
+                  退出 G-LLM
+                </button>
+              </section>
+            )}
 
             <div className="form-actions settings-panel-actions">
               <button className="secondary-action" onClick={onClose} type="button">

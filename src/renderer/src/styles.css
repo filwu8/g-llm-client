@@ -25,6 +25,23 @@ body.quick-window-body {
   background: transparent;
 }
 
+html.quick-window-document,
+html.floating-logo-document {
+  background: transparent;
+}
+
+body.floating-logo-body {
+  min-width: 0;
+  min-height: 0;
+  background: transparent;
+}
+
+body.floating-logo-body #root {
+  width: 100vw;
+  height: 100vh;
+  background: transparent;
+}
+
 button,
 input,
 select,
@@ -4008,6 +4025,24 @@ button {
   margin: 0;
 }
 
+.app-lifecycle-section {
+  display: grid;
+  gap: 12px;
+  border: 1px solid #f0c7c2;
+  border-radius: 8px;
+  background: #fff;
+  margin-top: 14px;
+  padding: 12px;
+}
+
+.app-lifecycle-section .data-location-head {
+  align-items: center;
+}
+
+.app-quit-button {
+  width: 100%;
+}
+
 .data-location-section {
   display: grid;
   gap: 10px;
@@ -4659,6 +4694,50 @@ button {
   cursor: default;
   background: #e6ebee;
   color: #98a2a9;
+}
+
+.floating-logo-button {
+  -webkit-user-select: none;
+  display: grid;
+  width: 100vw;
+  height: 100vh;
+  cursor: pointer;
+  place-items: center;
+  background: transparent;
+  padding: 0;
+  touch-action: none;
+  user-select: none;
+}
+
+.floating-logo-mark {
+  -webkit-user-drag: none;
+  display: block;
+  width: 76px;
+  height: 76px;
+  filter: none;
+  object-fit: contain;
+  pointer-events: none;
+  transition:
+    transform 0.14s ease,
+    opacity 0.14s ease;
+}
+
+.floating-logo-button:hover .floating-logo-mark {
+  transform: translateY(-1px) scale(1.04);
+}
+
+.floating-logo-button.dragging {
+  cursor: grabbing;
+}
+
+.floating-logo-button.dragging .floating-logo-mark {
+  filter: none;
+  opacity: 0.96;
+  transform: scale(0.96);
+}
+
+.floating-logo-button:focus-visible .floating-logo-mark {
+  outline: none;
 }
 
 @media (max-width: 1180px) {
