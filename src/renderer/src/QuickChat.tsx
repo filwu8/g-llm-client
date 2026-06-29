@@ -276,7 +276,7 @@ export default function QuickChat() {
         const next = applyChatChunk(active, chunk)
         conversationRef.current = next
         setConversations((current) => [next, ...current.filter((item) => item.id !== next.id)])
-        void window.gllm.saveConversation(next)
+        if (chunk.done) void window.gllm.saveConversation(next)
         return next
       })
 

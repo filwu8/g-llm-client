@@ -765,14 +765,14 @@ export default function App() {
             updatedConversation = applyChatChunkToConversation(draftConversation, chunk)
             const nextWithDraft = [updatedConversation, ...current.filter((conversation) => conversation.id !== chunk.conversationId)]
             streamingConversationDraftsRef.current[chunk.conversationId] = updatedConversation
-            void window.gllm.saveConversation(updatedConversation)
+            if (chunk.done) void window.gllm.saveConversation(updatedConversation)
             return nextWithDraft
           }
         }
 
         if (updatedConversation) {
           streamingConversationDraftsRef.current[chunk.conversationId] = updatedConversation
-          void window.gllm.saveConversation(updatedConversation)
+          if (chunk.done) void window.gllm.saveConversation(updatedConversation)
         }
         return next
       })
