@@ -63,6 +63,41 @@ jobs:
 
       - name: Package app
         run: pnpm ${{ matrix.package_script }}
+        env:
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+
+      - name: Verify Windows signatures
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        env:
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:WIN_CSC_LINK)) {
+            Write-Host "WIN_CSC_LINK is not configured; Windows artifacts will be unsigned."
+            exit 0
+          }
+
+          $targets = @(
+            "dist\G-LLM-Setup-*.exe",
+            "dist\win-unpacked\G-LLM.exe"
+          )
+
+          $files = foreach ($target in $targets) {
+            Get-ChildItem -Path $target -ErrorAction SilentlyContinue
+          }
+
+          if (-not $files) {
+            throw "No Windows executable artifacts were found for signature verification."
+          }
+
+          foreach ($file in $files) {
+            $signature = Get-AuthenticodeSignature -LiteralPath $file.FullName
+            Write-Host "$($file.FullName): $($signature.Status)"
+            if ($signature.Status -ne "Valid") {
+              throw "Invalid or missing signature: $($file.FullName)"
+            }
+          }
 
       - name: Upload packaged artifacts
         uses: actions/upload-artifact@v4
