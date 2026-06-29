@@ -98,12 +98,8 @@
       "icon": "build/icon.ico",
       "executableName": "G-LLM",
       "target": [
-        "nsis",
-        "portable"
+        "nsis"
       ]
-    },
-    "portable": {
-      "artifactName": "G-LLM-Portable-${version}-${arch}.${ext}"
     },
     "nsis": {
       "include": "build/installer.nsh",
