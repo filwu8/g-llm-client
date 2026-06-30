@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, AtSign, Copy, ExternalLink, MessageSquarePlus, Settings, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, AtSign, Copy, ExternalLink, MessageSquarePlus, X } from 'lucide-react'
 import {
   type KeyboardEvent,
   type MouseEvent as ReactMouseEvent,
@@ -489,9 +489,6 @@ export default function QuickChat() {
           </button>
           <button title="打开完整窗口" type="button" onClick={() => void openMainWindow()}>
             <ExternalLink size={17} />
-          </button>
-          <button title="设置" type="button" onClick={() => void openMainWindow()}>
-            <Settings size={17} />
           </button>
           <button title="关闭" type="button" onClick={() => void window.gllm.hideQuickPanel()}>
             <X size={18} />
