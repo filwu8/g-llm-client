@@ -161,6 +161,12 @@ interface SelectionContextMenu {
   html: string
 }
 
+interface ImageAttachmentContextMenu {
+  x: number
+  y: number
+  attachment: PreparedAttachment
+}
+
 type SettingsTab = 'providers' | 'personalization' | 'storage' | 'about'
 
 const settingsTabs: Array<{ id: SettingsTab; label: string }> = [
@@ -634,6 +640,7 @@ export default function App() {
   const [webSearchEnabled, setWebSearchEnabled] = useState(false)
   const [toolNotice, setToolNotice] = useState('')
   const [selectionMenu, setSelectionMenu] = useState<SelectionContextMenu | null>(null)
+  const [imageAttachmentMenu, setImageAttachmentMenu] = useState<ImageAttachmentContextMenu | null>(null)
   const [pendingAttachments, setPendingAttachments] = useState<PreparedAttachment[]>([])
   const [pendingQuoteRefs, setPendingQuoteRefs] = useState<KnowledgeReference[]>([])
   const [pendingKnowledgeRefs, setPendingKnowledgeRefs] = useState<KnowledgeReference[]>([])
@@ -811,9 +818,12 @@ export default function App() {
   }, [activeAssistantId])
 
   useEffect(() => {
-    if (!selectionMenu) return
+    if (!selectionMenu && !imageAttachmentMenu) return
 
-    const closeMenu = () => setSelectionMenu(null)
+    const closeMenu = () => {
+      setSelectionMenu(null)
+      setImageAttachmentMenu(null)
+    }
     const closeMenuOnEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') closeMenu()
     }
@@ -826,7 +836,7 @@ export default function App() {
       window.removeEventListener('resize', closeMenu)
       window.removeEventListener('keydown', closeMenuOnEscape)
     }
-  }, [selectionMenu])
+  }, [selectionMenu, imageAttachmentMenu])
 
   useEffect(() => {
     setMessageAutoFollow(true)
@@ -943,6 +953,32 @@ export default function App() {
 
   function removePendingAttachment(id: string) {
     setPendingAttachments((current) => current.filter((attachment) => attachment.id !== id))
+  }
+
+  function openImageAttachmentMenu(event: ReactMouseEvent, attachment: PreparedAttachment) {
+    if (attachment.kind !== 'image' || !attachment.dataUrl) return
+
+    event.preventDefault()
+    event.stopPropagation()
+    setSelectionMenu(null)
+    setImageAttachmentMenu({
+      x: Math.min(event.clientX, window.innerWidth - 156),
+      y: Math.min(event.clientY, window.innerHeight - 94),
+      attachment
+    })
+  }
+
+  async function copyImageAttachmentToClipboard() {
+    if (!imageAttachmentMenu?.attachment.dataUrl) return
+
+    try {
+      await window.gllm.copyImageToClipboard(imageAttachmentMenu.attachment.dataUrl)
+      showToolNotice('已复制图片到剪贴板')
+    } catch {
+      showToolNotice('复制图片失败，请重新截图或保存后复制')
+    } finally {
+      setImageAttachmentMenu(null)
+    }
   }
 
   async function handleComposerPaste(event: ReactClipboardEvent<HTMLTextAreaElement>) {
@@ -1608,11 +1644,18 @@ export default function App() {
                             {message.attachments.map((attachment) => (
                               <span
                                 key={attachment.id}
-                                className="attachment-chip"
+                                className={`attachment-chip ${attachment.kind === 'image' && attachment.dataUrl ? 'image-chip' : ''}`}
                                 title={`${attachment.name} · ${formatAttachmentSize(attachment.size)}`}
+                                onContextMenu={(event) => openImageAttachmentMenu(event, attachment)}
                               >
-                                {attachment.kind === 'image' ? <ImagePlus size={14} /> : <Paperclip size={14} />}
-                                {attachment.name}
+                                {attachment.kind === 'image' && attachment.dataUrl ? (
+                                  <img alt="" src={attachment.dataUrl} />
+                                ) : attachment.kind === 'image' ? (
+                                  <ImagePlus size={14} />
+                                ) : (
+                                  <Paperclip size={14} />
+                                )}
+                                <span>{attachment.name}</span>
                               </span>
                             ))}
                           </div>
@@ -1730,6 +1773,19 @@ export default function App() {
               </button>
             </div>
           )}
+          {imageAttachmentMenu && (
+            <div
+              className="selection-context-menu"
+              style={{ left: imageAttachmentMenu.x, top: imageAttachmentMenu.y }}
+              onClick={(event) => event.stopPropagation()}
+              onMouseDown={(event) => event.preventDefault()}
+            >
+              <button type="button" onClick={() => void copyImageAttachmentToClipboard()}>
+                <Copy size={15} />
+                复制图片
+              </button>
+            </div>
+          )}
           {showScrollToLatest && (
             <button
               className="scroll-latest-button"
@@ -1827,10 +1883,17 @@ export default function App() {
                 {pendingAttachments.map((attachment) => (
                   <span
                     key={attachment.id}
-                    className={`attachment-chip ${attachment.kind === 'image' && !attachment.dataUrl ? 'warning' : ''}`}
+                    className={`attachment-chip ${attachment.kind === 'image' && attachment.dataUrl ? 'image-chip' : ''} ${attachment.kind === 'image' && !attachment.dataUrl ? 'warning' : ''}`}
                     title={`${attachment.name} · ${formatAttachmentSize(attachment.size)} · ${getAttachmentSupportLabel(attachment, modelCapabilities)}`}
+                    onContextMenu={(event) => openImageAttachmentMenu(event, attachment)}
                   >
-                    {attachment.kind === 'image' ? <ImagePlus size={14} /> : <Paperclip size={14} />}
+                    {attachment.kind === 'image' && attachment.dataUrl ? (
+                      <img alt="" src={attachment.dataUrl} />
+                    ) : attachment.kind === 'image' ? (
+                      <ImagePlus size={14} />
+                    ) : (
+                      <Paperclip size={14} />
+                    )}
                     <span>{attachment.name}</span>
                     <button onClick={() => removePendingAttachment(attachment.id)} title="移除" type="button">
                       <X size={13} />

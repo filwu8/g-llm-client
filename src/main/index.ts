@@ -1,5 +1,18 @@
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, screen, shell, Tray, type Point, type Rectangle } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  clipboard,
+  dialog,
+  ipcMain,
+  Menu,
+  nativeImage,
+  screen,
+  shell,
+  Tray,
+  type Point,
+  type Rectangle
+} from 'electron'
 import { statSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -70,6 +83,13 @@ let floatingLogoDragOffset: Point | null = null
 
 const FLOATING_LOGO_SIZE = 88
 const FLOATING_LOGO_EDGE_GAP = 8
+const SCREENSHOT_WINDOW_HIDE_DELAY_MS = 180
+const shouldUseSingleInstanceLock = process.platform === 'win32'
+const gotSingleInstanceLock = !shouldUseSingleInstanceLock || app.requestSingleInstanceLock()
+
+if (!gotSingleInstanceLock) {
+  app.quit()
+}
 
 function formatBuildCode(date: Date): string {
   const parts = [
@@ -123,6 +143,16 @@ function registerExternalLinkHandler(window: BrowserWindow): void {
     }
     return { action: 'deny' }
   })
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function showExistingInstance(): void {
+  if (process.platform !== 'win32') return
+
+  createWindow()
 }
 
 function createWindow(): BrowserWindow {
@@ -444,7 +474,7 @@ function createQuickWindow(anchorBounds?: Rectangle): BrowserWindow {
     fullscreenable: false,
     skipTaskbar: true,
     alwaysOnTop: true,
-    hasShadow: true,
+    hasShadow: process.platform !== 'win32',
     transparent: true,
     title: 'G-LLM 快速对话',
     backgroundColor: '#00000000',
@@ -587,7 +617,41 @@ function broadcastConversationChange(conversationId: string, action: 'saved' | '
   }
 }
 
+async function captureScreenshotForWindow(owner: BrowserWindow | null): Promise<Awaited<ReturnType<typeof captureScreenshot>>> {
+  const shouldHideOwner = process.platform === 'win32' && owner && !owner.isDestroyed() && owner.isVisible()
+
+  if (shouldHideOwner) {
+    owner.hide()
+    await sleep(SCREENSHOT_WINDOW_HIDE_DELAY_MS)
+  }
+
+  try {
+    return await captureScreenshot()
+  } finally {
+    if (shouldHideOwner && owner && !owner.isDestroyed()) {
+      if (owner.isMinimized()) owner.restore()
+      owner.show()
+      owner.focus()
+    }
+  }
+}
+
+function copyImageDataUrlToClipboard(dataUrl: string): void {
+  const image = nativeImage.createFromDataURL(dataUrl)
+  if (image.isEmpty()) throw new Error('Invalid image data')
+
+  clipboard.writeImage(image)
+}
+
+if (gotSingleInstanceLock && shouldUseSingleInstanceLock) {
+  app.on('second-instance', () => {
+    showExistingInstance()
+  })
+}
+
 app.whenReady().then(() => {
+  if (!gotSingleInstanceLock) return
+
   electronApp.setAppUserModelId('com.gllm.wujijie')
   Menu.setApplicationMenu(null)
 
@@ -783,7 +847,8 @@ app.whenReady().then(() => {
   ipcMain.handle('tool:delete', (_, id: string) => deleteTool(id))
   ipcMain.handle('attachment:pick', (event, kind) => pickAttachments(BrowserWindow.fromWebContents(event.sender), kind))
   ipcMain.handle('attachment:prepare-pasted', (_, inputs) => preparePastedAttachments(inputs))
-  ipcMain.handle('attachment:screenshot', () => captureScreenshot())
+  ipcMain.handle('attachment:screenshot', (event) => captureScreenshotForWindow(BrowserWindow.fromWebContents(event.sender)))
+  ipcMain.handle('clipboard:copy-image', (_, dataUrl: string) => copyImageDataUrlToClipboard(dataUrl))
 
   ipcMain.on('chat:stream', async (event, request) => {
     const chunkBase = {

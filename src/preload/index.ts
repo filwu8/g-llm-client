@@ -49,6 +49,7 @@ const api = {
   preparePastedAttachments: (inputs: ClipboardAttachmentInput[]): Promise<PreparedAttachment[]> =>
     ipcRenderer.invoke('attachment:prepare-pasted', inputs),
   captureScreenshot: (): Promise<PreparedAttachment | null> => ipcRenderer.invoke('attachment:screenshot'),
+  copyImageToClipboard: (dataUrl: string): Promise<void> => ipcRenderer.invoke('clipboard:copy-image', dataUrl),
   getDataLocation: (): Promise<DataLocationInfo> => ipcRenderer.invoke('storage:get-data-location'),
   openDataDirectory: (): Promise<void> => ipcRenderer.invoke('storage:open-data-directory'),
   chooseDataDirectory: (): Promise<DataLocationChangeResult | null> => ipcRenderer.invoke('storage:choose-data-directory'),

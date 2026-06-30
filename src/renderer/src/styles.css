@@ -1306,6 +1306,19 @@ button {
   padding: 6px 8px;
 }
 
+.attachment-chip.image-chip {
+  max-width: 320px;
+  cursor: context-menu;
+}
+
+.attachment-chip.image-chip img {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  border-radius: 6px;
+  object-fit: cover;
+}
+
 .message.user .attachment-chip {
   border-color: #ccd8d3;
   background: #f8fbfa;
@@ -4285,7 +4298,7 @@ button {
   border: 1px solid rgb(28 36 42 / 0.12);
   border-radius: 18px;
   background: rgb(251 252 252 / 0.98);
-  box-shadow: 0 24px 80px rgb(16 20 24 / 0.24);
+  box-shadow: none;
   grid-template-rows: 72px minmax(0, 1fr) auto auto;
 }
 
