@@ -25,14 +25,17 @@ import {
   deleteConversation,
   deleteMemory,
   deleteNote,
+  deleteProject,
   deleteProvider,
   deleteTool,
   exportDataArchive,
+  getActiveProjectId,
   getAssistants,
   getConversations,
   getDataLocationInfo,
   getMemories,
   getNotes,
+  getProjects,
   getProviders,
   getSettings,
   getTools,
@@ -43,8 +46,10 @@ import {
   saveConversation,
   saveMemory,
   saveNote,
+  saveProject,
   saveProvider,
   saveTool,
+  setActiveProjectId,
   setSettings
 } from './storage'
 import {
@@ -645,6 +650,25 @@ function broadcastConversationChange(conversationId: string, action: 'saved' | '
   }
 }
 
+function getAppStateSnapshot() {
+  const activeProjectId = getActiveProjectId()
+
+  return {
+    appVersion: app.getVersion(),
+    appBuildCode: getAppBuildCode(),
+    dataLocation: getDataLocationInfo(),
+    activeProjectId,
+    projects: getProjects(),
+    settings: getSettings(),
+    providers: getProviders(),
+    assistants: getAssistants(activeProjectId),
+    conversations: getConversations(activeProjectId),
+    notes: getNotes(activeProjectId),
+    memories: getMemories(activeProjectId),
+    tools: getTools(activeProjectId)
+  }
+}
+
 async function captureScreenshotForWindow(owner: BrowserWindow | null): Promise<Awaited<ReturnType<typeof captureScreenshot>>> {
   const shouldHideOwner = process.platform === 'win32' && owner && !owner.isDestroyed() && owner.isVisible()
 
@@ -703,18 +727,7 @@ app.whenReady().then(() => {
     writeMainLog(`Child process gone: type=${details.type}, reason=${details.reason}, exitCode=${details.exitCode}`)
   })
 
-  ipcMain.handle('app:get-state', () => ({
-    appVersion: app.getVersion(),
-    appBuildCode: getAppBuildCode(),
-    dataLocation: getDataLocationInfo(),
-    settings: getSettings(),
-    providers: getProviders(),
-    assistants: getAssistants(),
-    conversations: getConversations(),
-    notes: getNotes(),
-    memories: getMemories(),
-    tools: getTools()
-  }))
+  ipcMain.handle('app:get-state', () => getAppStateSnapshot())
 
   ipcMain.handle('storage:get-data-location', () => getDataLocationInfo())
   ipcMain.handle('storage:open-data-directory', async () => {
@@ -828,6 +841,22 @@ app.whenReady().then(() => {
     activeAssistantId = nextId
     broadcastActiveAssistantChange()
     return activeAssistantId
+  })
+
+  ipcMain.handle('project:set-active', (_, id: string) => {
+    setActiveProjectId(id)
+    return getAppStateSnapshot()
+  })
+  ipcMain.handle('project:save', (_, project) => {
+    const saved = saveProject(project)
+    return {
+      saved,
+      state: getAppStateSnapshot()
+    }
+  })
+  ipcMain.handle('project:delete', (_, id: string) => {
+    deleteProject(id)
+    return getAppStateSnapshot()
   })
 
   ipcMain.handle('settings:save', async (_, settings) => {

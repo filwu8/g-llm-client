@@ -74,6 +74,7 @@ export type AssistantColor = 'ink' | 'green' | 'amber' | 'blue' | 'rose' | 'teal
 
 export interface Assistant {
   id: string
+  projectId?: string
   name: string
   title: string
   tone: string
@@ -91,6 +92,7 @@ export interface Assistant {
 
 export interface Conversation {
   id: string
+  projectId?: string
   assistantId: string
   title: string
   messages: ChatMessage[]
@@ -105,6 +107,7 @@ export interface Conversation {
 
 export interface KnowledgeNote {
   id: string
+  projectId?: string
   title: string
   content: string
   assistantId?: string
@@ -116,6 +119,7 @@ export interface KnowledgeNote {
 
 export interface AssistantMemory {
   id: string
+  projectId?: string
   assistantId: string
   content: string
   enabled: boolean
@@ -129,6 +133,7 @@ export type ToolConfigType = 'function' | 'mcp' | 'plugin'
 
 export interface ToolConfig {
   id: string
+  projectId?: string
   type: ToolConfigType
   name: string
   description?: string
@@ -204,6 +209,17 @@ export interface ProviderCheckResult {
   ok: boolean
   message: string
   models?: ProviderModel[]
+}
+
+export interface Project {
+  id: string
+  name: string
+  description?: string
+  logoDataUrl?: string
+  modelProviderId?: string
+  modelId?: string
+  createdAt: number
+  updatedAt: number
 }
 
 export interface AssistantSuggestion {
@@ -297,6 +313,8 @@ export interface AppStateSnapshot {
   appVersion: string
   appBuildCode: string
   dataLocation: DataLocationInfo
+  activeProjectId: string
+  projects: Project[]
   settings: AppSettings
   providers: ApiProvider[]
   assistants: Assistant[]

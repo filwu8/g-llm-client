@@ -19,6 +19,7 @@ import type {
   DataLocationInfo,
   KnowledgeNote,
   PreparedAttachment,
+  Project,
   ProviderCheckResult,
   ToolConfig
 } from '../shared/types'
@@ -32,6 +33,10 @@ const api = {
   checkProvider: (provider: ApiProvider): Promise<ProviderCheckResult> => ipcRenderer.invoke('provider:check', provider),
   refreshProviderModels: (provider: ApiProvider): Promise<ApiProvider> =>
     ipcRenderer.invoke('provider:refresh-models', provider),
+  setActiveProjectId: (id: string): Promise<AppStateSnapshot> => ipcRenderer.invoke('project:set-active', id),
+  saveProject: (project: Project): Promise<{ saved: Project; state: AppStateSnapshot }> =>
+    ipcRenderer.invoke('project:save', project),
+  deleteProject: (id: string): Promise<AppStateSnapshot> => ipcRenderer.invoke('project:delete', id),
   saveAssistant: (assistant: Assistant): Promise<Assistant> => ipcRenderer.invoke('assistant:save', assistant),
   deleteAssistant: (id: string): Promise<void> => ipcRenderer.invoke('assistant:delete', id),
   suggestAssistant: (request: AssistantSuggestionRequest): Promise<AssistantSuggestion> =>

@@ -8,6 +8,7 @@ import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { DEFAULT_ASSISTANTS } from '../shared/assistants'
 import { inferModelType, normalizeModelCapabilities } from '../shared/modelCapabilities'
 import { DEFAULT_PROVIDER, DEFAULT_PROVIDER_ID } from '../shared/providers'
+import { sanitizeAssistantSystemPrompt, universalFallbackPrompt } from '../shared/assistantPromptPolicy'
 import type {
   ApiProvider,
   AppSettings,
@@ -24,6 +25,7 @@ import type {
   MessageSendShortcut,
   KnowledgeNote,
   PreparedAttachment,
+  Project,
   ProviderModel,
   ToolConfig,
   ToolConfigType,
@@ -39,6 +41,8 @@ type LegacySettings = Partial<AppSettings> & {
 
 interface StoreSchema {
   settings: LegacySettings
+  activeProjectId: string
+  projects: Project[]
   providers: ApiProvider[]
   assistants: Assistant[]
   conversations: Conversation[]
@@ -59,6 +63,7 @@ const storeFileName = 'g-llm-client.json'
 const archiveManifestFileName = 'g-llm-data-archive.json'
 const importBackupPrefix = 'backup-before-gllm-import-'
 const migrationBackupPrefix = 'backup-before-gllm-migration-'
+const defaultProjectId = 'project_default'
 const assistantColors: AssistantColor[] = ['ink', 'green', 'amber', 'blue', 'rose', 'teal', 'violet', 'slate']
 const assistantIcons: AssistantIcon[] = [
   'sparkles',
@@ -504,6 +509,8 @@ const store = new Store<StoreSchema>({
   cwd: activeDataRoot,
   defaults: {
     settings: defaultSettings,
+    activeProjectId: defaultProjectId,
+    projects: [],
     providers: [],
     assistants: [],
     conversations: [],
@@ -513,6 +520,96 @@ const store = new Store<StoreSchema>({
     installationId: ''
   }
 })
+
+const defaultProjectName = '无极界'
+const defaultProjectDescription = '默认空间，用于保存你的通用助手、历史会话和全局资料'
+
+function getDefaultProject(): Project {
+  const now = Date.now()
+  return {
+    id: defaultProjectId,
+    name: defaultProjectName,
+    description: defaultProjectDescription,
+    createdAt: now,
+    updatedAt: now
+  }
+}
+
+function sanitizeProject(project: Project): Project {
+  const now = Date.now()
+  const id = String(project.id ?? '').trim() || `project_${now}_${Math.random().toString(16).slice(2)}`
+  const rawName = String(project.name ?? '').trim().slice(0, 40)
+  const rawDescription = String(project.description ?? '').trim().slice(0, 300)
+  const isDefaultProject = id === defaultProjectId
+
+  return {
+    id,
+    name: isDefaultProject && (!rawName || rawName === '默认项目') ? defaultProjectName : rawName || '未命名空间',
+    description:
+      isDefaultProject && (!rawDescription || rawDescription === '迁移后的历史数据与全局资料')
+        ? defaultProjectDescription
+        : rawDescription || undefined,
+    logoDataUrl: isDefaultProject ? undefined : sanitizeProjectLogo(project.logoDataUrl),
+    modelProviderId: project.modelProviderId?.trim() || undefined,
+    modelId: project.modelId?.trim() || undefined,
+    createdAt: Number.isFinite(project.createdAt) ? Number(project.createdAt) : now,
+    updatedAt: now
+  }
+}
+
+function sanitizeProjectId(value: unknown, fallback = defaultProjectId): string {
+  const projectId = String(value ?? '').trim()
+  return projectId || fallback
+}
+
+function sanitizeProjectLogo(value: unknown): string | undefined {
+  const logoDataUrl = String(value ?? '').trim()
+  if (!logoDataUrl || !logoDataUrl.startsWith('data:image/')) return undefined
+
+  return logoDataUrl.length <= 2_000_000 ? logoDataUrl : undefined
+}
+
+export function getProjects(): Project[] {
+  const projects = store.get('projects', []).map(sanitizeProject)
+  const hasDefaultProject = projects.some((project) => project.id === defaultProjectId)
+  const next = hasDefaultProject ? projects : [getDefaultProject(), ...projects]
+
+  return next
+}
+
+export function getActiveProjectId(): string {
+  const activeProjectId = sanitizeProjectId(store.get('activeProjectId', defaultProjectId))
+  return getProjects().some((project) => project.id === activeProjectId) ? activeProjectId : defaultProjectId
+}
+
+export function setActiveProjectId(projectId: string): string {
+  const nextProjectId = sanitizeProjectId(projectId)
+  const activeProjectId = getProjects().some((project) => project.id === nextProjectId) ? nextProjectId : defaultProjectId
+  store.set('activeProjectId', activeProjectId)
+  return activeProjectId
+}
+
+export function saveProject(project: Project): Project {
+  const normalized = sanitizeProject(project)
+  const projects = getProjects()
+  const next = [normalized, ...projects.filter((item) => item.id !== normalized.id)]
+  store.set('projects', next.slice(0, 50))
+  return normalized
+}
+
+export function deleteProject(projectId: string): void {
+  const normalizedProjectId = sanitizeProjectId(projectId)
+  if (normalizedProjectId === defaultProjectId) return
+
+  store.set(
+    'projects',
+    getProjects().filter((project) => project.id !== normalizedProjectId)
+  )
+
+  if (getActiveProjectId() === normalizedProjectId) {
+    setActiveProjectId(defaultProjectId)
+  }
+}
 
 function sanitizeProvider(provider: ApiProvider): ApiProvider {
   const now = Date.now()
@@ -682,7 +779,7 @@ function sanitizeMessage(message: ChatMessage): ChatMessage {
   }
 }
 
-function sanitizeConversation(conversation: Conversation): Conversation {
+function sanitizeConversation(conversation: Conversation, fallbackProjectId = getActiveProjectId()): Conversation {
   const now = Date.now()
   const messages = (conversation.messages ?? []).map(sanitizeMessage)
   const totalTokens =
@@ -698,6 +795,7 @@ function sanitizeConversation(conversation: Conversation): Conversation {
   return {
     ...conversation,
     id: conversation.id?.trim() || `conv_${now}_${Math.random().toString(16).slice(2)}`,
+    projectId: sanitizeProjectId(conversation.projectId, fallbackProjectId),
     assistantId: conversation.assistantId?.trim() || DEFAULT_ASSISTANTS[0].id,
     title: conversation.title?.trim() || '新会话',
     messages,
@@ -711,12 +809,13 @@ function sanitizeConversation(conversation: Conversation): Conversation {
   }
 }
 
-function sanitizeNote(note: KnowledgeNote): KnowledgeNote {
+function sanitizeNote(note: KnowledgeNote, fallbackProjectId = getActiveProjectId()): KnowledgeNote {
   const now = Date.now()
   const content = String(note.content ?? '').trim()
 
   return {
     id: note.id?.trim() || `note_${now}_${Math.random().toString(16).slice(2)}`,
+    projectId: sanitizeProjectId(note.projectId, fallbackProjectId),
     title: String(note.title ?? '').trim() || content.slice(0, 32) || '未命名笔记',
     content,
     assistantId: note.assistantId?.trim() || undefined,
@@ -727,7 +826,7 @@ function sanitizeNote(note: KnowledgeNote): KnowledgeNote {
   }
 }
 
-function sanitizeMemory(memory: AssistantMemory): AssistantMemory | null {
+function sanitizeMemory(memory: AssistantMemory, fallbackProjectId = getActiveProjectId()): AssistantMemory | null {
   const now = Date.now()
   const content = String(memory.content ?? '').trim()
   const assistantId = String(memory.assistantId ?? '').trim()
@@ -735,6 +834,7 @@ function sanitizeMemory(memory: AssistantMemory): AssistantMemory | null {
 
   return {
     id: memory.id?.trim() || `memory_${now}_${Math.random().toString(16).slice(2)}`,
+    projectId: sanitizeProjectId(memory.projectId, fallbackProjectId),
     assistantId,
     content: content.slice(0, 4000),
     enabled: Boolean(memory.enabled),
@@ -745,13 +845,14 @@ function sanitizeMemory(memory: AssistantMemory): AssistantMemory | null {
   }
 }
 
-function sanitizeTool(tool: ToolConfig): ToolConfig {
+function sanitizeTool(tool: ToolConfig, fallbackProjectId = getActiveProjectId()): ToolConfig {
   const now = Date.now()
   const typeOptions: ToolConfigType[] = ['function', 'mcp', 'plugin']
   const type = typeOptions.includes(tool.type) ? tool.type : 'function'
 
   return {
     id: tool.id?.trim() || `tool_${now}_${Math.random().toString(16).slice(2)}`,
+    projectId: sanitizeProjectId(tool.projectId, fallbackProjectId),
     type,
     name: String(tool.name ?? '').trim() || (type === 'mcp' ? 'MCP 服务' : type === 'plugin' ? '外部插件' : '函数工具'),
     description: String(tool.description ?? '').trim().slice(0, 600) || undefined,
@@ -809,7 +910,7 @@ export function deleteProvider(id: string): void {
   }
 }
 
-function sanitizeAssistant(assistant: Assistant): Assistant {
+function sanitizeAssistant(assistant: Assistant, fallbackProjectId = getActiveProjectId()): Assistant {
   const now = Date.now()
   const starterPrompts = assistant.starterPrompts
     .map((prompt) => prompt.trim())
@@ -818,6 +919,7 @@ function sanitizeAssistant(assistant: Assistant): Assistant {
 
   return {
     ...assistant,
+    projectId: sanitizeProjectId(assistant.projectId, fallbackProjectId),
     builtIn: Boolean(assistant.builtIn),
     name: assistant.name.trim() || '未命名助手',
     title: assistant.title.trim() || '自定义助手',
@@ -828,8 +930,7 @@ function sanitizeAssistant(assistant: Assistant): Assistant {
     modelProviderId: assistant.modelProviderId?.trim() || undefined,
     modelId: assistant.modelId?.trim() || undefined,
     systemPrompt:
-      assistant.systemPrompt.trim() ||
-      '你是无极界 G-LLM 的专业助手。请用清晰、准确、可执行的方式帮助用户完成任务。',
+      sanitizeAssistantSystemPrompt(assistant.systemPrompt, universalFallbackPrompt),
     starterPrompts: starterPrompts.length > 0 ? starterPrompts : ['帮我分析这个问题', '帮我写一份方案', '把下面内容整理清楚'],
     createdAt: assistant.createdAt ?? now,
     updatedAt: now
@@ -897,117 +998,150 @@ export function getInstallationId(): string {
   return installationId
 }
 
-export function getCustomAssistants(): Assistant[] {
-  return store.get('assistants', [])
+function getAllCustomAssistants(): Assistant[] {
+  return store.get('assistants', []).map((assistant) => sanitizeAssistant(assistant, defaultProjectId))
 }
 
-export function getAssistants(): Assistant[] {
-  const savedAssistants = getCustomAssistants()
+export function getCustomAssistants(projectId = getActiveProjectId()): Assistant[] {
+  const normalizedProjectId = sanitizeProjectId(projectId)
+  return getAllCustomAssistants().filter((assistant) => assistant.projectId === normalizedProjectId)
+}
+
+export function getAssistants(projectId = getActiveProjectId()): Assistant[] {
+  const normalizedProjectId = sanitizeProjectId(projectId)
+  const savedAssistants = getCustomAssistants(normalizedProjectId)
   const defaultIds = new Set(DEFAULT_ASSISTANTS.map((assistant) => assistant.id))
   const savedById = new Map(savedAssistants.map((assistant) => [assistant.id, assistant]))
   const defaults = DEFAULT_ASSISTANTS.map((assistant) => {
     const saved = savedById.get(assistant.id)
-    return saved ? { ...assistant, ...saved, builtIn: true } : assistant
+    return saved ? { ...assistant, ...saved, builtIn: true, projectId: normalizedProjectId } : { ...assistant, projectId: normalizedProjectId }
   })
   const custom = savedAssistants.filter((assistant) => !defaultIds.has(assistant.id))
 
   return [...defaults, ...custom]
 }
 
-export function saveAssistant(assistant: Assistant): Assistant {
-  const normalized = sanitizeAssistant(assistant)
-  const assistants = getCustomAssistants()
-  const next = [normalized, ...assistants.filter((item) => item.id !== normalized.id)]
-  store.set('assistants', next.slice(0, 80))
+export function saveAssistant(assistant: Assistant, projectId = getActiveProjectId()): Assistant {
+  const normalized = sanitizeAssistant(assistant, projectId)
+  const assistants = getAllCustomAssistants()
+  const next = [
+    normalized,
+    ...assistants.filter((item) => !(item.id === normalized.id && item.projectId === normalized.projectId))
+  ]
+  store.set('assistants', next.slice(0, 400))
   return normalized
 }
 
-export function deleteAssistant(id: string): void {
+export function deleteAssistant(id: string, projectId = getActiveProjectId()): void {
   if (DEFAULT_ASSISTANTS.some((assistant) => assistant.id === id)) return
 
+  const normalizedProjectId = sanitizeProjectId(projectId)
   store.set(
     'assistants',
-    getCustomAssistants().filter((assistant) => assistant.id !== id)
+    getAllCustomAssistants().filter((assistant) => !(assistant.id === id && assistant.projectId === normalizedProjectId))
   )
 }
 
-export function getConversations(): Conversation[] {
-  return store.get('conversations', []).map(sanitizeConversation)
+function getAllConversations(): Conversation[] {
+  return store.get('conversations', []).map((conversation) => sanitizeConversation(conversation, defaultProjectId))
 }
 
-export function saveConversation(conversation: Conversation): Conversation {
-  const normalized = sanitizeConversation(conversation)
-  const conversations = getConversations()
+export function getConversations(projectId = getActiveProjectId()): Conversation[] {
+  const normalizedProjectId = sanitizeProjectId(projectId)
+  return getAllConversations().filter((conversation) => conversation.projectId === normalizedProjectId)
+}
+
+export function saveConversation(conversation: Conversation, projectId = getActiveProjectId()): Conversation {
+  const normalized = sanitizeConversation(conversation, projectId)
+  const conversations = getAllConversations()
   const next = [normalized, ...conversations.filter((item) => item.id !== normalized.id)]
-  store.set('conversations', next.slice(0, 100))
+  store.set('conversations', next.slice(0, 1000))
   return normalized
 }
 
 export function deleteConversation(id: string): void {
   store.set(
     'conversations',
-    getConversations().filter((conversation) => conversation.id !== id)
+    getAllConversations().filter((conversation) => conversation.id !== id)
   )
 }
 
-export function getNotes(): KnowledgeNote[] {
-  return store.get('notes', []).map(sanitizeNote).filter((note) => note.content)
+function getAllNotes(): KnowledgeNote[] {
+  return store
+    .get('notes', [])
+    .map((note) => sanitizeNote(note, defaultProjectId))
+    .filter((note) => note.content)
 }
 
-export function saveNote(note: KnowledgeNote): KnowledgeNote {
-  const normalized = sanitizeNote(note)
-  const notes = getNotes()
+export function getNotes(projectId = getActiveProjectId()): KnowledgeNote[] {
+  const normalizedProjectId = sanitizeProjectId(projectId)
+  return getAllNotes().filter((note) => note.projectId === normalizedProjectId)
+}
+
+export function saveNote(note: KnowledgeNote, projectId = getActiveProjectId()): KnowledgeNote {
+  const normalized = sanitizeNote(note, projectId)
+  const notes = getAllNotes()
   const next = [normalized, ...notes.filter((item) => item.id !== normalized.id)]
-  store.set('notes', next.slice(0, 500))
+  store.set('notes', next.slice(0, 2000))
   return normalized
 }
 
 export function deleteNote(id: string): void {
   store.set(
     'notes',
-    getNotes().filter((note) => note.id !== id)
+    getAllNotes().filter((note) => note.id !== id)
   )
 }
 
-export function getMemories(): AssistantMemory[] {
+function getAllMemories(): AssistantMemory[] {
   return store
     .get('memories', [])
-    .map(sanitizeMemory)
+    .map((memory) => sanitizeMemory(memory, defaultProjectId))
     .filter((memory): memory is AssistantMemory => Boolean(memory))
 }
 
-export function saveMemory(memory: AssistantMemory): AssistantMemory {
-  const normalized = sanitizeMemory(memory)
+export function getMemories(projectId = getActiveProjectId()): AssistantMemory[] {
+  const normalizedProjectId = sanitizeProjectId(projectId)
+  return getAllMemories().filter((memory) => memory.projectId === normalizedProjectId)
+}
+
+export function saveMemory(memory: AssistantMemory, projectId = getActiveProjectId()): AssistantMemory {
+  const normalized = sanitizeMemory(memory, projectId)
   if (!normalized) throw new Error('记忆内容不能为空')
 
-  const memories = getMemories()
+  const memories = getAllMemories()
   const next = [normalized, ...memories.filter((item) => item.id !== normalized.id)]
-  store.set('memories', next.slice(0, 300))
+  store.set('memories', next.slice(0, 1000))
   return normalized
 }
 
 export function deleteMemory(id: string): void {
   store.set(
     'memories',
-    getMemories().filter((memory) => memory.id !== id)
+    getAllMemories().filter((memory) => memory.id !== id)
   )
 }
 
-export function getTools(): ToolConfig[] {
-  return store.get('tools', []).map(sanitizeTool)
+function getAllTools(): ToolConfig[] {
+  return store.get('tools', []).map((tool) => sanitizeTool(tool, defaultProjectId))
 }
 
-export function saveTool(tool: ToolConfig): ToolConfig {
-  const normalized = sanitizeTool(tool)
-  const tools = getTools()
+export function getTools(projectId = getActiveProjectId()): ToolConfig[] {
+  const normalizedProjectId = sanitizeProjectId(projectId)
+  return getAllTools().filter((tool) => tool.projectId === normalizedProjectId)
+}
+
+export function saveTool(tool: ToolConfig, projectId = getActiveProjectId()): ToolConfig {
+  const normalized = sanitizeTool(tool, projectId)
+  const tools = getAllTools()
   const next = [normalized, ...tools.filter((item) => item.id !== normalized.id)]
-  store.set('tools', next.slice(0, 80))
+  store.set('tools', next.slice(0, 300))
   return normalized
 }
 
 export function deleteTool(id: string): void {
   store.set(
     'tools',
-    getTools().filter((tool) => tool.id !== id)
+    getAllTools().filter((tool) => tool.id !== id)
   )
 }

@@ -1,4 +1,5 @@
 import type { AssistantColor, AssistantIcon, AssistantSuggestion } from './types'
+import { sanitizeAssistantSystemPrompt } from './assistantPromptPolicy'
 
 export interface AssistantPreset extends AssistantSuggestion {
   id: string
@@ -47,7 +48,7 @@ function preset(
     icon,
     description,
     keywords,
-    systemPrompt,
+    systemPrompt: sanitizeAssistantSystemPrompt(systemPrompt),
     starterPrompts,
     featured
   }

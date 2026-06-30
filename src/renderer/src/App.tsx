@@ -47,6 +47,7 @@ import {
 import {
   type ChangeEvent,
   type ClipboardEvent as ReactClipboardEvent,
+  type FormEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
   type WheelEvent as ReactWheelEvent,
@@ -96,6 +97,7 @@ import {
 import type {
   ApiProvider,
   AppSettings,
+  AppStateSnapshot,
   Assistant,
   AssistantIcon,
   AssistantMemory,
@@ -109,6 +111,7 @@ import type {
   KnowledgeReference,
   KnowledgeNote,
   PreparedAttachment,
+  Project,
   ProviderCheckResult,
   ProviderModel,
   ProviderTemplateCategory,
@@ -133,6 +136,7 @@ const iconMap: Record<AssistantIcon, LucideIcon> = {
 const bottomFollowThreshold = 96
 const maxPastedAttachmentBytes = 12 * 1024 * 1024
 const quoteReferencePrefix = 'quote_'
+const defaultSpaceId = 'project_default'
 const providerTemplateCategoryOrder: ProviderTemplateCategory[] = ['default', 'global', 'china', 'aggregator', 'local']
 const providerTemplateCategoryLabels: Record<ProviderTemplateCategory, string> = {
   default: '默认与自定义',
@@ -169,6 +173,12 @@ interface ImageAttachmentContextMenu {
 
 type SettingsTab = 'providers' | 'personalization' | 'storage' | 'about'
 
+interface SpaceFormPayload {
+  name: string
+  description: string
+  logoDataUrl?: string
+}
+
 const settingsTabs: Array<{ id: SettingsTab; label: string }> = [
   { id: 'providers', label: '模型供应商设置' },
   { id: 'personalization', label: '个性设置' },
@@ -187,8 +197,21 @@ function ModalBackdrop({
   children: ReactNode
   onClose: () => void
 }) {
+  const backdropMouseDownRef = useRef(false)
+
+  function handleMouseDown(event: ReactMouseEvent<HTMLDivElement>) {
+    backdropMouseDownRef.current = closeOnBackdropClick && event.target === event.currentTarget
+  }
+
+  function handleClick(event: ReactMouseEvent<HTMLDivElement>) {
+    if (backdropMouseDownRef.current && event.target === event.currentTarget) {
+      onClose()
+    }
+    backdropMouseDownRef.current = false
+  }
+
   return (
-    <div className={className} onClick={closeOnBackdropClick ? onClose : undefined}>
+    <div className={className} onClick={handleClick} onMouseDown={handleMouseDown}>
       {children}
     </div>
   )
@@ -224,6 +247,36 @@ function formatTokenUnit(value: number): string {
   if (value >= 1_000_000) return `${Number((value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1))}M`
   if (value >= 1_000) return `${Number((value / 1_000).toFixed(value >= 10_000 ? 0 : 1))}K`
   return `${value}`
+}
+
+function getSpaceName(project: Project | null): string {
+  if (!project) return '无极界'
+  if (project.id === defaultSpaceId && (!project.name || project.name === '默认项目')) return '无极界'
+  return project.name || '未命名空间'
+}
+
+function getSpaceDescription(project: Project | null): string {
+  if (!project) return '默认空间'
+  if (project.id === defaultSpaceId) return project.description || '默认空间'
+  return project.description || '独立空间'
+}
+
+function SpaceLogo({ className = '', project }: { className?: string; project: Project | null }) {
+  const classes = ['space-logo', className, project?.logoDataUrl ? 'custom' : ''].filter(Boolean).join(' ')
+
+  if (!project || project.id === defaultSpaceId) {
+    return <img className={classes} src={logo} alt="" />
+  }
+
+  if (project.logoDataUrl) {
+    return <img className={classes} src={project.logoDataUrl} alt="" />
+  }
+
+  return (
+    <span className={classes} aria-hidden="true">
+      {getSpaceName(project).slice(0, 1).toLocaleUpperCase()}
+    </span>
+  )
 }
 
 function formatAttachmentSize(size: number): string {
@@ -275,7 +328,7 @@ function cropImageToSquareDataUrl(source: string, zoom = 1): Promise<string> {
       context.imageSmoothingQuality = 'high'
       context.clearRect(0, 0, size, size)
       context.drawImage(image, (size - width) / 2, (size - height) / 2, width, height)
-      resolve(canvas.toDataURL('image/png'))
+      resolve(canvas.toDataURL('image/webp', 0.92))
     }
     image.src = source
   })
@@ -371,10 +424,11 @@ function withConversationTokens(conversation: Conversation): Conversation {
   }
 }
 
-function createConversation(assistant: Assistant, provider: ApiProvider): Conversation {
+function createConversation(assistant: Assistant, provider: ApiProvider, projectId?: string): Conversation {
   const now = Date.now()
   return {
     id: createId('conv'),
+    projectId,
     assistantId: assistant.id,
     title: assistant.name,
     messages: [],
@@ -612,8 +666,11 @@ function getEffectiveProvider(
 
 export default function App() {
   const isMac = window.gllm.platform === 'darwin'
+  const isWindows = window.gllm.platform === 'win32'
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const [providers, setProviders] = useState<ApiProvider[]>([DEFAULT_PROVIDER])
+  const [projects, setProjects] = useState<Project[]>([])
+  const [activeProjectId, setActiveProjectId] = useState('')
   const [assistants, setAssistants] = useState<Assistant[]>(DEFAULT_ASSISTANTS)
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [notes, setNotes] = useState<KnowledgeNote[]>([])
@@ -633,6 +690,7 @@ export default function App() {
   const [conversationModelOpen, setConversationModelOpen] = useState(false)
   const [knowledgeOpen, setKnowledgeOpen] = useState(false)
   const [toolCenterOpen, setToolCenterOpen] = useState(false)
+  const [spaceCenterOpen, setSpaceCenterOpen] = useState(false)
   const [agreementOpen, setAgreementOpen] = useState(false)
   const [railCollapsed, setRailCollapsed] = useState(false)
   const [historyCollapsed, setHistoryCollapsed] = useState(false)
@@ -655,6 +713,12 @@ export default function App() {
   const toolNoticeTimerRef = useRef<number | null>(null)
   const streamingConversationDraftsRef = useRef<Record<string, Conversation>>({})
 
+  const activeSpace = useMemo(
+    () => projects.find((project) => project.id === activeProjectId) ?? projects[0] ?? null,
+    [activeProjectId, projects]
+  )
+  const activeSpaceName = getSpaceName(activeSpace)
+  const activeSpaceSubtitle = activeSpace?.id === defaultSpaceId ? 'G-LLM · 默认空间' : `G-LLM · ${activeSpaceName}`
   const activeAssistant = useMemo(() => getAssistantById(activeAssistantId, assistants), [activeAssistantId, assistants])
   const activeProvider = useMemo(
     () => getProviderById(settings?.activeProviderId ?? DEFAULT_PROVIDER_ID, providers),
@@ -679,7 +743,9 @@ export default function App() {
     .map((message) => message.translation?.length ?? 0)
     .join('|')
   const activeConversationTokenUsage = getConversationTokenUsage(activeConversation)
-  const activeConversationTitle = activeConversation?.title || activeAssistant.name
+  const topbarConversationTitle = activeConversation?.title || '新会话'
+  const activeConversationTokenSummary = `当前会话总词元数：${formatTokenUnit(activeConversationTokenUsage.total)}  ↑${formatTokenUnit(activeConversationTokenUsage.input)}  ↓${formatTokenUnit(activeConversationTokenUsage.output)}`
+  const activeConversationTokenDetail = `当前会话总词元数：${formatTokenUnit(activeConversationTokenUsage.total)}，发送 ${formatTokenUnit(activeConversationTokenUsage.input)}，接收 ${formatTokenUnit(activeConversationTokenUsage.output)}`
   const showScrollToLatest = Boolean(activeConversation?.messages.length && !isNearMessageBottom)
   const waitingForAssistantResponse = Boolean(isStreaming && activeConversation?.messages.at(-1)?.role === 'user')
   const modelCapabilities = useMemo(() => getModelCapabilities(conversationProvider), [conversationProvider])
@@ -716,24 +782,40 @@ export default function App() {
     })
   }, [assistantSearchQuery, assistants])
 
+  function applyAppState(state: AppStateSnapshot, options: { selectFirstConversation?: boolean } = {}) {
+    const nextProviders = state.providers.length > 0 ? state.providers : [DEFAULT_PROVIDER]
+    const nextAssistants = state.assistants.length > 0 ? state.assistants : DEFAULT_ASSISTANTS
+    const firstConversation = state.conversations[0] ?? null
+
+    setAppVersion(state.appVersion || '1.0.0')
+    setAppBuildCode(state.appBuildCode || '')
+    setDataLocation(state.dataLocation)
+    setActiveProjectId(state.activeProjectId)
+    setProjects(state.projects)
+    setSettings(state.settings)
+    setProviders(nextProviders)
+    setAssistants(nextAssistants)
+    setConversations(state.conversations)
+    setNotes(state.notes)
+    setMemories(state.memories ?? [])
+    setTools(state.tools ?? [])
+
+    if (options.selectFirstConversation) {
+      setActiveConversationId(firstConversation?.id ?? null)
+      setActiveAssistantId(firstConversation?.assistantId ?? nextAssistants[0]?.id ?? DEFAULT_ASSISTANTS[0].id)
+    }
+  }
+
+  useEffect(() => {
+    if (!isWindows) return
+    document.title = `${activeSpaceName} - ${activeAssistant.name} - ${activeAssistant.title} | G-LLM`
+  }, [activeAssistant.name, activeAssistant.title, activeSpaceName, isWindows])
+
   useEffect(() => {
     void window.gllm.getState().then((state) => {
       const nextProviders = state.providers.length > 0 ? state.providers : [DEFAULT_PROVIDER]
       const provider = getProviderById(state.settings.activeProviderId, nextProviders)
-      setAppVersion(state.appVersion || '1.0.0')
-      setAppBuildCode(state.appBuildCode || '')
-      setDataLocation(state.dataLocation)
-      setSettings(state.settings)
-      setProviders(nextProviders)
-      setAssistants(state.assistants.length > 0 ? state.assistants : DEFAULT_ASSISTANTS)
-      setConversations(state.conversations)
-      setNotes(state.notes)
-      setMemories(state.memories ?? [])
-      setTools(state.tools ?? [])
-      if (state.conversations[0]) {
-        setActiveConversationId(state.conversations[0].id)
-        setActiveAssistantId(state.conversations[0].assistantId)
-      }
+      applyAppState(state, { selectFirstConversation: true })
       if (!state.settings.setupCompleted) {
         setAgreementOpen(true)
       } else if (provider.requiresApiKey && !provider.apiKey.trim()) {
@@ -824,15 +906,20 @@ export default function App() {
       setSelectionMenu(null)
       setImageAttachmentMenu(null)
     }
+    const closeMenuOnPointerDown = (event: PointerEvent) => {
+      const target = event.target
+      if (target instanceof Element && target.closest('.selection-context-menu')) return
+      closeMenu()
+    }
     const closeMenuOnEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') closeMenu()
     }
 
-    window.addEventListener('click', closeMenu)
+    window.addEventListener('pointerdown', closeMenuOnPointerDown)
     window.addEventListener('resize', closeMenu)
     window.addEventListener('keydown', closeMenuOnEscape)
     return () => {
-      window.removeEventListener('click', closeMenu)
+      window.removeEventListener('pointerdown', closeMenuOnPointerDown)
       window.removeEventListener('resize', closeMenu)
       window.removeEventListener('keydown', closeMenuOnEscape)
     }
@@ -870,6 +957,62 @@ export default function App() {
     setToolNotice(message)
     if (toolNoticeTimerRef.current) window.clearTimeout(toolNoticeTimerRef.current)
     toolNoticeTimerRef.current = window.setTimeout(() => setToolNotice(''), 2600)
+  }
+
+  function clearSpaceTransientState() {
+    setDraft('')
+    setAssistantSearchQuery('')
+    setPendingAttachments([])
+    setPendingQuoteRefs([])
+    setPendingKnowledgeRefs([])
+    setSelectionMenu(null)
+    setImageAttachmentMenu(null)
+    setTranslatingMessageIds([])
+    setIsStreaming(false)
+  }
+
+  async function switchSpace(spaceId: string) {
+    if (!spaceId || spaceId === activeProjectId) return
+
+    const state = await window.gllm.setActiveProjectId(spaceId)
+    applyAppState(state, { selectFirstConversation: true })
+    clearSpaceTransientState()
+    showToolNotice(`已切换到空间「${getSpaceName(state.projects.find((project) => project.id === state.activeProjectId) ?? null)}」`)
+  }
+
+  async function createSpace(payload: SpaceFormPayload) {
+    const name = payload.name.trim()
+    if (!name) return
+
+    const now = Date.now()
+    const { saved } = await window.gllm.saveProject({
+      id: createId('space'),
+      name,
+      description: payload.description.trim() || undefined,
+      logoDataUrl: payload.logoDataUrl,
+      createdAt: now,
+      updatedAt: now
+    })
+    const nextState = await window.gllm.setActiveProjectId(saved.id)
+    applyAppState(nextState, { selectFirstConversation: true })
+    clearSpaceTransientState()
+    showToolNotice(`已创建并切换到空间「${saved.name}」`)
+  }
+
+  async function renameSpace(spaceId: string, payload: SpaceFormPayload) {
+    const space = projects.find((project) => project.id === spaceId)
+    const name = payload.name.trim()
+    if (!space || !name) return
+
+    const { saved, state } = await window.gllm.saveProject({
+      ...space,
+      name,
+      description: payload.description.trim() || undefined,
+      logoDataUrl: space.id === defaultSpaceId ? undefined : payload.logoDataUrl,
+      updatedAt: Date.now()
+    })
+    applyAppState(state)
+    showToolNotice(`空间已重命名为「${saved.name}」`)
   }
 
   function getDistanceToMessageBottom() {
@@ -1100,7 +1243,7 @@ export default function App() {
   }
 
   function startNewChat() {
-    const conversation = createConversation(activeAssistant, assistantDefaultProvider)
+    const conversation = createConversation(activeAssistant, assistantDefaultProvider, activeProjectId)
     setConversations((current) => [conversation, ...current])
     setActiveConversationId(conversation.id)
     void window.gllm.saveConversation(conversation)
@@ -1112,7 +1255,7 @@ export default function App() {
       return
     }
 
-    const conversation = createConversation(activeAssistant, assistantDefaultProvider)
+    const conversation = createConversation(activeAssistant, assistantDefaultProvider, activeProjectId)
     setConversations((current) => [conversation, ...current])
     setActiveConversationId(conversation.id)
     void window.gllm.saveConversation(conversation)
@@ -1130,7 +1273,7 @@ export default function App() {
   }
 
   function saveConversationUpdate(conversation: Conversation) {
-    const nextConversation = withConversationTokens(conversation)
+    const nextConversation = withConversationTokens({ ...conversation, projectId: conversation.projectId ?? activeProjectId })
     setConversations((current) => [nextConversation, ...current.filter((item) => item.id !== nextConversation.id)])
     void window.gllm.saveConversation(nextConversation)
   }
@@ -1206,6 +1349,7 @@ export default function App() {
     const now = Date.now()
     const saved = await window.gllm.saveNote({
       id: createId('note'),
+      projectId: activeProjectId,
       title,
       content,
       assistantId: activeAssistant.id,
@@ -1225,7 +1369,7 @@ export default function App() {
   }
 
   async function saveAssistantMemory(memory: AssistantMemory) {
-    const saved = await window.gllm.saveMemory(memory)
+    const saved = await window.gllm.saveMemory({ ...memory, projectId: memory.projectId ?? activeProjectId })
     setMemories((current) => [saved, ...current.filter((item) => item.id !== saved.id)])
     return saved
   }
@@ -1236,7 +1380,7 @@ export default function App() {
   }
 
   async function saveToolConfig(tool: ToolConfig) {
-    const saved = await window.gllm.saveTool(tool)
+    const saved = await window.gllm.saveTool({ ...tool, projectId: tool.projectId ?? activeProjectId })
     setTools((current) => [saved, ...current.filter((item) => item.id !== saved.id)])
     return saved
   }
@@ -1368,7 +1512,7 @@ export default function App() {
     const baseConversation =
       activeConversation?.assistantId === activeAssistant.id
         ? activeConversation
-        : createConversation(activeAssistant, assistantDefaultProvider)
+        : createConversation(activeAssistant, assistantDefaultProvider, activeProjectId)
     const attachments = pendingAttachments
     const knowledgeRefs = contextRefs
     const userMessage = createMessage('user', messageText, attachments, knowledgeRefs)
@@ -1459,7 +1603,7 @@ export default function App() {
   }
 
   async function saveAssistant(next: Assistant) {
-    const saved = await window.gllm.saveAssistant(next)
+    const saved = await window.gllm.saveAssistant({ ...next, projectId: next.projectId ?? activeProjectId })
     setAssistants((current) => {
       if (current.some((assistant) => assistant.id === saved.id)) {
         return current.map((assistant) => (assistant.id === saved.id ? saved : assistant))
@@ -1497,11 +1641,13 @@ export default function App() {
       {!railCollapsed && (
         <aside className="rail">
           <div className="brand">
-            <img src={logo} alt="G-LLM" />
-            <div>
-              <strong>无极界</strong>
-              <span>G-LLM</span>
-            </div>
+            <button className="brand-space-button" onClick={() => setSpaceCenterOpen(true)} title="打开空间中心" type="button">
+              <SpaceLogo project={activeSpace} />
+              <span>
+                <strong>{activeSpaceName}</strong>
+                <small>{activeSpaceSubtitle}</small>
+              </span>
+            </button>
             <button className="icon-button compact" onClick={() => setRailCollapsed(true)} title="折叠助手栏" type="button">
               <PanelLeftClose size={16} />
             </button>
@@ -1567,28 +1713,25 @@ export default function App() {
               </button>
             )}
             <div className="topbar-title">
-              <p>{activeAssistant.name} · {activeAssistant.tone}</p>
               <div className="topbar-heading">
-                <h1>{activeConversationTitle}</h1>
-                {activeConversation && (
-                  <span
-                    className="topbar-token-total"
-                    title={`本次会话总词元：数量 ${formatTokenUnit(activeConversationTokenUsage.total)}，输入 ${formatTokenUnit(activeConversationTokenUsage.input)}，输出 ${formatTokenUnit(activeConversationTokenUsage.output)}`}
-                  >
-                    总词元：{formatTokenUnit(activeConversationTokenUsage.total)}
-                    <span>↑{formatTokenUnit(activeConversationTokenUsage.input)}</span>
-                    <span>↓{formatTokenUnit(activeConversationTokenUsage.output)}</span>
-                  </span>
-                )}
+                <h1 title={activeAssistant.name}>{activeAssistant.name}</h1>
+                <span className="topbar-assistant-description" title={activeAssistant.title}>
+                  {activeAssistant.title}
+                </span>
+              </div>
+              <div className="topbar-session-row">
+                <span className="topbar-conversation-title" title={topbarConversationTitle}>
+                  {topbarConversationTitle}
+                </span>
+                <span className="topbar-token-summary" title={activeConversationTokenDetail}>
+                  {activeConversationTokenSummary}
+                </span>
               </div>
             </div>
           </div>
           <div className="topbar-actions">
             <button className="icon-button compact" onClick={() => setAssistantSettingsOpen(true)} title="助手设置" type="button">
               <Pencil size={16} />
-            </button>
-            <button className={`status-pill ${needsApiKey ? 'warning' : ''}`} onClick={openConversationModelSettings}>
-              {`${conversationProvider.name} · ${conversationProvider.defaultModel}`}
             </button>
             <button className="icon-button compact" onClick={openConversationModelSettings} title="会话模型">
               <SlidersHorizontal size={16} />
@@ -1855,8 +1998,13 @@ export default function App() {
                   <Wrench size={16} />
                 </button>
               </div>
-              <button className="composer-model" type="button" onClick={openConversationModelSettings} title="切换本会话模型">
-                {conversationProvider.defaultModel}
+              <button
+                className="composer-model"
+                type="button"
+                onClick={openConversationModelSettings}
+                title={`切换本会话模型：${conversationProvider.name} · ${conversationProvider.defaultModel}`}
+              >
+                <span className="composer-model-name">{conversationProvider.defaultModel}</span>
               </button>
             </div>
             {toolNotice && <div className="composer-notice">{toolNotice}</div>}
@@ -2033,6 +2181,16 @@ export default function App() {
           onSave={saveToolConfig}
         />
       )}
+      {spaceCenterOpen && (
+        <SpaceCenterDialog
+          activeSpaceId={activeProjectId}
+          spaces={projects}
+          onClose={() => setSpaceCenterOpen(false)}
+          onCreate={createSpace}
+          onRename={renameSpace}
+          onSwitch={switchSpace}
+        />
+      )}
       {agreementOpen && settings && (
         <UserAgreementDialog
           onAccept={() => void acceptUserAgreement()}
@@ -2056,6 +2214,368 @@ export default function App() {
         />
       )}
     </div>
+  )
+}
+
+function SpaceCenterDialog({
+  spaces,
+  activeSpaceId,
+  onClose,
+  onCreate,
+  onRename,
+  onSwitch
+}: {
+  spaces: Project[]
+  activeSpaceId: string
+  onClose: () => void
+  onCreate: (payload: SpaceFormPayload) => Promise<void>
+  onRename: (spaceId: string, payload: SpaceFormPayload) => Promise<void>
+  onSwitch: (spaceId: string) => Promise<void>
+}) {
+  const [creating, setCreating] = useState(spaces.length <= 1)
+  const [newName, setNewName] = useState('工作空间')
+  const [newDescription, setNewDescription] = useState('')
+  const [newLogoDataUrl, setNewLogoDataUrl] = useState('')
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [editName, setEditName] = useState('')
+  const [editDescription, setEditDescription] = useState('')
+  const [editLogoDataUrl, setEditLogoDataUrl] = useState('')
+  const [savingAction, setSavingAction] = useState<string | null>(null)
+  const [error, setError] = useState('')
+  const newLogoInputRef = useRef<HTMLInputElement>(null)
+  const editLogoInputRef = useRef<HTMLInputElement>(null)
+  const activeSpace = spaces.find((space) => space.id === activeSpaceId) ?? spaces[0] ?? null
+  const hasMultipleSpaces = spaces.length > 1
+
+  function startRename(space: Project) {
+    setRenamingId(space.id)
+    setEditName(getSpaceName(space))
+    setEditDescription(space.description ?? '')
+    setEditLogoDataUrl(space.logoDataUrl ?? '')
+    setError('')
+  }
+
+  async function chooseSpaceLogo(event: ChangeEvent<HTMLInputElement>, target: 'create' | 'edit') {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+
+    if (!file.type.startsWith('image/')) {
+      setError('请选择图片文件作为空间 Logo')
+      return
+    }
+
+    if (file.size > 8 * 1024 * 1024) {
+      setError('空间 Logo 图片不能超过 8 MB')
+      return
+    }
+
+    try {
+      const source = await readFileAsDataUrl(file)
+      const cropped = await cropImageToSquareDataUrl(source, 1)
+      if (target === 'create') {
+        setNewLogoDataUrl(cropped)
+      } else {
+        setEditLogoDataUrl(cropped)
+      }
+      setError('')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '空间 Logo 读取失败')
+    }
+  }
+
+  async function handleCreate(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const name = newName.trim()
+    if (!name) {
+      setError('请输入空间名称')
+      return
+    }
+
+    setSavingAction('create')
+    setError('')
+    try {
+      await onCreate({ name, description: newDescription, logoDataUrl: newLogoDataUrl || undefined })
+      setCreating(false)
+      setNewName('新空间')
+      setNewDescription('')
+      setNewLogoDataUrl('')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '空间创建失败')
+    } finally {
+      setSavingAction(null)
+    }
+  }
+
+  async function handleRename(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!renamingId) return
+
+    const name = editName.trim()
+    if (!name) {
+      setError('请输入空间名称')
+      return
+    }
+
+    setSavingAction(renamingId)
+    setError('')
+    try {
+      await onRename(renamingId, { name, description: editDescription, logoDataUrl: editLogoDataUrl || undefined })
+      setRenamingId(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '空间保存失败')
+    } finally {
+      setSavingAction(null)
+    }
+  }
+
+  async function handleSwitch(spaceId: string) {
+    setSavingAction(`switch:${spaceId}`)
+    setError('')
+    try {
+      await onSwitch(spaceId)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '空间切换失败')
+    } finally {
+      setSavingAction(null)
+    }
+  }
+
+  return (
+    <ModalBackdrop onClose={onClose}>
+      <section className="space-center-modal" onClick={stopModalClick}>
+        <header>
+          <div>
+            <p>空间中心</p>
+            <h2>{getSpaceName(activeSpace)}</h2>
+          </div>
+          <button className="icon-button compact" onClick={onClose} title="关闭" type="button">
+            <X size={16} />
+          </button>
+        </header>
+
+        <div className="space-center-body">
+        <div className="space-current-card">
+          <SpaceLogo className="large" project={activeSpace} />
+          <div>
+            <span>当前空间</span>
+            <strong>{getSpaceName(activeSpace)}</strong>
+            <p>{getSpaceDescription(activeSpace)}</p>
+          </div>
+          <em>{activeSpace?.id === defaultSpaceId ? '默认空间' : '独立空间'}</em>
+        </div>
+
+        <section className="space-guidance">
+          <div>
+            <h3>{hasMultipleSpaces ? '空间有什么用' : '为什么创建第二个空间'}</h3>
+            <p>
+              空间用于把不同场景的数据分开。切换空间后，你看到的助手、会话、知识库和记忆会随空间切换。
+            </p>
+          </div>
+          <div className="space-insight-grid">
+            <article>
+              <Database size={17} />
+              <strong>隔离内容</strong>
+              <span>每个空间独立保存会话、助手配置、本地知识库和助手记忆。</span>
+            </article>
+            <article>
+              <KeyRound size={17} />
+              <strong>共享设置</strong>
+              <span>模型供应商、API Key、应用偏好和版本更新仍然全局共享。</span>
+            </article>
+            <article>
+              <FolderOpen size={17} />
+              <strong>适用场景</strong>
+              <span>适合区分工作、个人、客户资料、学习研究或不同团队任务。</span>
+            </article>
+          </div>
+          {hasMultipleSpaces && (
+            <div className="space-switch-note">
+              <CircleCheck size={15} />
+              <span>当前正在使用「{getSpaceName(activeSpace)}」。点击下方“切换”会进入对应空间，不会删除其他空间的数据。</span>
+            </div>
+          )}
+        </section>
+
+        {hasMultipleSpaces && (
+          <section className="space-list-section">
+            <div className="space-section-heading">
+              <h3>所有空间</h3>
+              <button className="secondary-action" onClick={() => setCreating((current) => !current)} type="button">
+                <Plus size={15} />
+                新建空间
+              </button>
+            </div>
+            <div className="space-list">
+              {spaces.map((space) => {
+                const active = space.id === activeSpaceId
+                const saving = savingAction === space.id || savingAction === `switch:${space.id}`
+
+                return (
+                  <article className={`space-row ${active ? 'active' : ''}`} key={space.id}>
+                    {renamingId === space.id ? (
+                      <form className="space-edit-form" onSubmit={handleRename}>
+                        <div className="space-logo-editor">
+                          <SpaceLogo className="editable" project={{ ...space, logoDataUrl: editLogoDataUrl || undefined }} />
+                          <div>
+                            <strong>{space.id === defaultSpaceId ? '默认空间 Logo' : '空间 Logo'}</strong>
+                            <span>
+                              {space.id === defaultSpaceId
+                                ? '无极界默认空间使用固定 Logo，不支持修改。'
+                                : '建议使用透明背景或简洁方形图片。'}
+                            </span>
+                            {space.id !== defaultSpaceId && (
+                              <div className="space-logo-actions">
+                                <input
+                                  ref={editLogoInputRef}
+                                  accept="image/*"
+                                  hidden
+                                  type="file"
+                                  onChange={(event) => void chooseSpaceLogo(event, 'edit')}
+                                />
+                                <button className="secondary-action" onClick={() => editLogoInputRef.current?.click()} type="button">
+                                  上传 Logo
+                                </button>
+                                <button
+                                  className="secondary-action"
+                                  disabled={!editLogoDataUrl}
+                                  onClick={() => setEditLogoDataUrl('')}
+                                  type="button"
+                                >
+                                  移除
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                        <label>
+                          <span>空间名称</span>
+                          <input value={editName} onChange={(event) => setEditName(event.target.value)} />
+                        </label>
+                        <label>
+                          <span>空间说明</span>
+                          <textarea
+                            value={editDescription}
+                            onChange={(event) => setEditDescription(event.target.value)}
+                            placeholder="空间说明"
+                            rows={2}
+                          />
+                        </label>
+                        <div className="space-form-actions">
+                          <button className="secondary-action" onClick={() => setRenamingId(null)} type="button">
+                            取消
+                          </button>
+                          <button className="primary-action" disabled={saving || !editName.trim()} type="submit">
+                            保存
+                          </button>
+                        </div>
+                      </form>
+                    ) : (
+                      <>
+                        <SpaceLogo project={space} />
+                        <div className="space-row-main">
+                          <strong>{getSpaceName(space)}</strong>
+                          <span>{getSpaceDescription(space)}</span>
+                        </div>
+                        <div className="space-row-actions">
+                          {active && (
+                            <span className="space-active-badge">
+                              <CircleCheck size={14} />
+                              当前
+                            </span>
+                          )}
+                          {!active && (
+                            <button
+                              className="secondary-action"
+                              disabled={saving}
+                              onClick={() => void handleSwitch(space.id)}
+                              type="button"
+                            >
+                              切换
+                            </button>
+                          )}
+                          <button className="icon-button compact" onClick={() => startRename(space)} title="重命名空间" type="button">
+                            <Pencil size={15} />
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </article>
+                )
+              })}
+            </div>
+          </section>
+        )}
+
+        {(creating || !hasMultipleSpaces) && (
+          <form className="space-create-form" onSubmit={handleCreate}>
+            <div>
+              <h3>{hasMultipleSpaces ? '新建空间' : '创建第二个空间'}</h3>
+              <p>创建后会自动切换到新空间。</p>
+            </div>
+            <div className="space-logo-editor">
+              <SpaceLogo
+                className="editable"
+                project={{
+                  id: 'space_preview',
+                  name: newName || '新空间',
+                  description: newDescription,
+                  logoDataUrl: newLogoDataUrl || undefined,
+                  createdAt: 0,
+                  updatedAt: 0
+                }}
+              />
+              <div>
+                <strong>空间 Logo</strong>
+                <span>可选。建议使用透明背景或简洁方形图片。</span>
+                <div className="space-logo-actions">
+                  <input
+                    ref={newLogoInputRef}
+                    accept="image/*"
+                    hidden
+                    type="file"
+                    onChange={(event) => void chooseSpaceLogo(event, 'create')}
+                  />
+                  <button className="secondary-action" onClick={() => newLogoInputRef.current?.click()} type="button">
+                    上传 Logo
+                  </button>
+                  <button className="secondary-action" disabled={!newLogoDataUrl} onClick={() => setNewLogoDataUrl('')} type="button">
+                    移除
+                  </button>
+                </div>
+              </div>
+            </div>
+            <label>
+              <span>空间名称</span>
+              <input value={newName} onChange={(event) => setNewName(event.target.value)} placeholder="例如：客户方案空间" />
+            </label>
+            <label>
+              <span>空间说明</span>
+              <textarea
+                value={newDescription}
+                onChange={(event) => setNewDescription(event.target.value)}
+                placeholder="可选"
+                rows={2}
+              />
+            </label>
+            {error && <p className="space-error">{error}</p>}
+            <div className="space-form-actions">
+              {hasMultipleSpaces && (
+                <button className="secondary-action" onClick={() => setCreating(false)} type="button">
+                  取消
+                </button>
+              )}
+              <button className="primary-action" disabled={savingAction === 'create' || !newName.trim()} type="submit">
+                {savingAction === 'create' ? '创建中...' : '创建空间'}
+              </button>
+            </div>
+          </form>
+        )}
+
+        {error && hasMultipleSpaces && !creating && <p className="space-error">{error}</p>}
+        </div>
+      </section>
+    </ModalBackdrop>
   )
 }
 
@@ -2249,7 +2769,7 @@ function AssistantSettingsDialog({
   }
 
   return (
-    <div className="assistant-modal-backdrop" onClick={onClose}>
+    <ModalBackdrop onClose={onClose}>
       <section className="assistant-settings-modal" onClick={(event) => event.stopPropagation()}>
         <header>
           <div>
@@ -2346,7 +2866,7 @@ function AssistantSettingsDialog({
           </button>
         </div>
       </section>
-    </div>
+    </ModalBackdrop>
   )
 }
 
@@ -2664,7 +3184,7 @@ function ConversationModelDialog({
   }
 
   return (
-    <div className="assistant-modal-backdrop" onClick={onClose}>
+    <ModalBackdrop onClose={onClose}>
       <section className="assistant-model-modal" onClick={(event) => event.stopPropagation()}>
         <header>
           <div>
@@ -2717,7 +3237,7 @@ function ConversationModelDialog({
 
         {status && <div className="assistant-status">{status}</div>}
       </section>
-    </div>
+    </ModalBackdrop>
   )
 }
 
@@ -3590,7 +4110,7 @@ function SettingsPanel({
   }
 
   return (
-    <div className="drawer-backdrop" onClick={onClose}>
+    <ModalBackdrop className="drawer-backdrop" onClose={onClose}>
       <section className="settings-drawer provider-drawer" onClick={(event) => event.stopPropagation()}>
         <div className="settings-tabs-row">
           <div className="settings-tabs" role="tablist" aria-label="设置分类">
@@ -4088,6 +4608,6 @@ function SettingsPanel({
           />
         </div>
       )}
-    </div>
+    </ModalBackdrop>
   )
 }

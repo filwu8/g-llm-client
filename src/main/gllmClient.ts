@@ -12,6 +12,11 @@ import type {
   WebSearchActivity,
   WebSearchResult
 } from '../shared/types'
+import {
+  sanitizeAssistantSystemPrompt,
+  universalAssistantPolicy,
+  universalFallbackPrompt
+} from '../shared/assistantPromptPolicy'
 import { inferModelCapabilitiesFromMetadata, inferModelTypeFromMetadata } from '../shared/modelCapabilities'
 
 interface ChatStreamEvent {
@@ -42,7 +47,6 @@ const contextCompressionMessageThreshold = 32
 const contextCompressionCharacterThreshold = 48_000
 const compressedHistoryMaxCharacters = 14_000
 const compressedHistoryMessageCharacterLimit = 900
-
 interface WebSearchPlan {
   intent: string
   queries: string[]
@@ -287,6 +291,24 @@ function getAssistantMemoryContext(memories: AssistantMemory[] = []): string {
     .join('\n')}`
 }
 
+function buildAssistantSystemInstruction(
+  assistant: Assistant,
+  messages: ChatMessage[],
+  compressedHistory?: string,
+  assistantMemories: AssistantMemory[] = []
+): string {
+  const basePrompt = assistant.systemPrompt.trim() || universalFallbackPrompt
+  return [
+    universalAssistantPolicy,
+    sanitizeAssistantSystemPrompt(basePrompt),
+    '',
+    getTimelineSystemContext(assistant, messages, compressedHistory),
+    '',
+    getAssistantMemoryContext(assistantMemories),
+    '\n\n如果用户开启了联网搜索，本客户端会在用户消息后附加“联网搜索资料”。回答时优先结合这些资料，并说明信息可能存在时效性，避免声称自己无法联网。'
+  ].join('\n')
+}
+
 function toOpenAiMessages(
   assistant: Assistant,
   messages: ChatMessage[],
@@ -300,9 +322,7 @@ function toOpenAiMessages(
   return [
     {
       role: 'system',
-      content: `${assistant.systemPrompt}${getTimelineSystemContext(assistant, messages, context.compressedHistory)}${getAssistantMemoryContext(assistantMemories)}
-
-如果用户开启了联网搜索，本客户端会在用户消息后附加“联网搜索资料”。回答时请优先结合这些资料，并说明信息可能存在时效性，避免声称自己无法联网。`
+      content: buildAssistantSystemInstruction(assistant, messages, context.compressedHistory, assistantMemories)
     },
     ...(context.compressedHistory
       ? [
@@ -362,7 +382,9 @@ function fallbackAssistantSuggestion(keyword: string): AssistantSuggestion {
     tone: isMedical ? '谨慎、清晰、负责任' : isBusiness ? '结构化、重判断' : '清晰、专业',
     color,
     icon,
-    systemPrompt: `你是无极界 G-LLM 的「${normalizedKeyword}」助手。请围绕该场景帮助用户分析问题、整理信息并给出可执行建议。回答要清晰、准确、有边界。遇到不确定或高风险事项时，必须说明局限，并建议用户咨询专业人士或进一步核实。`,
+    systemPrompt: sanitizeAssistantSystemPrompt(
+      `你是无极界 G-LLM 的「${normalizedKeyword}」助手。先澄清场景目标，再给出结论、依据和下一步动作三段式回答。回答要清晰、可执行、可验证；涉及高风险事项时必须先说明局限，并建议用户咨询专业人士或核实权威信息。必要时主动给出可执行清单和验收标准。`
+    ),
     starterPrompts: [
       `帮我分析一个${normalizedKeyword}相关问题`,
       `给我一份${normalizedKeyword}的处理建议`,
@@ -385,7 +407,7 @@ function sanitizeAssistantSuggestion(keyword: string, value: Partial<AssistantSu
     tone: String(value.tone ?? fallback.tone).trim() || fallback.tone,
     color: colorOptions.includes(String(value.color)) ? (value.color as AssistantSuggestion['color']) : fallback.color,
     icon: iconOptions.includes(String(value.icon)) ? (value.icon as AssistantSuggestion['icon']) : fallback.icon,
-    systemPrompt: String(value.systemPrompt ?? fallback.systemPrompt).trim() || fallback.systemPrompt,
+    systemPrompt: sanitizeAssistantSystemPrompt(String(value.systemPrompt ?? fallback.systemPrompt)),
     starterPrompts: starterPrompts.length > 0 ? starterPrompts : fallback.starterPrompts
   }
 }
@@ -734,7 +756,7 @@ export async function generateAssistantSuggestion(request: AssistantSuggestionRe
         {
           role: 'system',
           content:
-            '你是 AI 助手配置专家。根据用户输入的角色关键词，生成一个适合桌面 AI 客户端使用的助手配置。只返回 JSON，不要 Markdown。'
+            '你是 AI 助手配置专家。根据用户输入的角色关键词，生成一个适合桌面 AI 客户端使用的助手配置。先把角色边界、输出约束、风险边界写进 systemPrompt。只返回 JSON，不要 Markdown。'
         },
         {
           role: 'user',

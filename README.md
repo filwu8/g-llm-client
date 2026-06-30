@@ -2,7 +2,7 @@
 
 [简体中文](./README.md) | [English](./README.en-US.md)
 
-当前版本：V1.0.6
+当前版本：V1.0.7
 
 G-LLM Client 是 GPROPHET LIMITED 自研的跨平台桌面 AI 客户端，支持 Windows、macOS 和 Linux。当前产品方向是“助手优先”：用户先选择或创建适合场景的助手，再在同一个桌面客户端里完成模型配置、知识引用、截图提问、文件理解和多轮对话。
 
@@ -20,7 +20,7 @@ G-LLM Client 是 GPROPHET LIMITED 自研的跨平台桌面 AI 客户端，支持
 
 ## Windows 桌面体验
 
-V1.0.6 已针对 Windows 做了桌面常驻优化：
+V1.0.7 已针对 Windows 做了桌面常驻优化：
 
 - 点击关闭按钮不会退出应用，而是隐藏到系统托盘。
 - 最小化主窗口后显示桌面悬浮 G-LLM logo。

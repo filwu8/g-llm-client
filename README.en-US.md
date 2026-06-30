@@ -2,7 +2,7 @@
 
 [简体中文](./README.md) | [English](./README.en-US.md)
 
-Current version: V1.0.6
+Current version: V1.0.7
 
 G-LLM Client is a cross-platform desktop AI client built by GPROPHET LIMITED for Windows, macOS, and Linux. The product direction is assistant-first: users choose or create a role-based assistant, then use one desktop client for model configuration, knowledge references, screenshots, file understanding, and multi-turn conversations.
 
@@ -20,7 +20,7 @@ G-LLM Client is a cross-platform desktop AI client built by GPROPHET LIMITED for
 
 ## Windows Desktop Behavior
 
-V1.0.6 includes Windows-specific desktop refinements:
+V1.0.7 includes Windows-specific desktop refinements:
 
 - Closing the main window hides the app to the system tray instead of quitting.
 - Minimizing the main window shows a floating G-LLM logo on the desktop.
