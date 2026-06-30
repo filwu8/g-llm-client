@@ -13,7 +13,7 @@ import {
   type Point,
   type Rectangle
 } from 'electron'
-import { statSync } from 'node:fs'
+import { appendFileSync, mkdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { pickAttachments, preparePastedAttachments } from './attachments'
@@ -84,11 +84,16 @@ let floatingLogoDragOffset: Point | null = null
 const FLOATING_LOGO_SIZE = 88
 const FLOATING_LOGO_EDGE_GAP = 8
 const SCREENSHOT_WINDOW_HIDE_DELAY_MS = 180
+const APP_USER_MODEL_ID = 'com.gllm.wujijie'
 const shouldUseSingleInstanceLock = process.platform === 'win32'
 const gotSingleInstanceLock = !shouldUseSingleInstanceLock || app.requestSingleInstanceLock()
 
 if (!gotSingleInstanceLock) {
   app.quit()
+}
+
+if (process.platform === 'win32') {
+  app.setAppUserModelId(APP_USER_MODEL_ID)
 }
 
 function formatBuildCode(date: Date): string {
@@ -111,6 +116,23 @@ function getAppBuildCode(): string {
     return formatBuildCode(statSync(__filename).mtime)
   } catch {
     return formatBuildCode(new Date())
+  }
+}
+
+function writeMainLog(message: string, error?: unknown): void {
+  try {
+    const logDirectory = join(app.getPath('appData'), 'G-LLM', 'logs')
+    mkdirSync(logDirectory, { recursive: true })
+    const detail =
+      error instanceof Error
+        ? `${error.stack ?? error.message}`
+        : error === undefined
+          ? ''
+          : String(error)
+
+    appendFileSync(join(logDirectory, 'main.log'), `[${new Date().toISOString()}] ${message}${detail ? `\n${detail}` : ''}\n`)
+  } catch {
+    // Logging must never crash the app.
   }
 }
 
@@ -152,6 +174,7 @@ function sleep(ms: number): Promise<void> {
 function showExistingInstance(): void {
   if (process.platform !== 'win32') return
 
+  writeMainLog('Second instance requested; showing existing main window.')
   createWindow()
 }
 
@@ -175,6 +198,7 @@ function createWindow(): BrowserWindow {
     title: '无极界',
     backgroundColor: '#f7f5ef',
     autoHideMenuBar: true,
+    skipTaskbar: false,
     icon: getAppIconPath(),
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {
@@ -186,6 +210,7 @@ function createWindow(): BrowserWindow {
 
   mainWindow.setMenu(null)
   mainWindow.setMenuBarVisibility(false)
+  mainWindow.setSkipTaskbar(false)
   mainWindow.on('move', () => {
     if (mainWindow && !mainWindow.isMinimized()) lastMainWindowBounds = mainWindow.getBounds()
   })
@@ -649,14 +674,30 @@ if (gotSingleInstanceLock && shouldUseSingleInstanceLock) {
   })
 }
 
+process.on('uncaughtException', (error) => {
+  writeMainLog('Uncaught exception', error)
+})
+
+process.on('unhandledRejection', (reason) => {
+  writeMainLog('Unhandled rejection', reason)
+})
+
 app.whenReady().then(() => {
   if (!gotSingleInstanceLock) return
 
-  electronApp.setAppUserModelId('com.gllm.wujijie')
+  electronApp.setAppUserModelId(APP_USER_MODEL_ID)
   Menu.setApplicationMenu(null)
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
+  })
+
+  app.on('render-process-gone', (_, webContents, details) => {
+    writeMainLog(`Render process gone: reason=${details.reason}, exitCode=${details.exitCode}, url=${webContents.getURL()}`)
+  })
+
+  app.on('child-process-gone', (_, details) => {
+    writeMainLog(`Child process gone: type=${details.type}, reason=${details.reason}, exitCode=${details.exitCode}`)
   })
 
   ipcMain.handle('app:get-state', () => ({
