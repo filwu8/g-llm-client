@@ -550,25 +550,38 @@ function hideQuickWindow(): void {
   }
 }
 
-function showFloatingLogoContextMenu(): void {
-  if (!floatingLogoWindow || floatingLogoWindow.isDestroyed()) return
+function buildAppStatusMenu(anchorBounds?: Rectangle): Menu {
+  const floatingLogoVisible = Boolean(floatingLogoWindow && !floatingLogoWindow.isDestroyed() && floatingLogoWindow.isVisible())
 
-  const menu = Menu.buildFromTemplate([
-    {
-      label: '打开',
-      click: () => showQuickWindow(floatingLogoWindow?.getBounds())
-    },
-    {
-      label: '隐藏',
-      click: () => hideFloatingLogoToTray()
-    },
+  return Menu.buildFromTemplate([
+    { label: '打开快速对话', click: () => showQuickWindow(anchorBounds) },
+    { label: '打开主窗口', click: () => createWindow() },
+    ...(process.platform === 'win32'
+      ? [
+          {
+            label: floatingLogoVisible ? '隐藏悬浮窗' : '显示悬浮窗',
+            click: () => {
+              if (floatingLogoVisible) {
+                hideFloatingLogoToTray()
+              } else {
+                showFloatingLogoFromTray()
+              }
+            }
+          }
+        ]
+      : []),
     { type: 'separator' },
     {
-      label: '退出',
+      label: '退出 G-LLM',
       click: () => quitApp()
     }
   ])
-  menu.popup({ window: floatingLogoWindow })
+}
+
+function showFloatingLogoContextMenu(): void {
+  if (!floatingLogoWindow || floatingLogoWindow.isDestroyed()) return
+
+  buildAppStatusMenu(floatingLogoWindow.getBounds()).popup({ window: floatingLogoWindow })
 }
 
 function toggleQuickWindow(anchorBounds?: Rectangle): void {
@@ -600,20 +613,10 @@ function setupTray(): void {
   tray = new Tray(icon)
   tray.setToolTip('G-LLM 快速对话')
   tray.on('click', (_, bounds) => handleTrayClick(bounds))
-  tray.setContextMenu(
-    Menu.buildFromTemplate([
-      { label: '打开快速对话', click: () => showQuickWindow(tray?.getBounds()) },
-      { label: '打开主窗口', click: () => createWindow() },
-      ...(process.platform === 'win32'
-        ? [{ label: '显示悬浮窗', click: () => showFloatingLogoFromTray() }]
-        : []),
-      { type: 'separator' },
-      {
-        label: '退出 G-LLM',
-        click: () => quitApp()
-      }
-    ])
-  )
+  tray.on('right-click', () => {
+    tray?.popUpContextMenu(buildAppStatusMenu(tray.getBounds()))
+  })
+  tray.setContextMenu(buildAppStatusMenu(tray.getBounds()))
 }
 
 function quitApp(): void {
