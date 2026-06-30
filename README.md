@@ -4,19 +4,34 @@
 
 当前版本：V1.0.6
 
-G-LLM 自有桌面客户端，从零开发。当前阶段聚焦“助手优先”的使用体验：用户打开客户端后先选择或创建适合场景的助手，再开始对话。
+G-LLM Client 是 GPROPHET LIMITED 自研的跨平台桌面 AI 客户端，支持 Windows、macOS 和 Linux。当前产品方向是“助手优先”：用户先选择或创建适合场景的助手，再在同一个桌面客户端里完成模型配置、知识引用、截图提问、文件理解和多轮对话。
 
 ## 当前能力
 
-- 桌面客户端：Electron + React + TypeScript
-- 品牌入口：无极界 / G-LLM
-- 内置助手：通用、文档、合同、代码、经营分析、学习导师
-- 助手中心：新建助手、基于内置模板创建、编辑自定义助手、删除自定义助手
-- 聊天体验：流式回复、开场问题、会话历史、本地保存
-- 供应商配置：默认 G-LLM 网关，也可通过模板新增其他 OpenAI-compatible 供应商
-- 模型管理：支持测试供应商连接、拉取 `/models`、从模型列表选择默认模型
-- 网关适配：OpenAI-compatible Chat Completions streaming
-- 设置项：当前供应商、API Base URL、API Key、默认模型、温度、最大词元、匿名使用统计
+- 跨平台桌面客户端：Electron + React + TypeScript，支持 Windows、macOS、Linux 打包。
+- 助手工作流：内置通用、文档、合同、代码、经营分析、学习导师等助手，支持新建、编辑和删除自定义助手。
+- 多供应商与多模型：默认 G-LLM 网关，也支持 OpenAI-compatible、OpenAI、DeepSeek、本地兼容服务等供应商模板。
+- 模型管理：支持测试供应商连接、拉取 `/models`、能力识别和默认模型选择。
+- 聊天体验：流式回复、开场问题、Markdown 渲染、会话历史、本地保存和 Token 展示。
+- 本地能力：轻量知识库、助手长期记忆、本地数据存储、数据导入导出。
+- 附件与视觉输入：支持文件、图片、剪贴板粘贴、系统截图，并可将截图复制到系统剪贴板。
+- 联网与工具：支持联网搜索流程和工具配置，让搜索资料进入提问上下文。
+- 隐私友好的匿名统计：默认只上报匿名元数据，不采集聊天内容、API Key、文件内容、截图内容、知识库内容或记忆内容，用户可在设置中关闭。
+
+## Windows 桌面体验
+
+V1.0.6 已针对 Windows 做了桌面常驻优化：
+
+- 点击关闭按钮不会退出应用，而是隐藏到系统托盘。
+- 最小化主窗口后显示桌面悬浮 G-LLM logo。
+- 悬浮 logo 支持拖动，并会吸附到屏幕边缘。
+- 悬浮 logo 右键菜单与托盘右键菜单复用同一套功能：打开快速对话、打开主窗口、显示/隐藏悬浮窗、退出 G-LLM。
+- 快速对话窗口为透明无边框、置顶小窗，适合随时唤起。
+- 截图按钮会先隐藏当前界面，再进入 Windows 截图流程。
+- 应用启用单进程保护；重复双击快捷方式会唤起已有窗口，不再启动多个进程。
+- 主进程日志写入 `%APPDATA%/G-LLM/logs/main.log`，便于定位用户机器上的闪退或启动问题。
+
+> 说明：当前公开构建如果未配置 Windows 代码签名证书，可能被 Smart App Control 或杀毒软件提示风险。可信签名、Microsoft Store/MSIX 分发属于发布合规工作，正在单独推进。
 
 ## Development
 
@@ -31,6 +46,17 @@ pnpm dev
 $env:Path='C:\Users\filwu\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin;C:\Users\filwu\.cache\codex-runtimes\codex-primary-runtime\dependencies\bin;' + $env:Path
 pnpm dev
 ```
+
+## Build
+
+```bash
+pnpm build
+pnpm package:win
+pnpm package:mac
+pnpm package:linux
+```
+
+构建产物输出到 `dist/`。GitHub Actions 会分别在 Windows、macOS、Linux runner 上构建对应平台产物。
 
 ## API Contract
 
@@ -60,7 +86,7 @@ Content-Type: application/json
 https://llm.gprophet.com/v1
 ```
 
-用户填写自己的 API Key 后即可请求真实网关。也可以从供应商模板新增 OpenAI-compatible、OpenAI、DeepSeek、本地兼容服务等配置，再切换为当前供应商。
+用户填写自己的 API Key 后即可请求真实网关。也可以从供应商模板新增其他 OpenAI-compatible 配置，再切换为当前供应商。
 
 供应商设置中的“拉取模型”会调用：
 
@@ -70,6 +96,10 @@ Authorization: Bearer {apiKey}
 ```
 
 兼容标准 OpenAI `/models` 返回格式，也兼容简单字符串数组。
+
+## Release QA
+
+发布前请参考 [docs/release-qa-checklist.md](./docs/release-qa-checklist.md) 完成三端基础验证，尤其是 Windows 托盘、悬浮 logo、截图、单进程保护和启动日志。
 
 ## License
 

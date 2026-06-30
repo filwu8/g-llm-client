@@ -42,7 +42,7 @@ GLLM_TELEMETRY_ENDPOINT=https://telemetry.gprophet.com/v1/events
   "occurred_at": "2026-06-25T08:00:00.000Z",
   "app": {
     "name": "G-LLM",
-    "version": "1.0.0",
+    "version": "1.0.6",
     "packaged": false
   },
   "os": {
