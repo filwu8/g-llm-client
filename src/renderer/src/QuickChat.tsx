@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, AtSign, Copy, ExternalLink, MessageSquarePlus, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, AtSign, Copy, ExternalLink, MessageSquarePlus, Minus, X } from 'lucide-react'
 import {
   type KeyboardEvent,
   type MouseEvent as ReactMouseEvent,
@@ -147,6 +147,7 @@ function getLatestAssistantConversation(conversations: Conversation[], assistant
 }
 
 export default function QuickChat() {
+  const isWindows = window.gllm.platform === 'win32'
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const [providers, setProviders] = useState<ApiProvider[]>([DEFAULT_PROVIDER])
   const [assistants, setAssistants] = useState<Assistant[]>(DEFAULT_ASSISTANTS)
@@ -487,11 +488,16 @@ export default function QuickChat() {
           <button title="新建快速对话" type="button" onClick={startNewQuickChat}>
             <MessageSquarePlus size={17} />
           </button>
+          <button
+            aria-label={isWindows ? '最小化快速对话' : '关闭快速对话'}
+            title={isWindows ? '最小化' : '关闭'}
+            type="button"
+            onClick={() => void window.gllm.hideQuickPanel()}
+          >
+            {isWindows ? <Minus size={18} /> : <X size={18} />}
+          </button>
           <button title="打开完整窗口" type="button" onClick={() => void openMainWindow()}>
             <ExternalLink size={17} />
-          </button>
-          <button title="关闭" type="button" onClick={() => void window.gllm.hideQuickPanel()}>
-            <X size={18} />
           </button>
         </div>
       </header>

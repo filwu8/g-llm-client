@@ -296,12 +296,27 @@ function isMermaidShell(node: ReactNode): boolean {
   return Boolean(isValidElement<{ className?: string }>(node) && node.props.className?.split(/\s+/).includes('mermaid-diagram-shell'))
 }
 
+function markdownUrlTransform(value: string, key: string): string {
+  const url = value.trim()
+  if (key === 'src' && /^data:image\/(?:png|jpe?g|webp|gif);base64,[A-Za-z0-9+/=\s]+$/i.test(url)) {
+    return url.replace(/\s+/g, '')
+  }
+  if (key === 'src' && /^gllm-data:\/\//i.test(url)) {
+    return url
+  }
+  if (/^(https?:|mailto:|tel:)/i.test(url) || /^[#/]/.test(url) || !/^[A-Za-z][A-Za-z0-9+.-]*:/.test(url)) {
+    return url
+  }
+  return ''
+}
+
 export function MarkdownMessage({ content }: { content: string }) {
   const normalizedContent = useMemo(() => normalizeMarkdownForDisplay(content), [content])
 
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
+      urlTransform={markdownUrlTransform}
       components={{
         a: ({ children, ...props }) => (
           <a {...props} target="_blank" rel="noreferrer">

@@ -3,6 +3,7 @@ import {
   Brain,
   BookOpen,
   Briefcase,
+  ChevronDown,
   CircleCheck,
   Code2,
   Copy,
@@ -137,6 +138,10 @@ const bottomFollowThreshold = 96
 const maxPastedAttachmentBytes = 12 * 1024 * 1024
 const quoteReferencePrefix = 'quote_'
 const defaultSpaceId = 'project_default'
+const modelNameCollator = new Intl.Collator(['zh-CN', 'en'], {
+  numeric: true,
+  sensitivity: 'base'
+})
 const providerTemplateCategoryOrder: ProviderTemplateCategory[] = ['default', 'global', 'china', 'aggregator', 'local']
 const providerTemplateCategoryLabels: Record<ProviderTemplateCategory, string> = {
   default: '默认与自定义',
@@ -603,6 +608,39 @@ function getModelOptions(provider: ApiProvider, selectedModel = provider.default
       capabilities: normalizeModelCapabilities(model),
       type: model.type ?? inferModelType(model.id)
     }))
+    .sort(compareProviderModels)
+}
+
+function getModelName(model: ProviderModel): string {
+  return model.name?.trim() || model.id
+}
+
+function getModelTitle(model: ProviderModel): string {
+  return model.name && model.name !== model.id ? model.name : model.id
+}
+
+function getModelSubtitle(model: ProviderModel): string {
+  return model.name && model.name !== model.id ? model.id : model.ownedBy || ''
+}
+
+function compareProviderModels(first: ProviderModel, second: ProviderModel): number {
+  return (
+    modelNameCollator.compare(getModelName(first), getModelName(second)) ||
+    modelNameCollator.compare(first.id, second.id)
+  )
+}
+
+function getModelSearchText(model: ProviderModel): string {
+  return [
+    model.id,
+    model.name,
+    model.ownedBy,
+    model.type,
+    ...normalizeModelCapabilities(model).map((capability) => MODEL_CAPABILITY_LABELS[capability])
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLocaleLowerCase()
 }
 
 function getModelDisplayLabel(model: ProviderModel): string {
@@ -611,6 +649,172 @@ function getModelDisplayLabel(model: ProviderModel): string {
     .map((capability) => MODEL_CAPABILITY_LABELS[capability])
     .join(' / ')
   return `${name} · ${capabilities}`
+}
+
+function ModelCapabilityBadges({ model }: { model: ProviderModel }) {
+  return (
+    <>
+      {normalizeModelCapabilities(model).map((capability) => (
+        <span key={capability} className={`model-capability-badge type-${capability}`}>
+          {MODEL_CAPABILITY_LABELS[capability]}
+        </span>
+      ))}
+    </>
+  )
+}
+
+function ModelPickerList({
+  models,
+  selectedModelId,
+  onSelect,
+  emptyLabel = '没有找到匹配的模型'
+}: {
+  models: ProviderModel[]
+  selectedModelId: string
+  onSelect: (modelId: string) => void
+  emptyLabel?: string
+}) {
+  return (
+    <div className="conversation-model-list" role="listbox" aria-label="模型">
+      {models.map((model) => {
+        const subtitle = getModelSubtitle(model)
+        return (
+          <button
+            key={model.id}
+            aria-selected={model.id === selectedModelId}
+            className={model.id === selectedModelId ? 'active' : ''}
+            onClick={() => onSelect(model.id)}
+            role="option"
+            title={getModelDisplayLabel(model)}
+            type="button"
+          >
+            <span className="conversation-model-info">
+              <strong>{getModelTitle(model)}</strong>
+              {subtitle && <small>{subtitle}</small>}
+            </span>
+            <span className="model-capability-list">
+              <ModelCapabilityBadges model={model} />
+            </span>
+          </button>
+        )
+      })}
+      {models.length === 0 && <div className="conversation-model-empty">{emptyLabel}</div>}
+    </div>
+  )
+}
+
+function ModelPickerMenu({
+  provider,
+  value,
+  onChange,
+  variant = 'expanded'
+}: {
+  provider: ApiProvider
+  value: string
+  onChange: (modelId: string) => void
+  variant?: 'expanded' | 'dropdown'
+}) {
+  const [query, setQuery] = useState('')
+  const [open, setOpen] = useState(false)
+  const dropdownRef = useRef<HTMLDivElement>(null)
+  const modelOptions = useMemo(() => getModelOptions(provider, value), [provider, value])
+  const selectedModel = modelOptions.find((model) => model.id === value) ?? null
+  const normalizedQuery = query.trim().toLocaleLowerCase()
+  const visibleModelOptions = normalizedQuery
+    ? modelOptions.filter((model) => getModelSearchText(model).includes(normalizedQuery))
+    : modelOptions
+
+  useEffect(() => {
+    setQuery('')
+    setOpen(false)
+  }, [provider.id])
+
+  useEffect(() => {
+    if (variant !== 'dropdown' || !open) return
+
+    function closeOnOutsideClick(event: MouseEvent) {
+      if (!dropdownRef.current?.contains(event.target as Node)) {
+        setOpen(false)
+      }
+    }
+
+    function closeOnEscape(event: globalThis.KeyboardEvent) {
+      if (event.key === 'Escape') setOpen(false)
+    }
+
+    window.addEventListener('mousedown', closeOnOutsideClick)
+    window.addEventListener('keydown', closeOnEscape)
+    return () => {
+      window.removeEventListener('mousedown', closeOnOutsideClick)
+      window.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [open, variant])
+
+  function selectModel(modelId: string) {
+    onChange(modelId)
+    if (variant === 'dropdown') {
+      setOpen(false)
+      setQuery('')
+    }
+  }
+
+  const searchField = (
+    <label className="model-search-field">
+      <Search size={16} />
+      <input
+        aria-label="搜索模型"
+        placeholder="搜索模型名称、ID、供应商或能力标签"
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+      />
+    </label>
+  )
+
+  if (variant === 'dropdown') {
+    const subtitle = selectedModel ? getModelSubtitle(selectedModel) : ''
+
+    return (
+      <div className="model-picker-dropdown" ref={dropdownRef}>
+        <button
+          aria-expanded={open}
+          className="model-dropdown-trigger"
+          onClick={() => setOpen((current) => !current)}
+          title={selectedModel ? getModelDisplayLabel(selectedModel) : '请选择模型'}
+          type="button"
+        >
+          <span className="model-dropdown-current">
+            <strong>{selectedModel ? getModelTitle(selectedModel) : value || '请选择模型'}</strong>
+            {subtitle && <small>{subtitle}</small>}
+          </span>
+          {selectedModel && (
+            <span className="model-capability-list model-dropdown-capabilities">
+              <ModelCapabilityBadges model={selectedModel} />
+            </span>
+          )}
+          <ChevronDown size={17} />
+        </button>
+        {open && (
+          <div className="model-dropdown-popover">
+            {searchField}
+            <ModelPickerList models={visibleModelOptions} selectedModelId={value} onSelect={selectModel} />
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <div className="conversation-model-picker">
+      <div className="conversation-model-picker-head">
+        <span>模型</span>
+        <small>
+          {selectedModel ? `当前：${getModelTitle(selectedModel)}` : '请选择模型'} · {visibleModelOptions.length}/{modelOptions.length}
+        </small>
+      </div>
+      {searchField}
+      <ModelPickerList models={visibleModelOptions} selectedModelId={value} onSelect={selectModel} />
+    </div>
+  )
 }
 
 function getComparableSettings(settings: AppSettings) {
@@ -633,6 +837,7 @@ function getComparableProvider(provider: ApiProvider) {
     name: provider.name,
     apiBaseUrl: provider.apiBaseUrl,
     chatCompletionsPath: provider.chatCompletionsPath ?? '',
+    imageGenerationsPath: provider.imageGenerationsPath ?? '',
     modelsPath: provider.modelsPath ?? '',
     apiKey: provider.apiKey,
     defaultModel: provider.defaultModel,
@@ -3132,7 +3337,6 @@ function ConversationModelDialog({
   const [modelId, setModelId] = useState(conversation.modelId || assistantProvider.defaultModel)
   const [status, setStatus] = useState('')
   const [saving, setSaving] = useState(false)
-  const modelOptions = getModelOptions(selectedProvider, modelId)
 
   function selectProvider(nextProviderId: string) {
     const nextProvider = getProviderById(nextProviderId, providers)
@@ -3211,16 +3415,7 @@ function ConversationModelDialog({
           </select>
         </label>
 
-        <label>
-          <span>模型</span>
-          <select value={modelId} onChange={(event) => setModelId(event.target.value)}>
-            {modelOptions.map((model) => (
-              <option key={model.id} value={model.id}>
-                {getModelDisplayLabel(model)}
-              </option>
-            ))}
-          </select>
-        </label>
+        <ModelPickerMenu provider={selectedProvider} value={modelId} onChange={setModelId} />
 
         <div className="form-actions">
           <button className="secondary-action" disabled={saving} onClick={() => saveConversationModel(true)} type="button">
@@ -4162,24 +4357,29 @@ function SettingsPanel({
                   </div>
                   <small>选中的供应商会成为全局默认供应商。</small>
                 </div>
-                {visibleProviders.map((provider) => (
-                  <button
-                    key={provider.id}
-                    className={`provider-item ${provider.id === providerDraft.id ? 'active' : ''}`}
-                    onClick={() => selectProvider(provider)}
-                  >
-                    <Plug size={17} />
-                    <span>
-                      <strong>{provider.name}{provider.id === providerDraft.id && !providerSaved ? '（未保存）' : ''}</strong>
-                      <small>{provider.apiBaseUrl}</small>
-                    </span>
-                  </button>
-                ))}
+                {visibleProviders.map((provider) => {
+                  const isActiveProvider = provider.id === providerDraft.id
+                  const displayProvider = isActiveProvider ? providerDraft : provider
+
+                  return (
+                    <button
+                      key={provider.id}
+                      className={`provider-item ${isActiveProvider ? 'active' : ''}`}
+                      onClick={() => selectProvider(displayProvider)}
+                    >
+                      <Plug size={17} />
+                      <span>
+                        <strong>{displayProvider.name}{isActiveProvider && !providerSaved ? '（未保存）' : ''}</strong>
+                        <small>{displayProvider.apiBaseUrl}</small>
+                      </span>
+                    </button>
+                  )
+                })}
               </div>
             </div>
 
             <div className="provider-form">
-              <div className="form-row two">
+              <div className="form-row two provider-default-model-row">
                 <label>
                   <span>供应商名称</span>
                   <input
@@ -4187,19 +4387,15 @@ function SettingsPanel({
                     onChange={(event) => setProviderDraft({ ...providerDraft, name: event.target.value })}
                   />
                 </label>
-                <label>
+                <div className="settings-model-field">
                   <span>全局默认模型</span>
-                  <select
+                  <ModelPickerMenu
+                    provider={providerDraft}
                     value={providerDraft.defaultModel}
-                    onChange={(event) => setDefaultModel(event.target.value)}
-                  >
-                    {modelOptions.map((model) => (
-                      <option key={model.id} value={model.id}>
-                        {getModelDisplayLabel(model)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                    variant="dropdown"
+                    onChange={setDefaultModel}
+                  />
+                </div>
               </div>
 
               <label>

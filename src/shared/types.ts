@@ -175,6 +175,7 @@ export interface ProviderTemplate {
   category: ProviderTemplateCategory
   apiBaseUrl: string
   chatCompletionsPath?: string
+  imageGenerationsPath?: string
   modelsPath?: string
   defaultModel: string
   suggestedModels: string[]
@@ -195,6 +196,7 @@ export interface ApiProvider {
   name: string
   apiBaseUrl: string
   chatCompletionsPath?: string
+  imageGenerationsPath?: string
   modelsPath?: string
   apiKey: string
   defaultModel: string

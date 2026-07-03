@@ -273,3 +273,132 @@ FunctionEnd
   ${EndIf}
 !macroend
 !endif
+
+!ifdef BUILD_UNINSTALLER
+Var GLLMUninstallDataRoot
+Var GLLMUninstallDefaultDataRoot
+Var GLLMUninstallDeleteData
+Var GLLMUninstallDialog
+Var GLLMUninstallIntroLabel
+Var GLLMUninstallPathLabel
+Var GLLMUninstallPathValueLabel
+Var GLLMUninstallDeleteCheckbox
+Var GLLMUninstallHintLabel
+
+LangString GLLMUninstallDataPageTitle 1033 "Keep or delete local data"
+LangString GLLMUninstallDataPageTitle 2052 "保留或删除本地数据"
+LangString GLLMUninstallDataPageSubtitle 1033 "G-LLM keeps your conversations, assistants, generated images and provider settings locally."
+LangString GLLMUninstallDataPageSubtitle 2052 "G-LLM 会把会话、助手、生成图片和供应商配置保存在本机。"
+LangString GLLMUninstallDataIntro 1033 "Uninstalling the standard Windows app does not delete local data by default. Keep this folder if you may reinstall G-LLM later."
+LangString GLLMUninstallDataIntro 2052 "Windows 标准版卸载时默认不会删除本地数据。如果你以后可能重新安装 G-LLM，请保留该目录。"
+LangString GLLMUninstallDataPathLabel 1033 "Data folder:"
+LangString GLLMUninstallDataPathLabel 2052 "数据目录："
+LangString GLLMUninstallDeleteDataCheckbox 1033 "Also delete my G-LLM local data folder"
+LangString GLLMUninstallDeleteDataCheckbox 2052 "同时删除我的 G-LLM 本地数据目录"
+LangString GLLMUninstallDeleteDataHint 1033 "Only check this if you no longer need the local data. Deleted conversations, assistants, generated images and settings cannot be restored unless you have a backup."
+LangString GLLMUninstallDeleteDataHint 2052 "仅在你确认不再需要本地数据时勾选。删除后，会话、助手、生成图片和设置无法恢复，除非你已有备份。"
+
+!macro customUnWelcomePage
+  UninstPage custom un.GLLMUninstallDataPage un.GLLMUninstallDataLeave
+!macroend
+
+!macro customUnInit
+  StrCpy $GLLMUninstallDeleteData "0"
+  Call un.GLLMResolveDataRoot
+!macroend
+
+!macro customUnInstall
+  ${If} $GLLMUninstallDeleteData == "1"
+    ${If} $GLLMUninstallDataRoot != ""
+      RMDir /r "$GLLMUninstallDataRoot"
+    ${EndIf}
+    ${If} $GLLMUninstallDefaultDataRoot != ""
+    ${AndIf} $GLLMUninstallDefaultDataRoot != $GLLMUninstallDataRoot
+      RMDir /r "$GLLMUninstallDefaultDataRoot"
+    ${EndIf}
+  ${EndIf}
+!macroend
+
+Function un.GLLMSetHeader
+  Pop $1
+  Pop $0
+  GetDlgItem $2 $HWNDPARENT 1037
+  SendMessage $2 0x000C 0 "STR:$0"
+  GetDlgItem $2 $HWNDPARENT 1038
+  SendMessage $2 0x000C 0 "STR:$1"
+FunctionEnd
+
+Function un.GLLMResolveDataRoot
+  SetShellVarContext current
+  StrCpy $GLLMUninstallDefaultDataRoot "$APPDATA\G-LLM"
+  StrCpy $GLLMUninstallDataRoot "$GLLMUninstallDefaultDataRoot"
+
+  InitPluginsDir
+  FileOpen $0 "$PLUGINSDIR\gllm-resolve-data-root.ps1" w
+  FileWrite $0 "$$default = Join-Path $$env:APPDATA 'G-LLM'$\r$\n"
+  FileWrite $0 "$$path = $$default$\r$\n"
+  FileWrite $0 "$$json = Join-Path $$default 'data-location.json'$\r$\n"
+  FileWrite $0 "$$txt = Join-Path $$default 'data-location.txt'$\r$\n"
+  FileWrite $0 "if (Test-Path -LiteralPath $$json) {$\r$\n"
+  FileWrite $0 "  try {$\r$\n"
+  FileWrite $0 "    $$config = Get-Content -Raw -LiteralPath $$json | ConvertFrom-Json$\r$\n"
+  FileWrite $0 "    if ($$config.customDataRoot) { $$path = [string] $$config.customDataRoot }$\r$\n"
+  FileWrite $0 "  } catch {}$\r$\n"
+  FileWrite $0 "}$\r$\n"
+  FileWrite $0 "if ($$path -eq $$default -and (Test-Path -LiteralPath $$txt)) {$\r$\n"
+  FileWrite $0 "  $$value = (Get-Content -Raw -LiteralPath $$txt).Trim()$\r$\n"
+  FileWrite $0 "  if ($$value) { $$path = $$value }$\r$\n"
+  FileWrite $0 "}$\r$\n"
+  FileWrite $0 "[Console]::Out.Write($$path)$\r$\n"
+  FileClose $0
+
+  nsExec::ExecToStack 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\gllm-resolve-data-root.ps1"'
+  Pop $0
+  Pop $1
+  ${If} $0 == 0
+  ${AndIf} $1 != ""
+    StrCpy $GLLMUninstallDataRoot "$1"
+  ${EndIf}
+FunctionEnd
+
+Function un.GLLMUninstallDataPage
+  Call un.GLLMResolveDataRoot
+
+  Push "$(GLLMUninstallDataPageTitle)"
+  Push "$(GLLMUninstallDataPageSubtitle)"
+  Call un.GLLMSetHeader
+
+  nsDialogs::Create 1018
+  Pop $GLLMUninstallDialog
+  ${If} $GLLMUninstallDialog == error
+    Abort
+  ${EndIf}
+
+  ${NSD_CreateLabel} 0 0 100% 38u "$(GLLMUninstallDataIntro)"
+  Pop $GLLMUninstallIntroLabel
+
+  ${NSD_CreateLabel} 0 50u 100% 12u "$(GLLMUninstallDataPathLabel)"
+  Pop $GLLMUninstallPathLabel
+
+  ${NSD_CreateLabel} 0 68u 100% 32u "$GLLMUninstallDataRoot"
+  Pop $GLLMUninstallPathValueLabel
+
+  ${NSD_CreateCheckbox} 0 110u 100% 14u "$(GLLMUninstallDeleteDataCheckbox)"
+  Pop $GLLMUninstallDeleteCheckbox
+  ${NSD_Uncheck} $GLLMUninstallDeleteCheckbox
+
+  ${NSD_CreateLabel} 18u 130u 92% 44u "$(GLLMUninstallDeleteDataHint)"
+  Pop $GLLMUninstallHintLabel
+
+  nsDialogs::Show
+FunctionEnd
+
+Function un.GLLMUninstallDataLeave
+  ${NSD_GetState} $GLLMUninstallDeleteCheckbox $0
+  ${If} $0 == ${BST_CHECKED}
+    StrCpy $GLLMUninstallDeleteData "1"
+  ${Else}
+    StrCpy $GLLMUninstallDeleteData "0"
+  ${EndIf}
+FunctionEnd
+!endif

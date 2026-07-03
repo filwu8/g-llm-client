@@ -6,7 +6,9 @@ import {
   dialog,
   ipcMain,
   Menu,
+  net,
   nativeImage,
+  protocol,
   screen,
   shell,
   Tray,
@@ -15,6 +17,7 @@ import {
 } from 'electron'
 import { appendFileSync, mkdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 import { pickAttachments, preparePastedAttachments } from './attachments'
 import { captureScreenshot } from './screenshot'
@@ -32,6 +35,8 @@ import {
   getActiveProjectId,
   getAssistants,
   getConversations,
+  getDataResourceFilePathFromUrl,
+  getDataResourceProtocol,
   getDataLocationInfo,
   getMemories,
   getNotes,
@@ -92,6 +97,17 @@ const SCREENSHOT_WINDOW_HIDE_DELAY_MS = 180
 const APP_USER_MODEL_ID = 'com.gllm.wujijie'
 const shouldUseSingleInstanceLock = process.platform === 'win32'
 const gotSingleInstanceLock = !shouldUseSingleInstanceLock || app.requestSingleInstanceLock()
+
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: getDataResourceProtocol(),
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true
+    }
+  }
+])
 
 if (!gotSingleInstanceLock) {
   app.quit()
@@ -169,6 +185,14 @@ function registerExternalLinkHandler(window: BrowserWindow): void {
       void shell.openExternal(url)
     }
     return { action: 'deny' }
+  })
+}
+
+function registerDataResourceProtocol(): void {
+  protocol.handle(getDataResourceProtocol(), (request) => {
+    const filePath = getDataResourceFilePathFromUrl(request.url)
+    if (!filePath) return new Response('Not found', { status: 404 })
+    return net.fetch(pathToFileURL(filePath).toString())
   })
 }
 
@@ -714,6 +738,7 @@ app.whenReady().then(() => {
 
   electronApp.setAppUserModelId(APP_USER_MODEL_ID)
   Menu.setApplicationMenu(null)
+  registerDataResourceProtocol()
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)

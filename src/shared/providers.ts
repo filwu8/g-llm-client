@@ -30,6 +30,7 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     description: 'OpenAI 官方兼容接口',
     category: 'global',
     apiBaseUrl: 'https://api.openai.com/v1',
+    imageGenerationsPath: '/images/generations',
     defaultModel: 'gpt-4.1-mini',
     suggestedModels: ['gpt-4.1-mini', 'gpt-4.1', 'gpt-4o-mini', 'gpt-image-1', 'text-embedding-3-large'],
     requiresApiKey: true
@@ -222,6 +223,7 @@ export function createProviderFromTemplate(templateId: ProviderTemplateId, id = 
     name: template.name,
     apiBaseUrl: template.apiBaseUrl,
     chatCompletionsPath: template.chatCompletionsPath,
+    imageGenerationsPath: template.imageGenerationsPath,
     modelsPath: template.modelsPath,
     apiKey: '',
     defaultModel: template.defaultModel,

@@ -61,6 +61,8 @@ const dataLocationFileName = 'data-location.json'
 const installerDataLocationFileName = 'data-location.txt'
 const storeFileName = 'g-llm-client.json'
 const archiveManifestFileName = 'g-llm-data-archive.json'
+const dataResourceProtocol = 'gllm-data'
+const generatedImagesDirectoryName = 'generated-images'
 const importBackupPrefix = 'backup-before-gllm-import-'
 const migrationBackupPrefix = 'backup-before-gllm-migration-'
 const defaultProjectId = 'project_default'
@@ -263,6 +265,77 @@ const activeDataRoot = resolveDataRoot()
 
 export function getDataLocationInfo(): DataLocationInfo {
   return createDataLocationInfo(activeDataRoot)
+}
+
+export interface StoredDataResource {
+  absolutePath: string
+  relativePath: string
+  url: string
+}
+
+export function getDataResourceProtocol(): string {
+  return dataResourceProtocol
+}
+
+function getSafeDataResourcePath(relativePath: string): { absolutePath: string; relativePath: string } | null {
+  const normalized = normalizeArchivePath(relativePath)
+  if (!normalized) return null
+
+  const segments = normalized.split('/')
+  if (segments.some((segment) => segment === '..' || segment.includes(':') || segment.includes('\0'))) {
+    return null
+  }
+
+  const absolutePath = resolve(activeDataRoot, ...segments)
+  if (!isSamePath(absolutePath, activeDataRoot) && !isPathInside(absolutePath, activeDataRoot)) {
+    return null
+  }
+
+  return { absolutePath, relativePath: normalized }
+}
+
+export function getDataResourceFilePathFromUrl(resourceUrl: string): string | null {
+  let parsed: URL
+  try {
+    parsed = new URL(resourceUrl)
+  } catch {
+    return null
+  }
+
+  if (parsed.protocol !== `${dataResourceProtocol}:`) return null
+
+  const rawPath = `${parsed.hostname}${decodeURIComponent(parsed.pathname)}`
+  return getSafeDataResourcePath(rawPath)?.absolutePath ?? null
+}
+
+function getCurrentYearMonth(): string {
+  const now = new Date()
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+}
+
+function normalizeImageExtension(extension: string): string {
+  const normalized = extension.toLowerCase().replace(/^\./, '')
+  if (normalized === 'jpeg') return 'jpg'
+  if (['png', 'jpg', 'webp', 'gif'].includes(normalized)) return normalized
+  return 'png'
+}
+
+export function saveGeneratedImageResource(buffer: Buffer, extension = 'png'): StoredDataResource {
+  const safeExtension = normalizeImageExtension(extension)
+  const relativePath = normalizeArchivePath(
+    join(generatedImagesDirectoryName, getCurrentYearMonth(), `${randomUUID()}.${safeExtension}`)
+  )
+  const target = getSafeDataResourcePath(relativePath)
+  if (!target) throw new Error('生成图片保存路径无效')
+
+  mkdirSync(dirname(target.absolutePath), { recursive: true })
+  writeFileSync(target.absolutePath, buffer)
+
+  return {
+    absolutePath: target.absolutePath,
+    relativePath: target.relativePath,
+    url: `${dataResourceProtocol}://${target.relativePath}`
+  }
 }
 
 export function migrateDataRoot(targetRoot: string): DataLocationChangeResult {
@@ -616,6 +689,7 @@ function sanitizeProvider(provider: ApiProvider): ApiProvider {
   const fallbackModel = provider.defaultModel?.trim() || DEFAULT_PROVIDER.defaultModel
   const models = sanitizeModels(provider.models?.length ? provider.models : [{ id: fallbackModel }])
   const chatCompletionsPath = sanitizeEndpointPath(provider.chatCompletionsPath)
+  const imageGenerationsPath = sanitizeEndpointPath(provider.imageGenerationsPath)
   const modelsPath = sanitizeEndpointPath(provider.modelsPath)
 
   return {
@@ -625,6 +699,7 @@ function sanitizeProvider(provider: ApiProvider): ApiProvider {
     name: provider.name.trim() || '自定义供应商',
     apiBaseUrl: provider.apiBaseUrl.trim().replace(/\/$/, '') || DEFAULT_PROVIDER.apiBaseUrl,
     chatCompletionsPath,
+    imageGenerationsPath,
     modelsPath,
     apiKey: provider.apiKey.trim(),
     defaultModel: provider.defaultModel.trim() || models[0]?.id || DEFAULT_PROVIDER.defaultModel,

@@ -17,7 +17,12 @@ import {
   universalAssistantPolicy,
   universalFallbackPrompt
 } from '../shared/assistantPromptPolicy'
-import { inferModelCapabilitiesFromMetadata, inferModelTypeFromMetadata } from '../shared/modelCapabilities'
+import {
+  inferModelCapabilitiesFromMetadata,
+  inferModelTypeFromMetadata,
+  normalizeModelCapabilities
+} from '../shared/modelCapabilities'
+import { saveGeneratedImageResource } from './storage'
 
 interface ChatStreamEvent {
   content?: string
@@ -76,6 +81,18 @@ interface PreparedConversationContext {
   messages: ChatMessage[]
   compressedHistory?: string
   omittedMessageCount: number
+}
+
+interface ImageGenerationItem {
+  url?: unknown
+  b64_json?: unknown
+  revised_prompt?: unknown
+}
+
+interface ImageGenerationPayload {
+  data?: unknown
+  created?: unknown
+  error?: unknown
 }
 
 function padDatePart(value: number): string {
@@ -366,6 +383,246 @@ function assertProviderReady(provider: ApiProvider): void {
   if (provider.requiresApiKey && !provider.apiKey.trim()) {
     throw new Error(`请先为「${provider.name}」填写 API Key`)
   }
+}
+
+function getDefaultProviderModel(provider: ApiProvider): ProviderModel {
+  return provider.models.find((model) => model.id === provider.defaultModel) ?? { id: provider.defaultModel }
+}
+
+function shouldUseImageGenerationEndpoint(provider: ApiProvider): boolean {
+  return normalizeModelCapabilities(getDefaultProviderModel(provider)).includes('image')
+}
+
+function getImageGenerationAttachmentContext(attachments: PreparedAttachment[] = []): string {
+  const blocks = attachments
+    .map((attachment, index) => {
+      const head = `附件 ${index + 1}：${attachment.name}（${attachment.mimeType}，${formatAttachmentSize(attachment.size)}）`
+      if (attachment.kind === 'image') {
+        return `${head}\n当前图片生成测试仅发送文字提示，暂不把参考图作为编辑输入上传。`
+      }
+      return attachment.text ? `${head}\n${attachment.text}` : `${head}\n当前版本未能解析该文件正文，只能提供文件名和类型。`
+    })
+    .filter(Boolean)
+
+  return blocks.length > 0 ? `\n\n[用户上传附件]\n${blocks.join('\n\n---\n\n')}` : ''
+}
+
+function getImageGenerationPrompt(request: ChatRequest): string {
+  const lastUserMessage = request.messages
+    .slice()
+    .reverse()
+    .find((message) => message.role === 'user')
+  if (!lastUserMessage) return '生成一张简洁、清晰、高质量的图片。'
+
+  const prompt = [
+    lastUserMessage.content,
+    getKnowledgeContext(lastUserMessage),
+    getImageGenerationAttachmentContext(lastUserMessage.attachments)
+  ]
+    .join('')
+    .trim()
+
+  return prompt || '生成一张简洁、清晰、高质量的图片。'
+}
+
+function normalizeGeneratedImageSource(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const source = value.trim()
+  if (!source) return null
+  if (/^https?:\/\//i.test(source) || source.startsWith('data:image/')) return source
+  if (/^[A-Za-z0-9+/=\r\n]+$/.test(source) && source.length > 120) {
+    return `data:image/png;base64,${source.replace(/\s+/g, '')}`
+  }
+  return null
+}
+
+function getImageExtensionFromMimeType(mimeType: string): string {
+  const normalized = mimeType.toLowerCase().split(';')[0]?.trim() ?? ''
+  if (normalized === 'image/jpeg' || normalized === 'image/jpg') return 'jpg'
+  if (normalized === 'image/webp') return 'webp'
+  if (normalized === 'image/gif') return 'gif'
+  return 'png'
+}
+
+function getImageExtensionFromUrl(source: string): string {
+  try {
+    const pathname = new URL(source).pathname.toLowerCase()
+    const extension = pathname.match(/\.([a-z0-9]+)$/)?.[1] ?? ''
+    if (['png', 'jpg', 'jpeg', 'webp', 'gif'].includes(extension)) return extension === 'jpeg' ? 'jpg' : extension
+  } catch {
+    return 'png'
+  }
+
+  return 'png'
+}
+
+function readGeneratedImageDataUrl(source: string): { buffer: Buffer; extension: string } | null {
+  const match = source.match(/^data:([^;,]+)?(;base64)?,(.*)$/s)
+  if (!match) return null
+
+  const mimeType = match[1] || 'image/png'
+  const isBase64 = Boolean(match[2])
+  const body = match[3] ?? ''
+  const buffer = isBase64 ? Buffer.from(body.replace(/\s+/g, ''), 'base64') : Buffer.from(decodeURIComponent(body))
+
+  return {
+    buffer,
+    extension: getImageExtensionFromMimeType(mimeType)
+  }
+}
+
+async function readGeneratedImageSource(source: string): Promise<{ buffer: Buffer; extension: string }> {
+  if (source.startsWith('data:image/')) {
+    const image = readGeneratedImageDataUrl(source)
+    if (!image || image.buffer.byteLength === 0) throw new Error('图片生成接口返回了无效的 data URL')
+    return image
+  }
+
+  if (!/^https?:\/\//i.test(source)) {
+    throw new Error('图片生成接口返回了不支持的图片地址')
+  }
+
+  const response = await fetch(source, { signal: AbortSignal.timeout(120_000) })
+  if (!response.ok) {
+    throw new Error(`下载生成图片失败：${response.status}`)
+  }
+
+  const contentType = response.headers.get('content-type') ?? ''
+  const buffer = Buffer.from(await response.arrayBuffer())
+  if (buffer.byteLength === 0) throw new Error('下载生成图片为空')
+
+  return {
+    buffer,
+    extension: contentType.startsWith('image/') ? getImageExtensionFromMimeType(contentType) : getImageExtensionFromUrl(source)
+  }
+}
+
+async function persistGeneratedImageSources(sources: string[]): Promise<string[]> {
+  const storedUrls: string[] = []
+
+  for (const source of sources) {
+    const image = await readGeneratedImageSource(source)
+    const stored = saveGeneratedImageResource(image.buffer, image.extension)
+    storedUrls.push(stored.url)
+  }
+
+  return storedUrls
+}
+
+function collectGeneratedImageSources(value: unknown, depth = 0): string[] {
+  if (depth > 5 || value === null || value === undefined) return []
+
+  const direct = normalizeGeneratedImageSource(value)
+  if (direct) return [direct]
+
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => collectGeneratedImageSources(item, depth + 1))
+  }
+
+  if (typeof value !== 'object') return []
+
+  const item = value as Record<string, unknown>
+  const candidates = [
+    item.b64_json,
+    item.url,
+    item.image_url,
+    typeof item.image === 'object' ? (item.image as Record<string, unknown>).url : item.image,
+    typeof item.image_url === 'object' ? (item.image_url as Record<string, unknown>).url : undefined
+  ]
+    .map(normalizeGeneratedImageSource)
+    .filter((source): source is string => Boolean(source))
+
+  if (candidates.length > 0) return candidates
+
+  return Object.values(item).flatMap((child) => collectGeneratedImageSources(child, depth + 1))
+}
+
+function getRevisedPrompts(payload: ImageGenerationPayload): string[] {
+  const data = Array.isArray(payload.data) ? (payload.data as ImageGenerationItem[]) : []
+  return data
+    .map((item) => (typeof item.revised_prompt === 'string' ? item.revised_prompt.trim() : ''))
+    .filter((prompt, index, prompts) => prompt && prompts.indexOf(prompt) === index)
+}
+
+function getImageMarkdownSource(source: string): string {
+  return source.replace(/\(/g, '%28').replace(/\)/g, '%29')
+}
+
+function extractProviderErrorMessage(detail: string): string {
+  const trimmed = detail.trim()
+  if (!trimmed) return ''
+
+  try {
+    const payload = JSON.parse(trimmed) as {
+      error?: {
+        message?: unknown
+        code?: unknown
+        type?: unknown
+      }
+      message?: unknown
+    }
+    const message = payload.error?.message ?? payload.message
+    if (typeof message === 'string' && message.trim()) return message.trim()
+  } catch {
+    return trimmed
+  }
+
+  return trimmed
+}
+
+function getImageGenerationFailureMessage(provider: ApiProvider, status: number, detail: string): string {
+  const message = extractProviderErrorMessage(detail)
+  const model = provider.defaultModel
+
+  if (/paid plan|upgrade|billing|quota|insufficient|permission|not available|access/i.test(message)) {
+    return `${provider.name} 图片生成失败：当前模型「${model}」在上游渠道不可用或需要付费/权限开通。请检查该模型的上游账号权限、渠道配置，或改用其他图片生成模型。上游返回：${message}`
+  }
+
+  return `${provider.name} 图片生成请求失败：${status}${message ? ` ${message}` : ''}`.trim()
+}
+
+async function formatGeneratedImageResponse(prompt: string, payload: ImageGenerationPayload): Promise<string> {
+  const images = Array.from(new Set(collectGeneratedImageSources(payload)))
+  if (images.length === 0) {
+    throw new Error('图片生成接口没有返回可显示的图片 URL 或 b64_json')
+  }
+
+  const storedImages = await persistGeneratedImageSources(images)
+  const revisedPrompts = getRevisedPrompts(payload)
+  const blocks = [
+    '已生成图片：',
+    ...storedImages.map((source, index) => `![生成图片 ${index + 1}](${getImageMarkdownSource(source)})`)
+  ]
+
+  if (revisedPrompts.length > 0 && revisedPrompts[0] !== prompt) {
+    blocks.push(`生成提示优化：${revisedPrompts[0]}`)
+  }
+
+  return blocks.join('\n\n')
+}
+
+async function generateImageMessage(request: ChatRequest): Promise<string> {
+  const endpoint = buildProviderUrl(request.provider, request.provider.imageGenerationsPath ?? '/images/generations')
+  const prompt = getImageGenerationPrompt(request)
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: getProviderHeaders(request.provider),
+    body: JSON.stringify({
+      model: request.provider.defaultModel,
+      prompt,
+      n: 1,
+      size: '1024x1024'
+    }),
+    signal: AbortSignal.timeout(120_000)
+  })
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '')
+    throw new Error(getImageGenerationFailureMessage(request.provider, response.status, detail))
+  }
+
+  const payload = (await response.json()) as ImageGenerationPayload
+  return formatGeneratedImageResponse(prompt, payload)
 }
 
 function fallbackAssistantSuggestion(keyword: string): AssistantSuggestion {
@@ -827,6 +1084,11 @@ export async function checkProviderConnection(provider: ApiProvider): Promise<Pr
 
 export async function* streamGllmChat(request: ChatRequest): AsyncGenerator<ChatStreamEvent> {
   assertProviderReady(request.provider)
+
+  if (request.purpose !== 'translation' && shouldUseImageGenerationEndpoint(request.provider)) {
+    yield { content: await generateImageMessage(request) }
+    return
+  }
 
   let webContext = ''
   if (request.webSearchEnabled && request.purpose !== 'translation') {

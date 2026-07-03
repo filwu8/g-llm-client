@@ -37,7 +37,7 @@ export function inferModelType(modelId: string): ProviderModelType {
   if (/embedding|embed|text-embedding|bge-|gte-|e5-/.test(id)) return 'embedding'
   if (/rerank|ranker|bge-reranker/.test(id)) return 'rerank'
   if (/tts|whisper|audio|speech|transcribe|realtime/.test(id)) return 'audio'
-  if (/gpt-image|dall[-.]?e|imagen|image-generation|stable-diffusion|sdxl|flux|midjourney|kolors|wan.*image/.test(id)) {
+  if (/gpt-image|dall[-.]?e|imagen|image-generation|image-preview|gemini.*image|stable-diffusion|sdxl|flux|midjourney|kolors|wan.*image/.test(id)) {
     return 'image'
   }
   if (/gpt-4o|gpt-4\.1|gpt-5|o\d|vision|vl|qwen.*vl|gemini|claude-3|claude-4|glm-4v|llava|pixtral|grok.*vision|doubao.*vision/.test(id)) {
@@ -53,7 +53,7 @@ export function inferModelTypeFromMetadata(modelId: string, metadata?: Record<st
   if (/embedding|embed|text-embedding|bge-|gte-|e5-/.test(text)) return 'embedding'
   if (/rerank|ranker|bge-reranker/.test(text)) return 'rerank'
   if (/tts|whisper|audio|speech|transcribe|realtime/.test(text)) return 'audio'
-  if (/image_generation|image-generation|generate_image|gpt-image|dall[-.]?e|imagen|stable-diffusion|sdxl|flux/.test(text)) {
+  if (/image_generation|image-generation|image-preview|generate_image|gpt-image|dall[-.]?e|imagen|gemini.*image|stable-diffusion|sdxl|flux/.test(text)) {
     return 'image'
   }
   if (/vision|image_input|input_image|multimodal|multi-modal|vl|visual|看图|视觉/.test(text)) return 'vision'
@@ -88,7 +88,7 @@ export function inferModelCapabilitiesFromMetadata(
     capabilities.add('chat')
     capabilities.add('vision')
   }
-  if (/image_generation|image-generation|generate_image|gpt-image|dall[-.]?e|imagen|stable-diffusion|sdxl|flux/.test(text)) {
+  if (/image_generation|image-generation|image-preview|generate_image|gpt-image|dall[-.]?e|imagen|gemini.*image|stable-diffusion|sdxl|flux/.test(text)) {
     capabilities.add('image')
   }
   if (/embedding|embed|text-embedding|bge-|gte-|e5-/.test(text)) capabilities.add('embedding')
