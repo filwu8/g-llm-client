@@ -90,7 +90,8 @@ import {
   DEFAULT_PROVIDER_ID,
   PROVIDER_TEMPLATES,
   createProviderFromTemplate,
-  getProviderById
+  getProviderById,
+  isOfficialGllmApiProvider
 } from '@shared/providers'
 import {
   getAttachmentSupportLabel,
@@ -805,7 +806,7 @@ export default function App() {
 
   async function verifyGoldThemeEntitlement(providerList: ApiProvider[]): Promise<void> {
     const candidates = providerList.filter(
-      (provider) => provider.templateId === 'gllm' && Boolean(provider.apiKey.trim())
+      (provider) => isOfficialGllmApiProvider(provider) && Boolean(provider.apiKey.trim())
     )
     if (candidates.length === 0) {
       setGoldThemeEntitled(false)
@@ -4637,7 +4638,7 @@ function SettingsPanel({
                   <strong>界面主题</strong>
                   <small>主窗口、快速对话和内容组件使用同一套配色。</small>
                 </div>
-                {goldThemeEntitled && <span>G-LLM 付费主题</span>}
+                {goldThemeEntitled && <span>G-LLM 专属主题</span>}
               </div>
 
               <div className="theme-option-list">

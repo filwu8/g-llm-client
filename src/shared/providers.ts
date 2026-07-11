@@ -3,6 +3,16 @@ import { inferModelCapabilities, inferModelType } from './modelCapabilities'
 
 export const DEFAULT_PROVIDER_ID = 'provider_gllm'
 
+export function isOfficialGllmApiProvider(provider: ApiProvider): boolean {
+  try {
+    const url = new URL(provider.apiBaseUrl)
+    const pathname = url.pathname.replace(/\/+$/, '') || '/'
+    return url.origin === 'https://llm.gprophet.com' && pathname === '/v1'
+  } catch {
+    return false
+  }
+}
+
 export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
   {
     id: 'gllm',

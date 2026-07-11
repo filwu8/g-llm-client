@@ -27,6 +27,7 @@ import {
   inferModelTypeFromMetadata,
   normalizeModelCapabilities
 } from '../shared/modelCapabilities'
+import { isOfficialGllmApiProvider } from '../shared/providers'
 import { saveGeneratedImageResource } from './storage'
 
 interface ChatStreamEvent {
@@ -1405,7 +1406,7 @@ export async function checkProviderConnection(provider: ApiProvider): Promise<Pr
 }
 
 export async function checkGllmThemeEntitlement(provider: ApiProvider): Promise<ThemeEntitlementResult> {
-  if (provider.templateId !== 'gllm' || !provider.apiKey.trim()) {
+  if (!provider.apiKey.trim()) {
     return {
       ok: true,
       eligible: false,
@@ -1414,23 +1415,16 @@ export async function checkGllmThemeEntitlement(provider: ApiProvider): Promise<
     }
   }
 
-  let baseUrl: URL
-  try {
-    baseUrl = new URL(provider.apiBaseUrl)
-  } catch {
-    return { ok: false, eligible: false, paid: false, message: 'G-LLM API 地址无效' }
-  }
-
-  if (baseUrl.protocol !== 'https:' || baseUrl.hostname.toLowerCase() !== 'llm.gprophet.com') {
+  if (!isOfficialGllmApiProvider(provider)) {
     return {
       ok: true,
       eligible: false,
       paid: false,
-      message: '金色主题仅支持官方 G-LLM API'
+      message: '金色主题仅支持 https://llm.gprophet.com/v1'
     }
   }
 
-  const endpoint = new URL('/v1/client/entitlements', baseUrl.origin)
+  const endpoint = 'https://llm.gprophet.com/v1/client/entitlements'
   try {
     const response = await fetch(endpoint, {
       method: 'GET',
@@ -1451,12 +1445,12 @@ export async function checkGllmThemeEntitlement(provider: ApiProvider): Promise<
       entitlements?: { gold_theme?: unknown }
     }
     const paid = payload.paid === true
-    const eligible = paid && payload.entitlements?.gold_theme === true
+    const eligible = payload.entitlements?.gold_theme === true
     return {
       ok: true,
       eligible,
       paid,
-      message: eligible ? '已验证 G-LLM 付费资格' : '当前 G-LLM 账号尚未获得金色主题资格'
+      message: eligible ? '已验证官方 G-LLM API 资格' : '当前 API Key 尚未获得金色主题资格'
     }
   } catch (error) {
     return {

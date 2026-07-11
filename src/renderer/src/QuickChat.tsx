@@ -27,7 +27,7 @@ import { MarkdownMessage } from './MarkdownMessage'
 import { getModelOptions, ModelPickerMenu } from './ModelPicker'
 import { applyDocumentTheme } from './theme'
 import { DEFAULT_ASSISTANTS, getAssistantById } from '@shared/assistants'
-import { DEFAULT_PROVIDER, getProviderById } from '@shared/providers'
+import { DEFAULT_PROVIDER, getProviderById, isOfficialGllmApiProvider } from '@shared/providers'
 import type {
   ApiProvider,
   AppSettings,
@@ -214,7 +214,7 @@ export default function QuickChat() {
 
   async function verifyGoldThemeEntitlement(providerList: ApiProvider[]) {
     const candidates = providerList.filter(
-      (candidate) => candidate.templateId === 'gllm' && Boolean(candidate.apiKey.trim())
+      (candidate) => isOfficialGllmApiProvider(candidate) && Boolean(candidate.apiKey.trim())
     )
     for (const candidate of candidates) {
       const result = await window.gllm.checkThemeEntitlement(candidate)
