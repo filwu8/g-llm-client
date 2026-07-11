@@ -92,45 +92,52 @@
 
 :root.theme-gold {
   color-scheme: dark;
-  --background: 28 45% 4%;
-  --foreground: 45 95% 90%;
-  --card: 28 40% 7%;
-  --card-foreground: 45 98% 93%;
-  --popover: 28 40% 7%;
-  --popover-foreground: 45 95% 90%;
-  --primary: 38 90% 52%;
-  --primary-hover: 43 96% 56%;
-  --primary-foreground: 28 60% 5%;
-  --secondary: 28 35% 11%;
-  --secondary-foreground: 45 80% 82%;
-  --muted: 28 30% 9%;
-  --muted-foreground: 38 65% 65%;
-  --accent: 38 60% 14%;
-  --accent-foreground: 45 90% 86%;
-  --border: 38 50% 22%;
-  --input: 38 50% 22%;
-  --ring: 38 90% 52%;
-  --overlay: 28 60% 2%;
+  --background: 348 35% 4%;
+  --foreground: 43 58% 94%;
+  --card: 350 22% 8%;
+  --card-foreground: 44 72% 96%;
+  --popover: 350 28% 6%;
+  --popover-foreground: 43 62% 94%;
+  --primary: 45 100% 53%;
+  --primary-hover: 51 100% 70%;
+  --primary-foreground: 30 60% 7%;
+  --secondary: 352 30% 13%;
+  --secondary-foreground: 43 53% 88%;
+  --muted: 350 20% 11%;
+  --muted-foreground: 40 30% 70%;
+  --accent: 42 62% 18%;
+  --accent-foreground: 48 100% 91%;
+  --border: 41 72% 35%;
+  --input: 42 66% 37%;
+  --ring: 49 100% 64%;
+  --overlay: 350 42% 2%;
   --destructive: 0 72% 63%;
-  --destructive-background: 4 42% 14%;
-  --destructive-border: 4 44% 28%;
-  --success: 142 50% 55%;
-  --success-background: 90 28% 12%;
-  --warning: 43 96% 56%;
-  --warning-background: 32 50% 13%;
-  --info: 38 78% 63%;
-  --info-background: 32 42% 13%;
-  --feature-blue: 213 85% 72%;
-  --feature-blue-background: 32 42% 13%;
-  --feature-violet: 270 80% 75%;
-  --feature-violet-background: 32 42% 13%;
-  --feature-orange: 38 90% 62%;
-  --feature-orange-background: 32 42% 13%;
-  --feature-rose: 0 72% 70%;
-  --feature-rose-background: 32 42% 13%;
-  --feature-green: 120 36% 65%;
-  --feature-green-background: 32 42% 13%;
-  --shadow-color: 28 60% 2%;
+  --destructive-background: 355 40% 13%;
+  --destructive-border: 355 42% 28%;
+  --success: 156 62% 56%;
+  --success-background: 158 42% 11%;
+  --warning: 46 100% 66%;
+  --warning-background: 39 46% 13%;
+  --info: 199 88% 72%;
+  --info-background: 208 42% 13%;
+  --feature-blue: 204 92% 75%;
+  --feature-blue-background: 214 44% 14%;
+  --feature-violet: 274 76% 79%;
+  --feature-violet-background: 270 35% 15%;
+  --feature-orange: 40 96% 66%;
+  --feature-orange-background: 33 44% 14%;
+  --feature-rose: 346 80% 75%;
+  --feature-rose-background: 344 36% 14%;
+  --feature-green: 156 58% 66%;
+  --feature-green-background: 158 38% 12%;
+  --shadow-color: 240 24% 1%;
+  --gold-bright: 51 100% 84%;
+  --gold-mirror: 54 100% 92%;
+  --gold-metal: 45 100% 54%;
+  --gold-deep: 32 100% 34%;
+  --gold-antique: 37 89% 23%;
+  --gold-ivory: 43 62% 94%;
+  --gold-velvet: 352 65% 22%;
 }
 
 * {
@@ -6324,6 +6331,621 @@ img.space-logo {
 
 .floating-logo-button:focus-visible .floating-logo-mark {
   outline: none;
+}
+
+@keyframes gold-border-shimmer {
+  0%,
+  58% {
+    background-position: 0% 50%;
+  }
+  100% {
+    background-position: 200% 50%;
+  }
+}
+
+.theme-gold ::selection {
+  background: hsl(var(--gold-metal) / 0.34);
+  color: hsl(var(--gold-ivory));
+}
+
+.theme-gold .app-shell {
+  background: linear-gradient(
+    135deg,
+    hsl(236 20% 4%),
+    hsl(230 14% 7%) 42%,
+    hsl(28 18% 7%) 72%,
+    hsl(238 18% 4%)
+  );
+}
+
+.theme-gold .rail,
+.theme-gold .history {
+  background: linear-gradient(180deg, hsl(232 16% 9%), hsl(236 18% 5%));
+  box-shadow: inset 0 0 36px hsl(var(--gold-deep) / 0.035);
+}
+
+.theme-gold .topbar {
+  position: relative;
+  background: linear-gradient(180deg, hsl(232 16% 9%), hsl(235 17% 6%));
+  box-shadow: 0 8px 28px hsl(var(--shadow-color) / 0.34);
+}
+
+.theme-gold .topbar::after {
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    hsl(var(--gold-deep)),
+    hsl(var(--gold-metal)),
+    hsl(var(--gold-bright)),
+    hsl(var(--gold-metal)),
+    hsl(var(--gold-deep)),
+    transparent
+  );
+  background-size: 200% 100%;
+  content: "";
+  animation: gold-border-shimmer 8s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.theme-gold .chat-panel {
+  background: linear-gradient(135deg, hsl(236 20% 5%), hsl(229 14% 7%) 52%, hsl(28 16% 7%));
+}
+
+.theme-gold .brand-space-button .space-logo,
+.theme-gold .quick-brand img {
+  border-color: hsl(var(--gold-metal) / 0.64);
+  box-shadow:
+    0 0 0 1px hsl(var(--gold-bright) / 0.14),
+    0 8px 24px hsl(var(--gold-metal) / 0.2);
+}
+
+.theme-gold .brand-space-button > span strong,
+.theme-gold .topbar-heading h1,
+.theme-gold .history-title span {
+  background: linear-gradient(
+    105deg,
+    hsl(var(--gold-ivory)),
+    hsl(var(--gold-metal)) 42%,
+    hsl(var(--gold-bright)) 62%,
+    hsl(var(--gold-ivory))
+  );
+  background-clip: text;
+  color: transparent;
+}
+
+.theme-gold .assistant-search,
+.theme-gold .conversation-search-form {
+  border-color: hsl(var(--gold-deep) / 0.74);
+  background: hsl(232 16% 7% / 0.88);
+  box-shadow: inset 0 1px 0 hsl(var(--gold-bright) / 0.06);
+}
+
+.theme-gold .assistant-search:focus-within,
+.theme-gold .conversation-search-form:focus-within {
+  border-color: hsl(var(--gold-metal));
+  box-shadow:
+    0 0 0 3px hsl(var(--gold-metal) / 0.14),
+    0 0 24px hsl(var(--gold-metal) / 0.1);
+}
+
+.theme-gold .assistant-card:hover,
+.theme-gold .assistant-card.active,
+.theme-gold .history-item:hover,
+.theme-gold .history-item.active {
+  border-color: hsl(var(--gold-metal) / 0.58);
+  background: linear-gradient(110deg, hsl(232 14% 12%), hsl(38 36% 14%));
+}
+
+.theme-gold .assistant-card.active,
+.theme-gold .history-item.active {
+  box-shadow:
+    inset 3px 0 0 hsl(var(--gold-metal)),
+    0 8px 24px hsl(var(--gold-deep) / 0.14);
+}
+
+.theme-gold .icon-button,
+.theme-gold .composer-tools button,
+.theme-gold .secondary-action,
+.theme-gold .secret-toggle-button {
+  border-color: hsl(var(--gold-deep) / 0.72);
+  background: linear-gradient(180deg, hsl(232 14% 12%), hsl(235 17% 7%));
+  box-shadow: inset 0 1px 0 hsl(var(--gold-bright) / 0.07);
+}
+
+.theme-gold .icon-button:hover,
+.theme-gold .composer-tools button:hover,
+.theme-gold .composer-tools button.active,
+.theme-gold .secondary-action:hover,
+.theme-gold .secret-toggle-button:hover {
+  border-color: hsl(var(--gold-metal));
+  background: linear-gradient(180deg, hsl(40 34% 18%), hsl(232 15% 9%));
+  color: hsl(var(--gold-bright));
+  box-shadow:
+    inset 0 1px 0 hsl(var(--gold-bright) / 0.14),
+    0 0 18px hsl(var(--gold-metal) / 0.1);
+}
+
+.theme-gold .composer {
+  border-color: hsl(var(--gold-metal) / 0.66);
+  background: linear-gradient(145deg, hsl(232 16% 10%), hsl(235 17% 7%) 60%, hsl(35 24% 9%));
+  box-shadow:
+    0 18px 48px hsl(var(--shadow-color) / 0.48),
+    0 0 0 1px hsl(var(--gold-bright) / 0.06),
+    0 0 34px hsl(var(--gold-metal) / 0.08);
+}
+
+.theme-gold .composer:focus-within {
+  border-color: hsl(var(--gold-bright));
+  box-shadow:
+    0 18px 48px hsl(var(--shadow-color) / 0.52),
+    0 0 0 3px hsl(var(--gold-metal) / 0.12),
+    0 0 40px hsl(var(--gold-metal) / 0.12);
+}
+
+.theme-gold .message.assistant .message-bubble {
+  border-color: hsl(var(--gold-deep) / 0.62);
+  background: linear-gradient(145deg, hsl(232 14% 10%), hsl(235 16% 7%));
+  box-shadow:
+    0 10px 28px hsl(var(--shadow-color) / 0.3),
+    inset 0 1px 0 hsl(var(--gold-bright) / 0.045);
+}
+
+.theme-gold .message.user .message-bubble {
+  border-color: hsl(var(--gold-metal) / 0.5);
+  background: linear-gradient(135deg, hsl(39 34% 15%), hsl(232 14% 11%) 72%);
+  box-shadow:
+    0 10px 26px hsl(var(--shadow-color) / 0.3),
+    inset 0 1px 0 hsl(var(--gold-bright) / 0.07);
+}
+
+.theme-gold .model-dropdown-popover,
+.theme-gold .conversation-search-modal,
+.theme-gold .space-center-modal,
+.theme-gold .agreement-modal,
+.theme-gold .settings-drawer,
+.theme-gold .assistant-drawer,
+.theme-gold .assistant-settings-modal,
+.theme-gold .assistant-model-modal,
+.theme-gold .add-assistant-modal {
+  border-color: hsl(var(--gold-metal) / 0.54);
+  background: linear-gradient(145deg, hsl(232 16% 10%), hsl(236 18% 6%));
+  box-shadow:
+    0 30px 80px hsl(var(--shadow-color) / 0.62),
+    0 0 0 1px hsl(var(--gold-bright) / 0.05),
+    0 0 48px hsl(var(--gold-metal) / 0.08);
+}
+
+.theme-gold .send-button:not(:disabled),
+.theme-gold .primary-action:not(:disabled),
+.theme-gold .quick-composer > .quick-send-button:not(:disabled),
+.theme-gold .conversation-search-submit:not(:disabled),
+.theme-gold .assistant-simple-search .assistant-ai-generate-button:not(:disabled) {
+  background: linear-gradient(
+    115deg,
+    hsl(var(--gold-deep)),
+    hsl(var(--gold-metal)) 28%,
+    hsl(var(--gold-bright)) 48%,
+    hsl(var(--gold-metal)) 68%,
+    hsl(var(--gold-deep))
+  );
+  background-size: 220% 100%;
+  color: hsl(var(--primary-foreground));
+  box-shadow:
+    0 8px 24px hsl(var(--gold-deep) / 0.3),
+    inset 0 1px 0 hsl(0 0% 100% / 0.42),
+    inset 0 -1px 0 hsl(var(--gold-deep) / 0.7);
+  animation: gold-border-shimmer 7s ease-in-out infinite;
+}
+
+.theme-gold .send-button:not(:disabled):hover,
+.theme-gold .primary-action:not(:disabled):hover,
+.theme-gold .quick-composer > .quick-send-button:not(:disabled):hover,
+.theme-gold .conversation-search-submit:not(:disabled):hover {
+  filter: brightness(1.1);
+  box-shadow:
+    0 10px 30px hsl(var(--gold-metal) / 0.3),
+    0 0 24px hsl(var(--gold-bright) / 0.16),
+    inset 0 1px 0 hsl(0 0% 100% / 0.5);
+}
+
+.theme-gold .composer-model-picker .model-dropdown-trigger:hover,
+.theme-gold .composer-model-picker .model-dropdown-trigger[aria-expanded="true"] {
+  border-color: hsl(var(--gold-metal) / 0.54);
+  background: linear-gradient(90deg, hsl(232 14% 11%), hsl(39 35% 15%));
+  color: hsl(var(--gold-bright));
+}
+
+.theme-gold .quick-shell {
+  border-color: hsl(var(--gold-metal) / 0.72);
+  background: linear-gradient(145deg, hsl(232 16% 9% / 0.98), hsl(236 20% 5% / 0.98));
+  box-shadow:
+    0 26px 70px hsl(var(--shadow-color) / 0.62),
+    0 0 40px hsl(var(--gold-metal) / 0.12);
+}
+
+.theme-gold .quick-titlebar {
+  border-bottom-color: hsl(var(--gold-metal) / 0.52);
+  background: linear-gradient(90deg, hsl(232 16% 11%), hsl(38 32% 13%), hsl(232 16% 10%));
+}
+
+.theme-gold .quick-composer {
+  border-color: hsl(var(--gold-metal) / 0.62);
+  background: linear-gradient(145deg, hsl(232 15% 10%), hsl(235 18% 7%));
+  box-shadow: 0 0 28px hsl(var(--gold-metal) / 0.08);
+}
+
+.theme-gold .quick-composer:focus-within {
+  border-color: hsl(var(--gold-bright));
+  box-shadow:
+    0 0 0 3px hsl(var(--gold-metal) / 0.13),
+    0 0 32px hsl(var(--gold-metal) / 0.12);
+}
+
+.theme-gold .theme-preview.gold {
+  border-color: hsl(var(--gold-metal));
+  background: linear-gradient(135deg, hsl(235 18% 7%), hsl(39 45% 16%));
+  color: hsl(var(--gold-bright));
+  box-shadow:
+    inset 0 1px 0 hsl(var(--gold-bright) / 0.16),
+    0 0 18px hsl(var(--gold-metal) / 0.16);
+}
+
+.theme-gold .messages::-webkit-scrollbar-thumb,
+.theme-gold .assistant-list::-webkit-scrollbar-thumb,
+.theme-gold .history-list::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, hsl(var(--gold-bright)), hsl(var(--gold-deep)));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .theme-gold .topbar::after,
+  .theme-gold .send-button:not(:disabled),
+  .theme-gold .primary-action:not(:disabled),
+  .theme-gold .quick-composer > .quick-send-button:not(:disabled),
+  .theme-gold .conversation-search-submit:not(:disabled),
+  .theme-gold .assistant-simple-search .assistant-ai-generate-button:not(:disabled) {
+    animation: none;
+  }
+}
+
+/* The gold theme intentionally uses a more theatrical, polished-metal treatment. */
+.theme-gold .app-shell {
+  background: linear-gradient(
+    125deg,
+    hsl(350 48% 3%),
+    hsl(348 38% 6%) 27%,
+    hsl(28 42% 6%) 49%,
+    hsl(350 42% 5%) 72%,
+    hsl(32 54% 5%)
+  );
+  box-shadow:
+    inset 0 0 0 1px hsl(var(--gold-antique)),
+    inset 0 0 0 3px hsl(var(--gold-bright) / 0.08);
+}
+
+.theme-gold .rail {
+  border-right-color: hsl(var(--gold-metal) / 0.72);
+  background: linear-gradient(155deg, hsl(350 42% 8%), hsl(348 34% 4%) 58%, hsl(28 48% 6%));
+  box-shadow:
+    inset -1px 0 0 hsl(var(--gold-bright) / 0.14),
+    inset 0 1px 0 hsl(var(--gold-bright) / 0.08),
+    10px 0 40px hsl(348 70% 2% / 0.28);
+}
+
+.theme-gold .history {
+  border-left-color: hsl(var(--gold-metal) / 0.72);
+  background: linear-gradient(205deg, hsl(350 42% 8%), hsl(348 34% 4%) 58%, hsl(28 48% 6%));
+  box-shadow:
+    inset 1px 0 0 hsl(var(--gold-bright) / 0.14),
+    inset 0 1px 0 hsl(var(--gold-bright) / 0.08),
+    -10px 0 40px hsl(348 70% 2% / 0.28);
+}
+
+.theme-gold .topbar {
+  border-bottom-color: hsl(var(--gold-antique));
+  background: linear-gradient(
+    90deg,
+    hsl(350 48% 8%),
+    hsl(24 52% 8%) 38%,
+    hsl(350 42% 7%) 68%,
+    hsl(28 50% 8%)
+  );
+  box-shadow:
+    inset 0 1px 0 hsl(var(--gold-bright) / 0.16),
+    0 12px 34px hsl(348 80% 2% / 0.46);
+}
+
+.theme-gold .topbar::after {
+  bottom: -2px;
+  height: 4px;
+  background: linear-gradient(
+    90deg,
+    hsl(var(--gold-antique)),
+    hsl(var(--gold-metal)) 18%,
+    hsl(var(--gold-mirror)) 36%,
+    hsl(var(--gold-deep)) 49%,
+    hsl(var(--gold-bright)) 64%,
+    hsl(var(--gold-metal)) 82%,
+    hsl(var(--gold-antique))
+  );
+  background-size: 240% 100%;
+  box-shadow:
+    0 1px 0 hsl(var(--gold-antique)),
+    0 0 18px hsl(var(--gold-metal) / 0.42);
+  animation-duration: 5s;
+}
+
+.theme-gold .chat-panel {
+  background: linear-gradient(145deg, hsl(350 38% 4%), hsl(240 10% 5%) 48%, hsl(30 38% 6%));
+}
+
+.theme-gold .brand-space-button .space-logo,
+.theme-gold .quick-brand img {
+  border: 2px solid hsl(var(--gold-metal));
+  background: hsl(348 42% 4%);
+  box-shadow:
+    0 0 0 1px hsl(var(--gold-antique)),
+    0 0 0 3px hsl(var(--gold-bright) / 0.14),
+    0 8px 26px hsl(var(--gold-metal) / 0.28);
+}
+
+.theme-gold .brand-space-button > span strong,
+.theme-gold .topbar-heading h1,
+.theme-gold .history-title span {
+  background: linear-gradient(
+    100deg,
+    hsl(var(--gold-deep)),
+    hsl(var(--gold-bright)) 24%,
+    hsl(var(--gold-mirror)) 46%,
+    hsl(var(--gold-metal)) 68%,
+    hsl(var(--gold-bright))
+  );
+  background-clip: text;
+  color: transparent;
+  text-shadow: 0 0 22px hsl(var(--gold-metal) / 0.16);
+}
+
+.theme-gold .brand-space-button > span small,
+.theme-gold .topbar-heading p {
+  color: hsl(42 45% 76%);
+}
+
+.theme-gold .assistant-search,
+.theme-gold .conversation-search-form {
+  border-color: hsl(var(--gold-metal) / 0.86);
+  background: linear-gradient(180deg, hsl(350 30% 8%), hsl(348 38% 5%));
+  box-shadow:
+    inset 0 1px 0 hsl(var(--gold-bright) / 0.16),
+    inset 0 -1px 0 hsl(var(--gold-antique) / 0.72),
+    0 8px 24px hsl(348 70% 2% / 0.24);
+}
+
+.theme-gold .assistant-search:focus-within,
+.theme-gold .conversation-search-form:focus-within {
+  border-color: hsl(var(--gold-bright));
+  box-shadow:
+    0 0 0 2px hsl(var(--gold-antique)),
+    0 0 0 4px hsl(var(--gold-metal) / 0.18),
+    0 0 30px hsl(var(--gold-metal) / 0.18);
+}
+
+.theme-gold .assistant-card,
+.theme-gold .history-item {
+  border: 1px solid transparent;
+}
+
+.theme-gold .assistant-card:hover,
+.theme-gold .history-item:hover {
+  border-color: hsl(var(--gold-deep));
+  background: linear-gradient(110deg, hsl(350 35% 12%), hsl(34 54% 14%));
+  box-shadow: inset 0 1px 0 hsl(var(--gold-bright) / 0.08);
+}
+
+.theme-gold .assistant-card.active,
+.theme-gold .history-item.active {
+  border-color: hsl(var(--gold-bright));
+  background: linear-gradient(
+    118deg,
+    hsl(var(--gold-antique)),
+    hsl(var(--gold-metal)) 24%,
+    hsl(var(--gold-bright)) 48%,
+    hsl(var(--gold-deep)) 74%,
+    hsl(var(--gold-metal))
+  );
+  background-size: 180% 100%;
+  color: hsl(var(--primary-foreground));
+  box-shadow:
+    inset 0 1px 0 hsl(var(--gold-mirror) / 0.76),
+    inset 0 -2px 0 hsl(var(--gold-antique) / 0.82),
+    0 10px 30px hsl(var(--gold-deep) / 0.34),
+    0 0 20px hsl(var(--gold-metal) / 0.16);
+}
+
+.theme-gold .assistant-card.active strong,
+.theme-gold .assistant-card.active small,
+.theme-gold .history-item.active span,
+.theme-gold .history-item.active svg {
+  color: hsl(var(--primary-foreground));
+}
+
+.theme-gold .assistant-card.active small {
+  opacity: 0.76;
+}
+
+.theme-gold .icon-button,
+.theme-gold .composer-tools button,
+.theme-gold .secondary-action,
+.theme-gold .secret-toggle-button {
+  border-color: hsl(var(--gold-metal) / 0.9);
+  background: linear-gradient(180deg, hsl(350 32% 13%), hsl(348 38% 6%));
+  color: hsl(var(--gold-bright));
+  box-shadow:
+    inset 0 1px 0 hsl(var(--gold-bright) / 0.2),
+    inset 0 -1px 0 hsl(var(--gold-antique) / 0.72),
+    0 5px 16px hsl(348 70% 2% / 0.28);
+}
+
+.theme-gold .icon-button:hover,
+.theme-gold .composer-tools button:hover,
+.theme-gold .composer-tools button.active,
+.theme-gold .secondary-action:hover,
+.theme-gold .secret-toggle-button:hover {
+  border-color: hsl(var(--gold-mirror));
+  background: linear-gradient(145deg, hsl(var(--gold-deep)), hsl(var(--gold-metal)) 54%, hsl(var(--gold-bright)));
+  color: hsl(var(--primary-foreground));
+  box-shadow:
+    inset 0 1px 0 hsl(var(--gold-mirror) / 0.72),
+    0 0 24px hsl(var(--gold-metal) / 0.34);
+}
+
+.theme-gold .composer {
+  border: 2px solid hsl(var(--gold-metal));
+  background: linear-gradient(145deg, hsl(350 38% 9%), hsl(348 42% 5%) 56%, hsl(30 52% 8%));
+  box-shadow:
+    0 20px 54px hsl(348 80% 2% / 0.58),
+    0 0 0 1px hsl(var(--gold-antique)),
+    0 0 0 4px hsl(var(--gold-bright) / 0.08),
+    inset 0 1px 0 hsl(var(--gold-bright) / 0.2),
+    0 0 34px hsl(var(--gold-metal) / 0.14);
+}
+
+.theme-gold .composer:focus-within {
+  border-color: hsl(var(--gold-mirror));
+  box-shadow:
+    0 22px 58px hsl(348 80% 2% / 0.62),
+    0 0 0 1px hsl(var(--gold-antique)),
+    0 0 0 5px hsl(var(--gold-metal) / 0.14),
+    inset 0 1px 0 hsl(var(--gold-mirror) / 0.34),
+    0 0 44px hsl(var(--gold-metal) / 0.2);
+}
+
+.theme-gold .message.assistant .message-bubble {
+  border: 1px solid hsl(var(--gold-deep));
+  background: linear-gradient(145deg, hsl(350 30% 9%), hsl(240 10% 6%));
+  box-shadow:
+    0 12px 32px hsl(348 80% 2% / 0.34),
+    inset 0 1px 0 hsl(var(--gold-bright) / 0.1),
+    inset 3px 0 0 hsl(var(--gold-metal));
+}
+
+.theme-gold .message.user .message-bubble {
+  border: 1px solid hsl(var(--gold-bright));
+  background: linear-gradient(
+    125deg,
+    hsl(var(--gold-antique)),
+    hsl(var(--gold-metal)) 22%,
+    hsl(var(--gold-bright)) 46%,
+    hsl(43 100% 62%) 64%,
+    hsl(var(--gold-deep))
+  );
+  color: hsl(var(--primary-foreground));
+  box-shadow:
+    0 12px 34px hsl(var(--gold-deep) / 0.36),
+    inset 0 1px 0 hsl(var(--gold-mirror) / 0.76),
+    inset 0 -2px 0 hsl(var(--gold-antique) / 0.72),
+    0 0 18px hsl(var(--gold-metal) / 0.13);
+}
+
+.theme-gold .message.user .message-bubble a,
+.theme-gold .message.user .message-bubble code {
+  color: hsl(351 65% 18%);
+}
+
+.theme-gold .model-dropdown-popover,
+.theme-gold .conversation-search-modal,
+.theme-gold .space-center-modal,
+.theme-gold .agreement-modal,
+.theme-gold .settings-drawer,
+.theme-gold .assistant-drawer,
+.theme-gold .assistant-settings-modal,
+.theme-gold .assistant-model-modal,
+.theme-gold .add-assistant-modal {
+  border: 2px solid hsl(var(--gold-metal));
+  background: linear-gradient(145deg, hsl(350 38% 10%), hsl(348 44% 5%) 58%, hsl(30 48% 7%));
+  box-shadow:
+    0 34px 90px hsl(348 85% 1% / 0.72),
+    0 0 0 1px hsl(var(--gold-antique)),
+    0 0 0 4px hsl(var(--gold-bright) / 0.07),
+    inset 0 1px 0 hsl(var(--gold-bright) / 0.16),
+    0 0 54px hsl(var(--gold-metal) / 0.15);
+}
+
+.theme-gold .send-button:not(:disabled),
+.theme-gold .primary-action:not(:disabled),
+.theme-gold .quick-composer > .quick-send-button:not(:disabled),
+.theme-gold .conversation-search-submit:not(:disabled),
+.theme-gold .assistant-simple-search .assistant-ai-generate-button:not(:disabled) {
+  border-color: hsl(var(--gold-bright));
+  background: linear-gradient(
+    112deg,
+    hsl(var(--gold-antique)),
+    hsl(var(--gold-metal)) 20%,
+    hsl(var(--gold-mirror)) 42%,
+    hsl(var(--gold-metal)) 58%,
+    hsl(var(--gold-deep)) 78%,
+    hsl(var(--gold-bright))
+  );
+  background-size: 240% 100%;
+  color: hsl(var(--primary-foreground));
+  box-shadow:
+    0 9px 28px hsl(var(--gold-deep) / 0.42),
+    0 0 18px hsl(var(--gold-metal) / 0.18),
+    inset 0 1px 0 hsl(var(--gold-mirror) / 0.88),
+    inset 0 -2px 0 hsl(var(--gold-antique) / 0.82);
+  animation-duration: 4.5s;
+}
+
+.theme-gold .composer-model-picker .model-dropdown-trigger:hover,
+.theme-gold .composer-model-picker .model-dropdown-trigger[aria-expanded="true"] {
+  border-color: hsl(var(--gold-bright));
+  background: linear-gradient(90deg, hsl(var(--gold-antique)), hsl(var(--gold-metal)), hsl(var(--gold-bright)));
+  color: hsl(var(--primary-foreground));
+  box-shadow: inset 0 1px 0 hsl(var(--gold-mirror) / 0.6);
+}
+
+.theme-gold .quick-shell {
+  border: 2px solid hsl(var(--gold-metal));
+  background: linear-gradient(145deg, hsl(350 42% 8% / 0.99), hsl(348 50% 4% / 0.99));
+  box-shadow:
+    0 30px 80px hsl(348 85% 1% / 0.72),
+    0 0 0 1px hsl(var(--gold-antique)),
+    0 0 0 4px hsl(var(--gold-bright) / 0.08),
+    0 0 52px hsl(var(--gold-metal) / 0.18);
+}
+
+.theme-gold .quick-titlebar {
+  border-bottom: 3px solid hsl(var(--gold-metal));
+  background: linear-gradient(90deg, hsl(var(--gold-velvet)), hsl(28 54% 10%), hsl(var(--gold-velvet)));
+  box-shadow: inset 0 -1px 0 hsl(var(--gold-bright));
+}
+
+.theme-gold .quick-composer {
+  border: 2px solid hsl(var(--gold-metal));
+  background: linear-gradient(145deg, hsl(350 36% 10%), hsl(348 42% 5%));
+  box-shadow:
+    0 0 0 1px hsl(var(--gold-antique)),
+    inset 0 1px 0 hsl(var(--gold-bright) / 0.16),
+    0 0 32px hsl(var(--gold-metal) / 0.13);
+}
+
+.theme-gold .theme-preview.gold {
+  border: 2px solid hsl(var(--gold-bright));
+  background: linear-gradient(135deg, hsl(var(--gold-antique)), hsl(var(--gold-metal)) 35%, hsl(var(--gold-mirror)) 52%, hsl(var(--gold-deep)));
+  color: hsl(var(--primary-foreground));
+  box-shadow:
+    inset 0 1px 0 hsl(var(--gold-mirror) / 0.86),
+    0 0 24px hsl(var(--gold-metal) / 0.28);
+}
+
+.theme-gold .messages::-webkit-scrollbar-thumb,
+.theme-gold .assistant-list::-webkit-scrollbar-thumb,
+.theme-gold .history-list::-webkit-scrollbar-thumb {
+  border: 1px solid hsl(var(--gold-antique));
+  background: linear-gradient(180deg, hsl(var(--gold-mirror)), hsl(var(--gold-metal)) 48%, hsl(var(--gold-deep)));
 }
 
 @media (max-width: 1180px) {
