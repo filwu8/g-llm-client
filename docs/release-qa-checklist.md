@@ -4,7 +4,9 @@
 
 ## 构建检查
 
+- 对照 [多端开发规范](./multi-platform-development-guidelines.md)，确认共享 UI/业务改动没有被做成平台分叉。
 - 确认 `package.json` 版本号与发布版本一致。
+- 执行 `git status -sb`，正式发布包必须来自干净工作区中的已提交 commit。
 - 执行 `pnpm build`，确保 TypeScript 和前端构建通过。
 - Windows 执行 `pnpm package:win`，确认生成 `dist/G-LLM-Setup-<version>-x64.exe`。
 - macOS 执行 `pnpm package:mac`，确认生成 macOS 产物。

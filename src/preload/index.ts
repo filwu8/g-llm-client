@@ -14,6 +14,8 @@ import type {
   ClipboardAttachmentInput,
   Conversation,
   ConversationChangeEvent,
+  ConversationSearchRequest,
+  ConversationSearchResponse,
   DataArchiveResult,
   DataLocationChangeResult,
   DataLocationInfo,
@@ -21,6 +23,7 @@ import type {
   PreparedAttachment,
   Project,
   ProviderCheckResult,
+  ThemeEntitlementResult,
   ToolConfig
 } from '../shared/types'
 
@@ -31,6 +34,8 @@ const api = {
   saveProvider: (provider: ApiProvider): Promise<ApiProvider> => ipcRenderer.invoke('provider:save', provider),
   deleteProvider: (id: string): Promise<void> => ipcRenderer.invoke('provider:delete', id),
   checkProvider: (provider: ApiProvider): Promise<ProviderCheckResult> => ipcRenderer.invoke('provider:check', provider),
+  checkThemeEntitlement: (provider: ApiProvider): Promise<ThemeEntitlementResult> =>
+    ipcRenderer.invoke('provider:check-theme-entitlement', provider),
   refreshProviderModels: (provider: ApiProvider): Promise<ApiProvider> =>
     ipcRenderer.invoke('provider:refresh-models', provider),
   setActiveProjectId: (id: string): Promise<AppStateSnapshot> => ipcRenderer.invoke('project:set-active', id),
@@ -43,6 +48,8 @@ const api = {
     ipcRenderer.invoke('assistant:suggest', request),
   saveConversation: (conversation: Conversation): Promise<Conversation> =>
     ipcRenderer.invoke('conversation:save', conversation),
+  searchConversations: (request: ConversationSearchRequest): Promise<ConversationSearchResponse> =>
+    ipcRenderer.invoke('conversation:search', request),
   deleteConversation: (id: string): Promise<void> => ipcRenderer.invoke('conversation:delete', id),
   saveNote: (note: KnowledgeNote): Promise<KnowledgeNote> => ipcRenderer.invoke('note:save', note),
   deleteNote: (id: string): Promise<void> => ipcRenderer.invoke('note:delete', id),
@@ -75,6 +82,11 @@ const api = {
   getActiveAssistantId: (): Promise<string> => ipcRenderer.invoke('assistant:get-active'),
   setActiveAssistantId: (id: string): Promise<string> => ipcRenderer.invoke('assistant:set-active', id),
   streamChat: (request: ChatRequest): void => ipcRenderer.send('chat:stream', request),
+  onSettingsChanged: (listener: (settings: AppSettings) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, settings: AppSettings) => listener(settings)
+    ipcRenderer.on('settings:changed', handler)
+    return () => ipcRenderer.removeListener('settings:changed', handler)
+  },
   onActiveAssistantChanged: (listener: (id: string) => void): (() => void) => {
     const handler = (_event: Electron.IpcRendererEvent, id: string) => listener(id)
     ipcRenderer.on('assistant:active-changed', handler)

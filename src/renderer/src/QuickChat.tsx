@@ -24,9 +24,20 @@ import {
 } from './composerInput'
 import { getMessageSendShortcutLabel, shouldSendMessageFromKeyboard } from './keyboard'
 import { MarkdownMessage } from './MarkdownMessage'
+import { getModelOptions, ModelPickerMenu } from './ModelPicker'
+import { applyDocumentTheme } from './theme'
 import { DEFAULT_ASSISTANTS, getAssistantById } from '@shared/assistants'
 import { DEFAULT_PROVIDER, getProviderById } from '@shared/providers'
-import type { ApiProvider, AppSettings, Assistant, AssistantMemory, ChatChunk, ChatMessage, Conversation, KnowledgeReference } from '@shared/types'
+import type {
+  ApiProvider,
+  AppSettings,
+  Assistant,
+  AssistantMemory,
+  ChatChunk,
+  ChatMessage,
+  Conversation,
+  KnowledgeReference
+} from '@shared/types'
 
 const quickBottomFollowThreshold = 72
 const quoteReferencePrefix = 'quote_'
@@ -106,7 +117,7 @@ function applyChatChunk(conversation: Conversation, chunk: ChatChunk): Conversat
   const last = messages.at(-1)
   const nextContent = chunk.error ? `发送失败：${chunk.error}` : chunk.content
 
-  if (!nextContent && chunk.done) {
+  if (!nextContent && !chunk.webSearch && !chunk.usage) {
     return { ...conversation, updatedAt: Date.now() }
   }
 
@@ -146,15 +157,23 @@ function getLatestAssistantConversation(conversations: Conversation[], assistant
   )
 }
 
+function getQuickModelId(conversation: Conversation | null, assistant: Assistant, provider: ApiProvider): string {
+  if (conversation?.modelProviderId === provider.id && conversation.modelId?.trim()) return conversation.modelId.trim()
+  if (assistant.modelProviderId === provider.id && assistant.modelId?.trim()) return assistant.modelId.trim()
+  return provider.defaultModel
+}
+
 export default function QuickChat() {
   const isWindows = window.gllm.platform === 'win32'
   const [settings, setSettings] = useState<AppSettings | null>(null)
+  const [goldThemeEntitled, setGoldThemeEntitled] = useState(false)
   const [providers, setProviders] = useState<ApiProvider[]>([DEFAULT_PROVIDER])
   const [assistants, setAssistants] = useState<Assistant[]>(DEFAULT_ASSISTANTS)
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [memories, setMemories] = useState<AssistantMemory[]>([])
   const [activeAssistantId, setActiveAssistantId] = useState(DEFAULT_ASSISTANTS[0].id)
   const [conversation, setConversation] = useState<Conversation | null>(null)
+  const [selectedModelId, setSelectedModelId] = useState(DEFAULT_PROVIDER.defaultModel)
   const [draft, setDraft] = useState(() => readComposerDraft(QUICK_COMPOSER_DRAFT_KEY))
   const [isStreaming, setIsStreaming] = useState(false)
   const [status, setStatus] = useState('')
@@ -173,13 +192,39 @@ export default function QuickChat() {
     [assistant.id, memories]
   )
   const provider = useMemo(
-    () => (settings ? getProviderById(settings.activeProviderId, providers) : providers[0] ?? DEFAULT_PROVIDER),
-    [providers, settings]
+    () => {
+      const providerId = conversation?.modelProviderId || assistant.modelProviderId || settings?.activeProviderId
+      return providerId ? getProviderById(providerId, providers) : providers[0] ?? DEFAULT_PROVIDER
+    },
+    [assistant.modelProviderId, conversation?.modelProviderId, providers, settings]
   )
-  const needsApiKey = Boolean(settings && provider.requiresApiKey && !provider.apiKey.trim())
+  const activeModelId = selectedModelId.trim() || provider.defaultModel
+  const selectedProvider = useMemo(
+    () => ({
+      ...provider,
+      defaultModel: activeModelId,
+      models: getModelOptions(provider, activeModelId)
+    }),
+    [activeModelId, provider]
+  )
+  const needsApiKey = Boolean(settings && selectedProvider.requiresApiKey && !selectedProvider.apiKey.trim())
   const messageSendShortcut = settings?.messageSendShortcut ?? 'enter'
   const messageSendShortcutLabel = getMessageSendShortcutLabel(messageSendShortcut)
   const messages = conversation?.messages ?? []
+
+  async function verifyGoldThemeEntitlement(providerList: ApiProvider[]) {
+    const candidates = providerList.filter(
+      (candidate) => candidate.templateId === 'gllm' && Boolean(candidate.apiKey.trim())
+    )
+    for (const candidate of candidates) {
+      const result = await window.gllm.checkThemeEntitlement(candidate)
+      if (result.ok && result.eligible) {
+        setGoldThemeEntitled(true)
+        return
+      }
+    }
+    setGoldThemeEntitled(false)
+  }
 
   useEffect(() => {
     void Promise.all([window.gllm.getState(), window.gllm.getActiveAssistantId()]).then(([state, activeId]) => {
@@ -193,9 +238,27 @@ export default function QuickChat() {
       setConversations(state.conversations)
       setMemories(state.memories ?? [])
       setActiveAssistantId(quickAssistant.id)
-      setConversation(getLatestAssistantConversation(state.conversations, quickAssistant.id))
+      const latestConversation = getLatestAssistantConversation(state.conversations, quickAssistant.id)
+      const initialProvider = state.settings
+        ? getProviderById(latestConversation?.modelProviderId || quickAssistant.modelProviderId || state.settings.activeProviderId, loadedProviders)
+        : loadedProviders[0] ?? DEFAULT_PROVIDER
+
+      setConversation(latestConversation)
+      setSelectedModelId(getQuickModelId(latestConversation, quickAssistant, initialProvider))
+      void verifyGoldThemeEntitlement(loadedProviders)
     })
   }, [])
+
+  useEffect(() => {
+    if (settings) applyDocumentTheme(settings.theme, goldThemeEntitled)
+  }, [goldThemeEntitled, settings?.theme])
+
+  useEffect(() => {
+    return window.gllm.onSettingsChanged((nextSettings) => {
+      setSettings(nextSettings)
+      void verifyGoldThemeEntitlement(providers)
+    })
+  }, [providers])
 
   useEffect(() => {
     return window.gllm.onActiveAssistantChanged((id) => {
@@ -236,6 +299,10 @@ export default function QuickChat() {
     if (isStreaming) return
     setConversation(getLatestAssistantConversation(conversations, assistant.id))
   }, [assistant.id, conversations, isStreaming])
+
+  useEffect(() => {
+    setSelectedModelId(getQuickModelId(conversation, assistant, provider))
+  }, [assistant, conversation?.id, conversation?.modelId, conversation?.modelProviderId, provider])
 
   useEffect(() => {
     return window.gllm.onConversationChanged((change) => {
@@ -283,7 +350,11 @@ export default function QuickChat() {
 
       if (chunk.done) {
         setIsStreaming(false)
-        if (chunk.error) setStatus(chunk.error)
+        if (chunk.error) {
+          setStatus(chunk.error)
+        } else if (chunk.warning) {
+          setStatus(chunk.warning)
+        }
       }
     })
 
@@ -366,7 +437,7 @@ export default function QuickChat() {
     if (!settings || isStreaming) return
 
     if (needsApiKey) {
-      setStatus(`请先在主窗口配置 ${provider.name} API Key`)
+      setStatus(`请先在主窗口配置 ${selectedProvider.name} API Key`)
       void openMainWindow()
       return
     }
@@ -381,6 +452,8 @@ export default function QuickChat() {
       ...baseConversation,
       title: baseConversation.messages.length === 0 ? `快速对话：${messageText.slice(0, 18)}` : baseConversation.title,
       messages: [...baseConversation.messages, userMessage],
+      modelProviderId: selectedProvider.id,
+      modelId: selectedProvider.defaultModel,
       updatedAt: Date.now()
     }
 
@@ -396,7 +469,7 @@ export default function QuickChat() {
       conversationId: nextConversation.id,
       assistant,
       assistantMemories,
-      provider,
+      provider: selectedProvider,
       messages: nextConversation.messages,
       settings
     })
@@ -481,7 +554,7 @@ export default function QuickChat() {
           <img src={logo} alt="G-LLM" />
           <div>
             <strong>{assistant.name}</strong>
-            <span>{assistant.title} · {provider.name} · {provider.defaultModel}</span>
+            <span>{assistant.title} · {selectedProvider.name} · {selectedProvider.defaultModel}</span>
           </div>
         </div>
         <div className="quick-actions">
@@ -608,7 +681,22 @@ export default function QuickChat() {
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={handleDraftKeyDown}
         />
-        <button disabled={(!draft.trim() && pendingQuoteRefs.length === 0) || isStreaming || !settings} title={`发送（${messageSendShortcutLabel}）`} type="submit">
+        <ModelPickerMenu
+          className="quick-model-picker"
+          provider={provider}
+          value={activeModelId}
+          variant="dropdown"
+          placement="top"
+          disabled={!settings || isStreaming}
+          showTriggerCapabilities={false}
+          onChange={setSelectedModelId}
+        />
+        <button
+          className="quick-send-button"
+          disabled={(!draft.trim() && pendingQuoteRefs.length === 0) || isStreaming || !settings}
+          title={`发送（${messageSendShortcutLabel}）`}
+          type="submit"
+        >
           <ArrowUp size={18} />
         </button>
       </form>

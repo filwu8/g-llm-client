@@ -36,6 +36,8 @@ const TELEMETRY_ALLOWED_PROPERTIES = new Set([
   'input_tokens',
   'output_tokens',
   'total_tokens',
+  'finish_reason',
+  'truncated',
   'error_category'
 ])
 const TELEMETRY_BLOCKED_PROPERTY_PATTERN =

@@ -6,9 +6,14 @@ import type {
   AssistantSuggestionRequest,
   ChatMessage,
   ChatRequest,
+  ConversationSearchRequest,
+  ConversationSearchResponse,
+  ConversationSearchResult,
+  ConversationSearchSource,
   PreparedAttachment,
   ProviderCheckResult,
   ProviderModel,
+  ThemeEntitlementResult,
   WebSearchActivity,
   WebSearchResult
 } from '../shared/types'
@@ -32,16 +37,33 @@ interface ChatStreamEvent {
     outputTokens: number
     totalTokens: number
   }
+  finishReason?: string
+  isTruncated?: boolean
 }
 
 interface StreamChoice {
   delta?: Record<string, unknown>
   message?: Record<string, unknown>
   text?: unknown
+  finish_reason?: unknown
+  finishReason?: unknown
+  native_finish_reason?: unknown
+  nativeFinishReason?: unknown
+  stop_reason?: unknown
 }
 
 interface StreamPayload {
   choices?: StreamChoice[]
+  candidates?: Array<{ finishReason?: unknown }>
+  finish_reason?: unknown
+  finishReason?: unknown
+  native_finish_reason?: unknown
+  nativeFinishReason?: unknown
+  stop_reason?: unknown
+  response?: {
+    candidates?: Array<{ finishReason?: unknown }>
+    stop_reason?: unknown
+  }
   usage?: unknown
 }
 
@@ -52,6 +74,8 @@ const contextCompressionMessageThreshold = 32
 const contextCompressionCharacterThreshold = 48_000
 const compressedHistoryMaxCharacters = 14_000
 const compressedHistoryMessageCharacterLimit = 900
+const conversationSearchCatalogLimit = 160
+const conversationSearchTextLimit = 120_000
 interface WebSearchPlan {
   intent: string
   queries: string[]
@@ -681,6 +705,171 @@ function extractJsonObject<T extends object = Record<string, unknown>>(text: str
   }
 }
 
+function normalizeConversationSearchText(value: string): string {
+  return value
+    .normalize('NFKC')
+    .toLocaleLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function getConversationSearchTerms(query: string): string[] {
+  const normalized = normalizeConversationSearchText(query)
+  if (!normalized) return []
+
+  const terms = new Set<string>([normalized])
+  for (const part of normalized.split(' ')) {
+    if (part.length >= 2) terms.add(part)
+    if (/^[\p{Script=Han}]+$/u.test(part) && part.length > 2) {
+      for (let index = 0; index < part.length - 1; index += 1) terms.add(part.slice(index, index + 2))
+    }
+  }
+  return Array.from(terms).slice(0, 36)
+}
+
+function getConversationSearchBody(source: ConversationSearchSource): string {
+  let body = ''
+  for (const message of source.messages) {
+    if (!message.content.trim()) continue
+    body += ` ${message.content.slice(0, 4_000)}`
+    if (body.length >= conversationSearchTextLimit) break
+  }
+  return body.slice(0, conversationSearchTextLimit)
+}
+
+function getConversationSearchSnippet(source: ConversationSearchSource, terms: string[]): string {
+  const messages = source.messages.filter((message) => message.content.trim())
+  const preferredMessages = [
+    ...messages.filter((message) => message.role === 'user'),
+    ...messages.filter((message) => message.role === 'assistant')
+  ]
+
+  for (const message of preferredMessages) {
+    const normalized = normalizeConversationSearchText(message.content)
+    const matchedTerm = terms.find((term) => term.length >= 2 && normalized.includes(term))
+    if (!matchedTerm) continue
+    const rawIndex = message.content.toLocaleLowerCase().indexOf(matchedTerm)
+    const start = Math.max(0, rawIndex >= 0 ? rawIndex - 64 : 0)
+    const excerpt = message.content.slice(start, start + 220).replace(/\s+/g, ' ').trim()
+    return `${start > 0 ? '...' : ''}${excerpt}${message.content.length > start + 220 ? '...' : ''}`
+  }
+
+  const fallback = [...messages].reverse().find((message) => message.role === 'user') ?? messages.at(-1)
+  return fallback?.content.replace(/\s+/g, ' ').trim().slice(0, 220) || '该会话暂无可显示的内容摘要'
+}
+
+function scoreConversationSearchSource(source: ConversationSearchSource, query: string, terms: string[]): number {
+  const normalizedQuery = normalizeConversationSearchText(query)
+  const title = normalizeConversationSearchText(source.title)
+  const metadata = normalizeConversationSearchText(`${source.projectName} ${source.assistantName}`)
+  const body = normalizeConversationSearchText(getConversationSearchBody(source))
+  let score = 0
+
+  if (normalizedQuery && title.includes(normalizedQuery)) score += 240
+  if (normalizedQuery && body.includes(normalizedQuery)) score += 90
+
+  for (const term of terms) {
+    if (term.length < 2) continue
+    const weight = Math.min(2.4, Math.max(1, term.length / 2))
+    if (title.includes(term)) score += 34 * weight
+    if (metadata.includes(term)) score += 14 * weight
+    if (body.includes(term)) score += 9 * weight
+  }
+
+  const ageDays = Math.max(0, Date.now() - source.updatedAt) / 86_400_000
+  score += Math.max(0, 8 - ageDays / 45)
+  return score
+}
+
+function toConversationSearchResult(
+  source: ConversationSearchSource,
+  score: number,
+  terms: string[],
+  reason?: string
+): ConversationSearchResult {
+  return {
+    conversationId: source.conversationId,
+    projectId: source.projectId,
+    projectName: source.projectName,
+    assistantId: source.assistantId,
+    assistantName: source.assistantName,
+    title: source.title,
+    snippet: getConversationSearchSnippet(source, terms),
+    reason: reason?.trim().slice(0, 80) || undefined,
+    score,
+    createdAt: source.createdAt,
+    updatedAt: source.updatedAt
+  }
+}
+
+function rankConversationsLocally(
+  query: string,
+  sources: ConversationSearchSource[],
+  limit: number
+): ConversationSearchResult[] {
+  const terms = getConversationSearchTerms(query)
+  if (terms.length === 0) {
+    return [...sources]
+      .sort((first, second) => second.updatedAt - first.updatedAt)
+      .slice(0, limit)
+      .map((source, index) => toConversationSearchResult(source, limit - index, terms))
+  }
+
+  return sources
+    .map((source) => ({ source, score: scoreConversationSearchSource(source, query, terms) }))
+    .filter((item) => item.score > 8)
+    .sort((first, second) => second.score - first.score || second.source.updatedAt - first.source.updatedAt)
+    .slice(0, limit)
+    .map(({ source, score }) => toConversationSearchResult(source, score, terms))
+}
+
+function getSemanticConversationExcerpt(source: ConversationSearchSource): string {
+  const userMessages = source.messages.filter((message) => message.role === 'user' && message.content.trim())
+  const assistantMessages = source.messages.filter((message) => message.role === 'assistant' && message.content.trim())
+  const excerpts = [
+    userMessages[0]?.content.slice(0, 100),
+    userMessages.at(-1)?.content.slice(0, 140),
+    assistantMessages.at(-1)?.content.slice(0, 100)
+  ]
+    .filter((item): item is string => Boolean(item?.trim()))
+    .map((item) => item.replace(/\s+/g, ' ').trim())
+
+  return Array.from(new Set(excerpts)).join(' / ').slice(0, 340)
+}
+
+function selectSemanticConversationCandidates(
+  query: string,
+  sources: ConversationSearchSource[]
+): ConversationSearchSource[] {
+  const sourceById = new Map(sources.map((source) => [source.conversationId, source]))
+  const selected = new Map<string, ConversationSearchSource>()
+  const localResults = rankConversationsLocally(query, sources, 70)
+  for (const result of localResults) {
+    const source = sourceById.get(result.conversationId)
+    if (source) selected.set(source.conversationId, source)
+  }
+
+  const byRecency = [...sources].sort((first, second) => second.updatedAt - first.updatedAt)
+  for (const source of byRecency.slice(0, 60)) selected.set(source.conversationId, source)
+
+  const remaining = byRecency.filter((source) => !selected.has(source.conversationId))
+  const openSlots = conversationSearchCatalogLimit - selected.size
+  if (openSlots > 0 && remaining.length > 0) {
+    const step = remaining.length / openSlots
+    for (let index = 0; index < openSlots; index += 1) {
+      const source = remaining[Math.min(remaining.length - 1, Math.floor(index * step))]
+      if (source) selected.set(source.conversationId, source)
+    }
+  }
+
+  return Array.from(selected.values()).slice(0, conversationSearchCatalogLimit)
+}
+
+interface SemanticConversationSearchPayload {
+  matches?: Array<{ id?: unknown; score?: unknown; reason?: unknown }>
+}
+
 function parseProviderModels(payload: unknown): ProviderModel[] {
   const source = Array.isArray(payload)
     ? payload
@@ -764,6 +953,41 @@ function extractStreamContent(payload: StreamPayload): string {
   )
 }
 
+function normalizeFinishReason(value: unknown): string {
+  if (typeof value !== 'string') return ''
+  return value.trim().toLowerCase()
+}
+
+function extractStreamFinishReason(payload: StreamPayload): string {
+  const choice = payload.choices?.[0]
+  const values = [
+    choice?.finish_reason,
+    choice?.finishReason,
+    choice?.native_finish_reason,
+    choice?.nativeFinishReason,
+    choice?.stop_reason,
+    payload.finish_reason,
+    payload.finishReason,
+    payload.native_finish_reason,
+    payload.nativeFinishReason,
+    payload.stop_reason,
+    payload.candidates?.[0]?.finishReason,
+    payload.response?.candidates?.[0]?.finishReason,
+    payload.response?.stop_reason
+  ]
+
+  for (const value of values) {
+    const reason = normalizeFinishReason(value)
+    if (reason) return reason
+  }
+  return ''
+}
+
+function isTruncatedFinishReason(reason: string): boolean {
+  const normalized = reason.replace(/[\s-]+/g, '_')
+  return ['length', 'max_tokens', 'max_output_tokens', 'token_limit'].includes(normalized)
+}
+
 function parseStreamDataPayload(data: string): ChatStreamEvent | null {
   const trimmed = data.trim()
   if (!trimmed || trimmed === '[DONE]') return null
@@ -772,8 +996,14 @@ function parseStreamDataPayload(data: string): ChatStreamEvent | null {
     const parsed = JSON.parse(trimmed) as StreamPayload
     const content = extractStreamContent(parsed)
     const usage = parseUsage(parsed)
-    if (!content && !usage) return null
-    return { content, usage }
+    const finishReason = extractStreamFinishReason(parsed)
+    if (!content && !usage && !finishReason) return null
+    return {
+      content,
+      usage,
+      finishReason: finishReason || undefined,
+      isTruncated: finishReason ? isTruncatedFinishReason(finishReason) : undefined
+    }
   } catch {
     return null
   }
@@ -1044,6 +1274,98 @@ export async function generateAssistantSuggestion(request: AssistantSuggestionRe
   return sanitizeAssistantSuggestion(keyword, parsed ?? fallbackAssistantSuggestion(keyword))
 }
 
+export async function searchConversations(
+  request: ConversationSearchRequest,
+  sources: ConversationSearchSource[]
+): Promise<ConversationSearchResponse> {
+  const query = request.query.trim().slice(0, 300)
+  const limit = Math.min(30, Math.max(5, Math.round(request.limit ?? 20)))
+  const searchedCount = sources.length
+  const localResults = rankConversationsLocally(query, sources, limit)
+
+  if (!query) return { mode: 'recent', results: localResults, searchedCount }
+  if (sources.length === 0) return { mode: 'local', results: [], searchedCount }
+  if (request.provider.requiresApiKey && !request.provider.apiKey.trim()) {
+    return { mode: 'local', results: localResults, searchedCount }
+  }
+  if (!request.provider.defaultModel.trim()) return { mode: 'local', results: localResults, searchedCount }
+
+  try {
+    const candidates = selectSemanticConversationCandidates(query, sources)
+    const sourceById = new Map(candidates.map((source) => [source.conversationId, source]))
+    const catalog = candidates.map((source) => ({
+      id: source.conversationId,
+      title: source.title.slice(0, 120),
+      space: source.projectName.slice(0, 60),
+      assistant: source.assistantName.slice(0, 60),
+      updatedAt: new Date(source.updatedAt).toISOString(),
+      excerpt: getSemanticConversationExcerpt(source)
+    }))
+    const endpoint = buildProviderUrl(
+      request.provider,
+      request.provider.chatCompletionsPath ?? '/chat/completions'
+    )
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: getProviderHeaders(request.provider),
+      body: JSON.stringify({
+        model: request.provider.defaultModel,
+        messages: [
+          {
+            role: 'system',
+            content:
+              '你是桌面 AI 客户端的历史会话语义检索器。理解用户描述的主题、任务、结论、人物和近义表达，不要求关键词完全一致。只能从候选列表选择真实 id，按相关度降序返回 JSON，不要 Markdown。若没有相关候选，返回空 matches。reason 用不超过 24 个中文字符说明匹配原因。'
+          },
+          {
+            role: 'user',
+            content: `搜索描述：${query}\n\n候选会话：\n${JSON.stringify(catalog)}\n\n最多返回 ${limit} 条，格式：\n{"matches":[{"id":"候选中的 id","score":0-100,"reason":"匹配原因"}]}`
+          }
+        ],
+        temperature: 0.1,
+        max_tokens: 1800,
+        stream: false
+      }),
+      signal: AbortSignal.timeout(30_000)
+    })
+
+    if (!response.ok) throw new Error(`会话语义检索失败：${response.status}`)
+
+    const payload = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> }
+    const content = payload.choices?.[0]?.message?.content ?? ''
+    const parsed = extractJsonObject<SemanticConversationSearchPayload>(content)
+    const terms = getConversationSearchTerms(query)
+    const semanticResults: ConversationSearchResult[] = []
+    const seen = new Set<string>()
+
+    for (const match of parsed?.matches ?? []) {
+      const id = typeof match.id === 'string' ? match.id : ''
+      const source = sourceById.get(id)
+      if (!source || seen.has(id)) continue
+
+      const rawScore = typeof match.score === 'number' ? match.score : Number(match.score)
+      const score = Number.isFinite(rawScore) ? Math.min(100, Math.max(0, rawScore)) : 50
+      const reason = typeof match.reason === 'string' ? match.reason : undefined
+      seen.add(id)
+      semanticResults.push(toConversationSearchResult(source, score, terms, reason))
+      if (semanticResults.length >= limit) break
+    }
+
+    if (semanticResults.length > 0) {
+      for (const result of localResults) {
+        if (seen.has(result.conversationId)) continue
+        seen.add(result.conversationId)
+        semanticResults.push(result)
+        if (semanticResults.length >= limit) break
+      }
+      return { mode: 'semantic', results: semanticResults, searchedCount }
+    }
+  } catch {
+    // Local retrieval remains available when the configured model cannot rank the candidates.
+  }
+
+  return { mode: 'local', results: localResults, searchedCount }
+}
+
 export async function fetchProviderModels(provider: ApiProvider): Promise<ProviderModel[]> {
   assertProviderReady(provider)
 
@@ -1078,6 +1400,70 @@ export async function checkProviderConnection(provider: ApiProvider): Promise<Pr
     return {
       ok: false,
       message: error instanceof Error ? error.message : String(error)
+    }
+  }
+}
+
+export async function checkGllmThemeEntitlement(provider: ApiProvider): Promise<ThemeEntitlementResult> {
+  if (provider.templateId !== 'gllm' || !provider.apiKey.trim()) {
+    return {
+      ok: true,
+      eligible: false,
+      paid: false,
+      message: '需要先配置 G-LLM API Key'
+    }
+  }
+
+  let baseUrl: URL
+  try {
+    baseUrl = new URL(provider.apiBaseUrl)
+  } catch {
+    return { ok: false, eligible: false, paid: false, message: 'G-LLM API 地址无效' }
+  }
+
+  if (baseUrl.protocol !== 'https:' || baseUrl.hostname.toLowerCase() !== 'llm.gprophet.com') {
+    return {
+      ok: true,
+      eligible: false,
+      paid: false,
+      message: '金色主题仅支持官方 G-LLM API'
+    }
+  }
+
+  const endpoint = new URL('/v1/client/entitlements', baseUrl.origin)
+  try {
+    const response = await fetch(endpoint, {
+      method: 'GET',
+      headers: getProviderHeaders(provider)
+    })
+    if (!response.ok) {
+      const detail = extractProviderErrorMessage(await response.text().catch(() => ''))
+      return {
+        ok: false,
+        eligible: false,
+        paid: false,
+        message: `G-LLM 主题资格验证失败：${response.status}${detail ? ` ${detail}` : ''}`
+      }
+    }
+
+    const payload = (await response.json()) as {
+      paid?: unknown
+      entitlements?: { gold_theme?: unknown }
+    }
+    const paid = payload.paid === true
+    const eligible = paid && payload.entitlements?.gold_theme === true
+    return {
+      ok: true,
+      eligible,
+      paid,
+      message: eligible ? '已验证 G-LLM 付费资格' : '当前 G-LLM 账号尚未获得金色主题资格'
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      eligible: false,
+      paid: false,
+      message: `G-LLM 主题资格验证失败：${error instanceof Error ? error.message : String(error)}`
     }
   }
 }

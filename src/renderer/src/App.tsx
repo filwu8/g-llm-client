@@ -3,14 +3,15 @@ import {
   Brain,
   BookOpen,
   Briefcase,
-  ChevronDown,
   CircleCheck,
   Code2,
   Copy,
+  Crown,
   Database,
   Download,
   Eye,
   EyeOff,
+  ExternalLink,
   FileText,
   FolderOpen,
   Globe2,
@@ -19,6 +20,7 @@ import {
   KeyRound,
   Languages,
   MessageSquarePlus,
+  Moon,
   NotebookPen,
   PanelLeftClose,
   PanelLeftOpen,
@@ -38,6 +40,7 @@ import {
   Settings,
   SlidersHorizontal,
   Sparkles,
+  Sun,
   AtSign,
   Trash2,
   Upload,
@@ -73,6 +76,8 @@ import {
 } from './composerInput'
 import { getMessageSendShortcutLabel, shouldSendMessageFromKeyboard } from './keyboard'
 import { MarkdownMessage } from './MarkdownMessage'
+import { getModelDisplayLabel, getModelOptions, ModelPickerMenu } from './ModelPicker'
+import { applyDocumentTheme } from './theme'
 import {
   ASSISTANT_PRESET_CATEGORIES,
   findAssistantPreset,
@@ -108,17 +113,19 @@ import type {
   ChatMessage,
   ClipboardAttachmentInput,
   Conversation,
+  ConversationSearchResponse,
+  ConversationSearchResult,
   DataLocationInfo,
   KnowledgeReference,
   KnowledgeNote,
   PreparedAttachment,
   Project,
   ProviderCheckResult,
-  ProviderModel,
   ProviderTemplateCategory,
   ProviderTemplateId,
   ToolConfig,
   ToolConfigType,
+  ThemeEntitlementResult,
   WebSearchActivity
 } from '@shared/types'
 
@@ -138,10 +145,6 @@ const bottomFollowThreshold = 96
 const maxPastedAttachmentBytes = 12 * 1024 * 1024
 const quoteReferencePrefix = 'quote_'
 const defaultSpaceId = 'project_default'
-const modelNameCollator = new Intl.Collator(['zh-CN', 'en'], {
-  numeric: true,
-  sensitivity: 'base'
-})
 const providerTemplateCategoryOrder: ProviderTemplateCategory[] = ['default', 'global', 'china', 'aggregator', 'local']
 const providerTemplateCategoryLabels: Record<ProviderTemplateCategory, string> = {
   default: '默认与自定义',
@@ -588,238 +591,10 @@ function AssistantAvatar({ assistant, className = '' }: { assistant: Assistant; 
   )
 }
 
-function getModelOptions(provider: ApiProvider, selectedModel = provider.defaultModel): ProviderModel[] {
-  const models = provider.models.some((model) => model.id === selectedModel)
-    ? provider.models
-    : [
-        {
-          id: selectedModel,
-          name: selectedModel,
-          capabilities: inferModelCapabilities(selectedModel),
-          type: inferModelType(selectedModel)
-        },
-        ...provider.models
-      ]
-
-  return models
-    .filter((model) => model.id)
-    .map((model) => ({
-      ...model,
-      capabilities: normalizeModelCapabilities(model),
-      type: model.type ?? inferModelType(model.id)
-    }))
-    .sort(compareProviderModels)
-}
-
-function getModelName(model: ProviderModel): string {
-  return model.name?.trim() || model.id
-}
-
-function getModelTitle(model: ProviderModel): string {
-  return model.name && model.name !== model.id ? model.name : model.id
-}
-
-function getModelSubtitle(model: ProviderModel): string {
-  return model.name && model.name !== model.id ? model.id : model.ownedBy || ''
-}
-
-function compareProviderModels(first: ProviderModel, second: ProviderModel): number {
-  return (
-    modelNameCollator.compare(getModelName(first), getModelName(second)) ||
-    modelNameCollator.compare(first.id, second.id)
-  )
-}
-
-function getModelSearchText(model: ProviderModel): string {
-  return [
-    model.id,
-    model.name,
-    model.ownedBy,
-    model.type,
-    ...normalizeModelCapabilities(model).map((capability) => MODEL_CAPABILITY_LABELS[capability])
-  ]
-    .filter(Boolean)
-    .join(' ')
-    .toLocaleLowerCase()
-}
-
-function getModelDisplayLabel(model: ProviderModel): string {
-  const name = model.name && model.name !== model.id ? `${model.name} (${model.id})` : model.id
-  const capabilities = normalizeModelCapabilities(model)
-    .map((capability) => MODEL_CAPABILITY_LABELS[capability])
-    .join(' / ')
-  return `${name} · ${capabilities}`
-}
-
-function ModelCapabilityBadges({ model }: { model: ProviderModel }) {
-  return (
-    <>
-      {normalizeModelCapabilities(model).map((capability) => (
-        <span key={capability} className={`model-capability-badge type-${capability}`}>
-          {MODEL_CAPABILITY_LABELS[capability]}
-        </span>
-      ))}
-    </>
-  )
-}
-
-function ModelPickerList({
-  models,
-  selectedModelId,
-  onSelect,
-  emptyLabel = '没有找到匹配的模型'
-}: {
-  models: ProviderModel[]
-  selectedModelId: string
-  onSelect: (modelId: string) => void
-  emptyLabel?: string
-}) {
-  return (
-    <div className="conversation-model-list" role="listbox" aria-label="模型">
-      {models.map((model) => {
-        const subtitle = getModelSubtitle(model)
-        return (
-          <button
-            key={model.id}
-            aria-selected={model.id === selectedModelId}
-            className={model.id === selectedModelId ? 'active' : ''}
-            onClick={() => onSelect(model.id)}
-            role="option"
-            title={getModelDisplayLabel(model)}
-            type="button"
-          >
-            <span className="conversation-model-info">
-              <strong>{getModelTitle(model)}</strong>
-              {subtitle && <small>{subtitle}</small>}
-            </span>
-            <span className="model-capability-list">
-              <ModelCapabilityBadges model={model} />
-            </span>
-          </button>
-        )
-      })}
-      {models.length === 0 && <div className="conversation-model-empty">{emptyLabel}</div>}
-    </div>
-  )
-}
-
-function ModelPickerMenu({
-  provider,
-  value,
-  onChange,
-  variant = 'expanded'
-}: {
-  provider: ApiProvider
-  value: string
-  onChange: (modelId: string) => void
-  variant?: 'expanded' | 'dropdown'
-}) {
-  const [query, setQuery] = useState('')
-  const [open, setOpen] = useState(false)
-  const dropdownRef = useRef<HTMLDivElement>(null)
-  const modelOptions = useMemo(() => getModelOptions(provider, value), [provider, value])
-  const selectedModel = modelOptions.find((model) => model.id === value) ?? null
-  const normalizedQuery = query.trim().toLocaleLowerCase()
-  const visibleModelOptions = normalizedQuery
-    ? modelOptions.filter((model) => getModelSearchText(model).includes(normalizedQuery))
-    : modelOptions
-
-  useEffect(() => {
-    setQuery('')
-    setOpen(false)
-  }, [provider.id])
-
-  useEffect(() => {
-    if (variant !== 'dropdown' || !open) return
-
-    function closeOnOutsideClick(event: MouseEvent) {
-      if (!dropdownRef.current?.contains(event.target as Node)) {
-        setOpen(false)
-      }
-    }
-
-    function closeOnEscape(event: globalThis.KeyboardEvent) {
-      if (event.key === 'Escape') setOpen(false)
-    }
-
-    window.addEventListener('mousedown', closeOnOutsideClick)
-    window.addEventListener('keydown', closeOnEscape)
-    return () => {
-      window.removeEventListener('mousedown', closeOnOutsideClick)
-      window.removeEventListener('keydown', closeOnEscape)
-    }
-  }, [open, variant])
-
-  function selectModel(modelId: string) {
-    onChange(modelId)
-    if (variant === 'dropdown') {
-      setOpen(false)
-      setQuery('')
-    }
-  }
-
-  const searchField = (
-    <label className="model-search-field">
-      <Search size={16} />
-      <input
-        aria-label="搜索模型"
-        placeholder="搜索模型名称、ID、供应商或能力标签"
-        value={query}
-        onChange={(event) => setQuery(event.target.value)}
-      />
-    </label>
-  )
-
-  if (variant === 'dropdown') {
-    const subtitle = selectedModel ? getModelSubtitle(selectedModel) : ''
-
-    return (
-      <div className="model-picker-dropdown" ref={dropdownRef}>
-        <button
-          aria-expanded={open}
-          className="model-dropdown-trigger"
-          onClick={() => setOpen((current) => !current)}
-          title={selectedModel ? getModelDisplayLabel(selectedModel) : '请选择模型'}
-          type="button"
-        >
-          <span className="model-dropdown-current">
-            <strong>{selectedModel ? getModelTitle(selectedModel) : value || '请选择模型'}</strong>
-            {subtitle && <small>{subtitle}</small>}
-          </span>
-          {selectedModel && (
-            <span className="model-capability-list model-dropdown-capabilities">
-              <ModelCapabilityBadges model={selectedModel} />
-            </span>
-          )}
-          <ChevronDown size={17} />
-        </button>
-        {open && (
-          <div className="model-dropdown-popover">
-            {searchField}
-            <ModelPickerList models={visibleModelOptions} selectedModelId={value} onSelect={selectModel} />
-          </div>
-        )}
-      </div>
-    )
-  }
-
-  return (
-    <div className="conversation-model-picker">
-      <div className="conversation-model-picker-head">
-        <span>模型</span>
-        <small>
-          {selectedModel ? `当前：${getModelTitle(selectedModel)}` : '请选择模型'} · {visibleModelOptions.length}/{modelOptions.length}
-        </small>
-      </div>
-      {searchField}
-      <ModelPickerList models={visibleModelOptions} selectedModelId={value} onSelect={selectModel} />
-    </div>
-  )
-}
-
 function getComparableSettings(settings: AppSettings) {
   return {
     activeProviderId: settings.activeProviderId,
+    theme: settings.theme,
     temperature: Number(settings.temperature),
     enableTemperature: settings.enableTemperature,
     maxTokens: Number(settings.maxTokens),
@@ -873,6 +648,8 @@ export default function App() {
   const isMac = window.gllm.platform === 'darwin'
   const isWindows = window.gllm.platform === 'win32'
   const [settings, setSettings] = useState<AppSettings | null>(null)
+  const [goldThemeEntitled, setGoldThemeEntitled] = useState(false)
+  const [goldThemeEntitlementChecked, setGoldThemeEntitlementChecked] = useState(false)
   const [providers, setProviders] = useState<ApiProvider[]>([DEFAULT_PROVIDER])
   const [projects, setProjects] = useState<Project[]>([])
   const [activeProjectId, setActiveProjectId] = useState('')
@@ -900,6 +677,11 @@ export default function App() {
   const [railCollapsed, setRailCollapsed] = useState(false)
   const [historyCollapsed, setHistoryCollapsed] = useState(false)
   const [assistantSearchQuery, setAssistantSearchQuery] = useState('')
+  const [conversationSearchOpen, setConversationSearchOpen] = useState(false)
+  const [conversationSearchQuery, setConversationSearchQuery] = useState('')
+  const [conversationSearchResponse, setConversationSearchResponse] = useState<ConversationSearchResponse | null>(null)
+  const [conversationSearchLoading, setConversationSearchLoading] = useState(false)
+  const [conversationSearchError, setConversationSearchError] = useState('')
   const [webSearchEnabled, setWebSearchEnabled] = useState(false)
   const [toolNotice, setToolNotice] = useState('')
   const [selectionMenu, setSelectionMenu] = useState<SelectionContextMenu | null>(null)
@@ -917,6 +699,7 @@ export default function App() {
   const autoFollowMessagesRef = useRef(true)
   const toolNoticeTimerRef = useRef<number | null>(null)
   const streamingConversationDraftsRef = useRef<Record<string, Conversation>>({})
+  const conversationSearchRequestRef = useRef(0)
 
   const activeSpace = useMemo(
     () => projects.find((project) => project.id === activeProjectId) ?? projects[0] ?? null,
@@ -1011,6 +794,37 @@ export default function App() {
     }
   }
 
+  async function checkThemeEntitlement(provider: ApiProvider): Promise<ThemeEntitlementResult> {
+    const result = await window.gllm.checkThemeEntitlement(provider)
+    if (result.ok) {
+      setGoldThemeEntitled(result.eligible)
+      setGoldThemeEntitlementChecked(true)
+    }
+    return result
+  }
+
+  async function verifyGoldThemeEntitlement(providerList: ApiProvider[]): Promise<void> {
+    const candidates = providerList.filter(
+      (provider) => provider.templateId === 'gllm' && Boolean(provider.apiKey.trim())
+    )
+    if (candidates.length === 0) {
+      setGoldThemeEntitled(false)
+      setGoldThemeEntitlementChecked(true)
+      return
+    }
+
+    for (const provider of candidates) {
+      const result = await window.gllm.checkThemeEntitlement(provider)
+      if (result.ok && result.eligible) {
+        setGoldThemeEntitled(true)
+        setGoldThemeEntitlementChecked(true)
+        return
+      }
+    }
+    setGoldThemeEntitled(false)
+    setGoldThemeEntitlementChecked(true)
+  }
+
   useEffect(() => {
     if (!isWindows) return
     document.title = `${activeSpaceName} - ${activeAssistant.name} - ${activeAssistant.title} | G-LLM`
@@ -1021,6 +835,7 @@ export default function App() {
       const nextProviders = state.providers.length > 0 ? state.providers : [DEFAULT_PROVIDER]
       const provider = getProviderById(state.settings.activeProviderId, nextProviders)
       applyAppState(state, { selectFirstConversation: true })
+      void verifyGoldThemeEntitlement(nextProviders)
       if (!state.settings.setupCompleted) {
         setAgreementOpen(true)
       } else if (provider.requiresApiKey && !provider.apiKey.trim()) {
@@ -1028,6 +843,10 @@ export default function App() {
       }
     })
   }, [])
+
+  useEffect(() => {
+    if (settings) applyDocumentTheme(settings.theme, goldThemeEntitled)
+  }, [goldThemeEntitled, settings?.theme])
 
   useEffect(() => {
     void window.gllm.setActiveAssistantId(activeAssistantId)
@@ -1078,6 +897,7 @@ export default function App() {
         } else {
           setIsStreaming(false)
         }
+        if (chunk.warning) showToolNotice(chunk.warning, 9000)
       }
     })
     return unsubscribe
@@ -1158,10 +978,10 @@ export default function App() {
     activeConversationTranslationSignature
   ])
 
-  function showToolNotice(message: string) {
+  function showToolNotice(message: string, duration = 2600) {
     setToolNotice(message)
     if (toolNoticeTimerRef.current) window.clearTimeout(toolNoticeTimerRef.current)
-    toolNoticeTimerRef.current = window.setTimeout(() => setToolNotice(''), 2600)
+    toolNoticeTimerRef.current = window.setTimeout(() => setToolNotice(''), duration)
   }
 
   function clearSpaceTransientState() {
@@ -1183,6 +1003,49 @@ export default function App() {
     applyAppState(state, { selectFirstConversation: true })
     clearSpaceTransientState()
     showToolNotice(`已切换到空间「${getSpaceName(state.projects.find((project) => project.id === state.activeProjectId) ?? null)}」`)
+  }
+
+  async function runConversationSearch(query = conversationSearchQuery) {
+    const normalizedQuery = query.trim().slice(0, 300)
+    const requestId = conversationSearchRequestRef.current + 1
+    conversationSearchRequestRef.current = requestId
+    setConversationSearchQuery(normalizedQuery)
+    setConversationSearchOpen(true)
+    setConversationSearchLoading(true)
+    setConversationSearchError('')
+    setConversationSearchResponse(null)
+
+    try {
+      const response = await window.gllm.searchConversations({
+        query: normalizedQuery,
+        provider: activeProvider,
+        limit: 20
+      })
+      if (conversationSearchRequestRef.current !== requestId) return
+      setConversationSearchResponse(response)
+    } catch (error) {
+      if (conversationSearchRequestRef.current !== requestId) return
+      setConversationSearchError(error instanceof Error ? error.message : '历史会话搜索失败')
+    } finally {
+      if (conversationSearchRequestRef.current === requestId) setConversationSearchLoading(false)
+    }
+  }
+
+  async function openConversationSearchResult(result: ConversationSearchResult) {
+    try {
+      if (result.projectId !== activeProjectId) {
+        const state = await window.gllm.setActiveProjectId(result.projectId)
+        applyAppState(state)
+        clearSpaceTransientState()
+      }
+      setActiveAssistantId(result.assistantId)
+      setActiveConversationId(result.conversationId)
+      setAssistantSearchQuery('')
+      setConversationSearchOpen(false)
+      showToolNotice(`已打开「${result.title}」`)
+    } catch (error) {
+      setConversationSearchError(error instanceof Error ? error.message : '无法打开该会话')
+    }
   }
 
   async function createSpace(payload: SpaceFormPayload) {
@@ -1481,6 +1344,24 @@ export default function App() {
     const nextConversation = withConversationTokens({ ...conversation, projectId: conversation.projectId ?? activeProjectId })
     setConversations((current) => [nextConversation, ...current.filter((item) => item.id !== nextConversation.id)])
     void window.gllm.saveConversation(nextConversation)
+  }
+
+  function changeActiveConversationModel(modelId: string) {
+    const nextModelId = modelId.trim()
+    if (!nextModelId) return
+    if (activeConversation?.modelProviderId === conversationProvider.id && activeConversation.modelId === nextModelId) return
+
+    const conversation = activeConversation ?? createConversation(activeAssistant, conversationProvider, activeProjectId)
+    const nextConversation: Conversation = {
+      ...conversation,
+      modelProviderId: conversationProvider.id,
+      modelId: nextModelId,
+      updatedAt: Date.now()
+    }
+
+    saveConversationUpdate(nextConversation)
+    if (!activeConversation) setActiveConversationId(nextConversation.id)
+    showToolNotice(`本会话已切换到 ${conversationProvider.name} · ${nextModelId}`)
   }
 
   function getSelectedTextForMessage(messageId: string): string {
@@ -1787,7 +1668,9 @@ export default function App() {
 
   async function saveProvider(next: ApiProvider) {
     const saved = await window.gllm.saveProvider(next)
-    setProviders((current) => [saved, ...current.filter((provider) => provider.id !== saved.id)])
+    const nextProviders = [saved, ...providers.filter((provider) => provider.id !== saved.id)]
+    setProviders(nextProviders)
+    void verifyGoldThemeEntitlement(nextProviders)
     return saved
   }
 
@@ -1797,13 +1680,17 @@ export default function App() {
 
   async function refreshProviderModels(next: ApiProvider) {
     const saved = await window.gllm.refreshProviderModels(next)
-    setProviders((current) => [saved, ...current.filter((provider) => provider.id !== saved.id)])
+    const nextProviders = [saved, ...providers.filter((provider) => provider.id !== saved.id)]
+    setProviders(nextProviders)
+    void verifyGoldThemeEntitlement(nextProviders)
     return saved
   }
 
   async function deleteProvider(id: string) {
     await window.gllm.deleteProvider(id)
-    setProviders((current) => current.filter((provider) => provider.id !== id))
+    const nextProviders = providers.filter((provider) => provider.id !== id)
+    setProviders(nextProviders)
+    void verifyGoldThemeEntitlement(nextProviders)
     setSettings((current) => (current?.activeProviderId === id ? { ...current, activeProviderId: DEFAULT_PROVIDER_ID } : current))
   }
 
@@ -1858,18 +1745,31 @@ export default function App() {
             </button>
           </div>
 
-          <label className="assistant-search" title="搜索助手">
+          <label className="assistant-search" title="搜索助手或历史会话">
             <Search size={15} />
             <input
               value={assistantSearchQuery}
-              placeholder="搜索助手"
+              placeholder="搜索助手或历史会话"
               onChange={(event) => setAssistantSearchQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter') return
+                event.preventDefault()
+                void runConversationSearch(assistantSearchQuery)
+              }}
             />
             {assistantSearchQuery && (
               <button onClick={() => setAssistantSearchQuery('')} title="清空搜索" type="button">
                 <X size={14} />
               </button>
             )}
+            <button
+              className="assistant-smart-search-button"
+              onClick={() => void runConversationSearch(assistantSearchQuery)}
+              title={assistantSearchQuery.trim() ? '智能搜索历史会话' : '查看最近会话'}
+              type="button"
+            >
+              <Sparkles size={14} />
+            </button>
           </label>
 
           <div className="assistant-list">
@@ -2203,14 +2103,14 @@ export default function App() {
                   <Wrench size={16} />
                 </button>
               </div>
-              <button
-                className="composer-model"
-                type="button"
-                onClick={openConversationModelSettings}
-                title={`切换本会话模型：${conversationProvider.name} · ${conversationProvider.defaultModel}`}
-              >
-                <span className="composer-model-name">{conversationProvider.defaultModel}</span>
-              </button>
+              <ModelPickerMenu
+                className="composer-model-picker"
+                provider={conversationProvider}
+                value={conversationProvider.defaultModel}
+                variant="dropdown"
+                placement="top"
+                onChange={changeActiveConversationModel}
+              />
             </div>
             {toolNotice && <div className="composer-notice">{toolNotice}</div>}
             {pendingQuoteRefs.length > 0 && (
@@ -2396,6 +2296,18 @@ export default function App() {
           onSwitch={switchSpace}
         />
       )}
+      {conversationSearchOpen && (
+        <ConversationSearchDialog
+          error={conversationSearchError}
+          loading={conversationSearchLoading}
+          query={conversationSearchQuery}
+          response={conversationSearchResponse}
+          onClose={() => setConversationSearchOpen(false)}
+          onQueryChange={setConversationSearchQuery}
+          onSearch={runConversationSearch}
+          onSelect={openConversationSearchResult}
+        />
+      )}
       {agreementOpen && settings && (
         <UserAgreementDialog
           onAccept={() => void acceptUserAgreement()}
@@ -2409,16 +2321,131 @@ export default function App() {
           dataLocation={dataLocation}
           settings={settings}
           providers={providers}
+          goldThemeEntitled={goldThemeEntitled}
+          goldThemeEntitlementChecked={goldThemeEntitlementChecked}
           onClose={() => setSettingsOpen(false)}
           onSaveSettings={saveSettings}
           onSaveProvider={saveProvider}
           onCheckProvider={checkProvider}
+          onCheckThemeEntitlement={checkThemeEntitlement}
           onRefreshProviderModels={refreshProviderModels}
           onDeleteProvider={deleteProvider}
           onDataLocationChange={setDataLocation}
         />
       )}
     </div>
+  )
+}
+
+function formatConversationSearchDate(timestamp: number): string {
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  }).format(timestamp)
+}
+
+function ConversationSearchDialog({
+  error,
+  loading,
+  query,
+  response,
+  onClose,
+  onQueryChange,
+  onSearch,
+  onSelect
+}: {
+  error: string
+  loading: boolean
+  query: string
+  response: ConversationSearchResponse | null
+  onClose: () => void
+  onQueryChange: (query: string) => void
+  onSearch: (query: string) => Promise<void>
+  onSelect: (result: ConversationSearchResult) => Promise<void>
+}) {
+  function submitSearch(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    void onSearch(query)
+  }
+
+  const statusText = loading
+    ? '正在理解并检索历史会话...'
+    : response?.mode === 'semantic'
+      ? `智能匹配 · 已检索 ${response.searchedCount} 个会话`
+      : response?.mode === 'local'
+        ? `本地匹配 · 已检索 ${response.searchedCount} 个会话`
+        : response
+          ? `最近会话 · 共 ${response.searchedCount} 个`
+          : ''
+
+  return (
+    <ModalBackdrop onClose={onClose}>
+      <section className="conversation-search-modal" onClick={stopModalClick}>
+        <header>
+          <div>
+            <p>跨空间检索</p>
+            <h2>智能搜索历史会话</h2>
+          </div>
+          <button className="icon-button compact" onClick={onClose} title="关闭" type="button">
+            <X size={16} />
+          </button>
+        </header>
+
+        <form className="conversation-search-form" onSubmit={submitSearch}>
+          <Search size={17} />
+          <input
+            autoFocus
+            value={query}
+            maxLength={300}
+            placeholder="描述你记得的主题、问题、人物或结论"
+            onChange={(event) => onQueryChange(event.target.value)}
+          />
+          {query && (
+            <button className="conversation-search-clear" onClick={() => onQueryChange('')} title="清空" type="button">
+              <X size={14} />
+            </button>
+          )}
+          <button className="primary-button conversation-search-submit" disabled={loading} type="submit">
+            <Sparkles size={15} />
+            <span>智能搜索</span>
+          </button>
+        </form>
+
+        <div className="conversation-search-status" aria-live="polite">
+          <span>{error || statusText}</span>
+        </div>
+
+        <div className="conversation-search-results">
+          {!loading && response?.results.length === 0 && (
+            <div className="conversation-search-empty">
+              <Search size={22} />
+              <strong>没有找到相关会话</strong>
+              <span>换一种描述方式，试试当时讨论的目标或结论。</span>
+            </div>
+          )}
+          {response?.results.map((result) => (
+            <button
+              className="conversation-search-result"
+              key={result.conversationId}
+              onClick={() => void onSelect(result)}
+              type="button"
+            >
+              <span className="conversation-search-result-heading">
+                <strong>{result.title || '未命名会话'}</strong>
+                <time>{formatConversationSearchDate(result.updatedAt)}</time>
+              </span>
+              <span className="conversation-search-result-meta">
+                {result.projectName} · {result.assistantName}
+              </span>
+              <span className="conversation-search-result-snippet">{result.snippet}</span>
+              {result.reason && <span className="conversation-search-result-reason">{result.reason}</span>}
+            </button>
+          ))}
+        </div>
+      </section>
+    </ModalBackdrop>
   )
 }
 
@@ -4023,10 +4050,13 @@ function SettingsPanel({
   dataLocation,
   settings,
   providers,
+  goldThemeEntitled,
+  goldThemeEntitlementChecked,
   onClose,
   onSaveSettings,
   onSaveProvider,
   onCheckProvider,
+  onCheckThemeEntitlement,
   onRefreshProviderModels,
   onDeleteProvider,
   onDataLocationChange
@@ -4036,10 +4066,13 @@ function SettingsPanel({
   dataLocation: DataLocationInfo | null
   settings: AppSettings
   providers: ApiProvider[]
+  goldThemeEntitled: boolean
+  goldThemeEntitlementChecked: boolean
   onClose: () => void
   onSaveSettings: (settings: AppSettings) => Promise<AppSettings>
   onSaveProvider: (provider: ApiProvider) => Promise<ApiProvider>
   onCheckProvider: (provider: ApiProvider) => Promise<ProviderCheckResult>
+  onCheckThemeEntitlement: (provider: ApiProvider) => Promise<ThemeEntitlementResult>
   onRefreshProviderModels: (provider: ApiProvider) => Promise<ApiProvider>
   onDeleteProvider: (id: string) => Promise<void>
   onDataLocationChange: (info: DataLocationInfo) => void
@@ -4053,6 +4086,8 @@ function SettingsPanel({
   const [addProviderOpen, setAddProviderOpen] = useState(false)
   const [isChecking, setIsChecking] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [isCheckingThemeEntitlement, setIsCheckingThemeEntitlement] = useState(false)
+  const [themeEntitlementStatus, setThemeEntitlementStatus] = useState('')
   const [isChangingDataLocation, setIsChangingDataLocation] = useState(false)
   const [isArchivingData, setIsArchivingData] = useState(false)
   const [dataArchiveNeedsRestart, setDataArchiveNeedsRestart] = useState(false)
@@ -4074,6 +4109,12 @@ function SettingsPanel({
   useEffect(() => {
     if (dataLocation) setDataLocationInfo(dataLocation)
   }, [dataLocation])
+
+  useEffect(() => {
+    if (goldThemeEntitlementChecked && !goldThemeEntitled && settingsDraft.theme === 'gold') {
+      setSettingsDraft((current) => ({ ...current, theme: 'light' }))
+    }
+  }, [goldThemeEntitled, goldThemeEntitlementChecked, settingsDraft.theme])
 
   useEffect(() => {
     if (!dataLocationInfo) {
@@ -4175,6 +4216,12 @@ function SettingsPanel({
         defaultModel: providerDraft.defaultModel || result.models[0].id,
         modelsUpdatedAt: Date.now()
       })
+    }
+    if (result.ok && providerDraft.templateId === 'gllm') {
+      setIsCheckingThemeEntitlement(true)
+      const entitlement = await onCheckThemeEntitlement(providerDraft)
+      setThemeEntitlementStatus(entitlement.message)
+      setIsCheckingThemeEntitlement(false)
     }
     setIsChecking(false)
   }
@@ -4584,6 +4631,70 @@ function SettingsPanel({
 
         {activeSettingsTab === 'personalization' && (
           <div className="settings-tab-panel personalization-settings-panel">
+            <section className="preference-section theme-preference-section">
+              <div className="data-location-head">
+                <div>
+                  <strong>界面主题</strong>
+                  <small>主窗口、快速对话和内容组件使用同一套配色。</small>
+                </div>
+                {goldThemeEntitled && <span>G-LLM 付费主题</span>}
+              </div>
+
+              <div className="theme-option-list">
+                <label className={`theme-option ${settingsDraft.theme === 'light' ? 'active' : ''}`}>
+                  <input
+                    checked={settingsDraft.theme === 'light'}
+                    name="app-theme"
+                    type="radio"
+                    value="light"
+                    onChange={() => setSettingsDraft({ ...settingsDraft, theme: 'light' })}
+                  />
+                  <span className="theme-preview light"><Sun size={19} /></span>
+                  <span>
+                    <strong>亮色</strong>
+                    <small>清晰明亮</small>
+                  </span>
+                </label>
+
+                <label className={`theme-option ${settingsDraft.theme === 'dark' ? 'active' : ''}`}>
+                  <input
+                    checked={settingsDraft.theme === 'dark'}
+                    name="app-theme"
+                    type="radio"
+                    value="dark"
+                    onChange={() => setSettingsDraft({ ...settingsDraft, theme: 'dark' })}
+                  />
+                  <span className="theme-preview dark"><Moon size={19} /></span>
+                  <span>
+                    <strong>暗色</strong>
+                    <small>沉浸克制</small>
+                  </span>
+                </label>
+
+                {goldThemeEntitled && (
+                  <label className={`theme-option gold ${settingsDraft.theme === 'gold' ? 'active' : ''}`}>
+                    <input
+                      checked={settingsDraft.theme === 'gold'}
+                      name="app-theme"
+                      type="radio"
+                      value="gold"
+                      onChange={() => setSettingsDraft({ ...settingsDraft, theme: 'gold' })}
+                    />
+                    <span className="theme-preview gold"><Crown size={19} /></span>
+                    <span>
+                      <strong>金色</strong>
+                      <small>专业尊享</small>
+                    </span>
+                  </label>
+                )}
+              </div>
+              {(isCheckingThemeEntitlement || themeEntitlementStatus) && (
+                <small className="theme-entitlement-status">
+                  {isCheckingThemeEntitlement ? '正在验证 G-LLM 主题资格...' : themeEntitlementStatus}
+                </small>
+              )}
+            </section>
+
             <section className="preference-section">
               <div className="data-location-head">
                 <div>
@@ -4746,8 +4857,19 @@ function SettingsPanel({
                 无极界 G-LLM 面向企业和个人用户，提供多助手、多会话、模型供应商、本地知识库和长期记忆能力。用户数据默认保存在本机，可按需切换数据目录，便于备份、迁移和私有化使用。
               </p>
               <div className="about-system-meta">
-                <span>版本</span>
-                <strong>V{appVersion}{appBuildCode ? `(${appBuildCode})` : ''}</strong>
+                <div>
+                  <span>版本</span>
+                  <strong>V{appVersion}{appBuildCode ? `(${appBuildCode})` : ''}</strong>
+                </div>
+                <a
+                  className="about-release-link"
+                  href="https://llm.gprophet.com/download#release-notes"
+                  rel="noreferrer"
+                  target="_blank"
+                >
+                  <ExternalLink size={15} />
+                  查看更新日志
+                </a>
               </div>
             </section>
 

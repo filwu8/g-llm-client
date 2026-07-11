@@ -12,12 +12,14 @@ import { sanitizeAssistantSystemPrompt, universalFallbackPrompt } from '../share
 import type {
   ApiProvider,
   AppSettings,
+  AppTheme,
   Assistant,
   AssistantColor,
   AssistantIcon,
   AssistantMemory,
   ChatMessage,
   Conversation,
+  ConversationSearchSource,
   DataArchiveResult,
   DataLocationChangeResult,
   DataLocationInfo,
@@ -568,6 +570,7 @@ export async function importDataArchive(archivePath: string): Promise<DataArchiv
 
 export const defaultSettings: AppSettings = {
   activeProviderId: DEFAULT_PROVIDER_ID,
+  theme: 'light',
   temperature: 1,
   enableTemperature: false,
   maxTokens: 4096,
@@ -827,6 +830,10 @@ function sanitizeMessageSendShortcut(value: unknown): MessageSendShortcut {
   return value === 'ctrl-enter' ? 'ctrl-enter' : 'enter'
 }
 
+function sanitizeAppTheme(value: unknown): AppTheme {
+  return value === 'dark' || value === 'gold' ? value : 'light'
+}
+
 function sanitizeMessage(message: ChatMessage): ChatMessage {
   const role = message.role === 'assistant' || message.role === 'user' || message.role === 'system' ? message.role : 'user'
   const translation = message.translation?.trim()
@@ -1023,6 +1030,7 @@ export function getSettings(): AppSettings {
   return {
     ...defaultSettings,
     activeProviderId,
+    theme: sanitizeAppTheme(saved.theme),
     temperature: Number.isFinite(saved.temperature)
       ? Math.min(2, Math.max(0, Number(saved.temperature)))
       : defaultSettings.temperature,
@@ -1046,6 +1054,7 @@ export function setSettings(settings: AppSettings): AppSettings {
     ...defaultSettings,
     ...settings,
     activeProviderId,
+    theme: sanitizeAppTheme(settings.theme),
     temperature: Number.isFinite(settings.temperature)
       ? Math.min(2, Math.max(0, Number(settings.temperature)))
       : defaultSettings.temperature,
@@ -1119,6 +1128,30 @@ export function deleteAssistant(id: string, projectId = getActiveProjectId()): v
 
 function getAllConversations(): Conversation[] {
   return store.get('conversations', []).map((conversation) => sanitizeConversation(conversation, defaultProjectId))
+}
+
+export function getConversationSearchSources(): ConversationSearchSource[] {
+  const projects = getProjects()
+  const projectNames = new Map(projects.map((project) => [project.id, project.name]))
+  const assistantNamesByProject = new Map(
+    projects.map((project) => [
+      project.id,
+      new Map(getAssistants(project.id).map((assistant) => [assistant.id, assistant.name]))
+    ])
+  )
+
+  return getAllConversations().map((conversation) => ({
+    conversationId: conversation.id,
+    projectId: conversation.projectId ?? defaultProjectId,
+    projectName: projectNames.get(conversation.projectId ?? defaultProjectId) ?? '未命名空间',
+    assistantId: conversation.assistantId,
+    assistantName:
+      assistantNamesByProject.get(conversation.projectId ?? defaultProjectId)?.get(conversation.assistantId) ?? '未知助手',
+    title: conversation.title,
+    messages: conversation.messages.map((message) => ({ role: message.role, content: message.content })),
+    createdAt: conversation.createdAt,
+    updatedAt: conversation.updatedAt
+  }))
 }
 
 export function getConversations(projectId = getActiveProjectId()): Conversation[] {

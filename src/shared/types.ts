@@ -1,5 +1,6 @@
 export type Role = 'system' | 'user' | 'assistant'
 export type MessageSendShortcut = 'enter' | 'ctrl-enter'
+export type AppTheme = 'light' | 'dark' | 'gold'
 
 export interface ChatMessage {
   id: string
@@ -103,6 +104,44 @@ export interface Conversation {
   totalOutputTokens?: number
   createdAt: number
   updatedAt: number
+}
+
+export interface ConversationSearchSource {
+  conversationId: string
+  projectId: string
+  projectName: string
+  assistantId: string
+  assistantName: string
+  title: string
+  messages: Array<Pick<ChatMessage, 'role' | 'content'>>
+  createdAt: number
+  updatedAt: number
+}
+
+export interface ConversationSearchRequest {
+  query: string
+  provider: ApiProvider
+  limit?: number
+}
+
+export interface ConversationSearchResult {
+  conversationId: string
+  projectId: string
+  projectName: string
+  assistantId: string
+  assistantName: string
+  title: string
+  snippet: string
+  reason?: string
+  score: number
+  createdAt: number
+  updatedAt: number
+}
+
+export interface ConversationSearchResponse {
+  mode: 'recent' | 'local' | 'semantic'
+  results: ConversationSearchResult[]
+  searchedCount: number
 }
 
 export interface KnowledgeNote {
@@ -213,6 +252,13 @@ export interface ProviderCheckResult {
   models?: ProviderModel[]
 }
 
+export interface ThemeEntitlementResult {
+  ok: boolean
+  eligible: boolean
+  paid: boolean
+  message: string
+}
+
 export interface Project {
   id: string
   name: string
@@ -242,6 +288,7 @@ export interface AssistantSuggestionRequest {
 
 export interface AppSettings {
   activeProviderId: string
+  theme: AppTheme
   temperature: number
   enableTemperature: boolean
   maxTokens: number
@@ -303,6 +350,9 @@ export interface ChatChunk {
   targetMessageId?: string
   done?: boolean
   error?: string
+  warning?: string
+  finishReason?: string
+  isTruncated?: boolean
 }
 
 export interface ConversationChangeEvent {

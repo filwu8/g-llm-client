@@ -2,8 +2,6 @@ import { isValidElement, type ReactNode, useEffect, useId, useMemo, useState } f
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
-let mermaidInitialized = false
-
 const MARKDOWN_DOCUMENT_FENCE_LANGUAGES = new Set(['markdown', 'md', 'mdx', 'gfm', 'commonmark'])
 const PLAIN_TEXT_FENCE_LANGUAGES = new Set(['text', 'txt', 'plain', 'plaintext'])
 
@@ -222,11 +220,26 @@ function hashText(value: string): string {
   return Math.abs(hash).toString(36)
 }
 
+function getThemeColor(variable: string, fallback: string): string {
+  const value = getComputedStyle(document.documentElement).getPropertyValue(variable).trim()
+  return value ? `hsl(${value})` : fallback
+}
+
 function MermaidDiagram({ diagram }: { diagram: string }) {
   const reactId = useId().replace(/[^A-Za-z0-9_-]/g, '')
-  const renderId = useMemo(() => `gllm-mermaid-${reactId}-${hashText(diagram)}`, [diagram, reactId])
+  const [themeRevision, setThemeRevision] = useState(0)
+  const renderId = useMemo(
+    () => `gllm-mermaid-${reactId}-${hashText(diagram)}-${themeRevision}`,
+    [diagram, reactId, themeRevision]
+  )
   const [svg, setSvg] = useState('')
   const [error, setError] = useState('')
+
+  useEffect(() => {
+    const handleThemeChange = () => setThemeRevision((revision) => revision + 1)
+    window.addEventListener('gllm-theme-changed', handleThemeChange)
+    return () => window.removeEventListener('gllm-theme-changed', handleThemeChange)
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -237,21 +250,25 @@ function MermaidDiagram({ diagram }: { diagram: string }) {
 
     void import('mermaid')
       .then(({ default: mermaid }) => {
-        if (!mermaidInitialized) {
-          mermaid.initialize({
-            startOnLoad: false,
-            securityLevel: 'strict',
-            theme: 'base',
-            themeVariables: {
-              primaryColor: '#f4f8f6',
-              primaryTextColor: '#172024',
-              primaryBorderColor: '#b7c8c2',
-              lineColor: '#64706c',
-              fontFamily: 'Inter, "PingFang SC", "Microsoft YaHei", sans-serif'
-            }
-          })
-          mermaidInitialized = true
-        }
+        const isDark = document.documentElement.dataset.theme !== 'light'
+        mermaid.initialize({
+          startOnLoad: false,
+          securityLevel: 'strict',
+          theme: 'base',
+          darkMode: isDark,
+          themeVariables: {
+            background: getThemeColor('--background', '#f8fafc'),
+            primaryColor: getThemeColor('--card', '#ffffff'),
+            primaryTextColor: getThemeColor('--foreground', '#0f172a'),
+            primaryBorderColor: getThemeColor('--border', '#e2e8f0'),
+            secondaryColor: getThemeColor('--secondary', '#f1f5f9'),
+            tertiaryColor: getThemeColor('--muted', '#f1f5f9'),
+            lineColor: getThemeColor('--muted-foreground', '#64748b'),
+            noteBkgColor: getThemeColor('--accent', '#f1f5f9'),
+            noteTextColor: getThemeColor('--accent-foreground', '#0f172a'),
+            fontFamily: 'Inter, "PingFang SC", "Microsoft YaHei", sans-serif'
+          }
+        })
         return mermaid.render(renderId, diagram)
       })
       .then(({ svg }) => {

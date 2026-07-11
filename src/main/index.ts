@@ -19,9 +19,17 @@ import { appendFileSync, mkdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
+import type { AppSettings, ChatRequest } from '../shared/types'
 import { pickAttachments, preparePastedAttachments } from './attachments'
 import { captureScreenshot } from './screenshot'
-import { checkProviderConnection, fetchProviderModels, generateAssistantSuggestion, streamGllmChat } from './gllmClient'
+import {
+  checkGllmThemeEntitlement,
+  checkProviderConnection,
+  fetchProviderModels,
+  generateAssistantSuggestion,
+  searchConversations,
+  streamGllmChat
+} from './gllmClient'
 import {
   adoptExistingDataRoot,
   deleteAssistant,
@@ -34,6 +42,7 @@ import {
   exportDataArchive,
   getActiveProjectId,
   getAssistants,
+  getConversationSearchSources,
   getConversations,
   getDataResourceFilePathFromUrl,
   getDataResourceProtocol,
@@ -157,6 +166,14 @@ function writeMainLog(message: string, error?: unknown): void {
   }
 }
 
+function buildTruncationWarning(request: ChatRequest, finishReason: string): string {
+  const reason = finishReason ? `（finish_reason=${finishReason}）` : ''
+  const tokenAdvice = request.settings.enableMaxTokens
+    ? `当前最大输出 Token 为 ${request.settings.maxTokens.toLocaleString()}，可尝试调大。`
+    : '当前客户端未设置最大输出 Token，可在设置中开启并调大。'
+  return `模型输出已达到上游长度限制${reason}，回复可能不完整。${tokenAdvice}`
+}
+
 function canOpenExternalUrl(url: string): boolean {
   try {
     const parsed = new URL(url)
@@ -225,11 +242,12 @@ function createWindow(): BrowserWindow {
     minWidth: 980,
     minHeight: 680,
     title: '无极界',
-    backgroundColor: '#f7f5ef',
+    backgroundColor: getSettings().theme === 'dark' ? '#0f172a' : '#f4f7f6',
     autoHideMenuBar: true,
     skipTaskbar: false,
     icon: getAppIconPath(),
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    trafficLightPosition: process.platform === 'darwin' ? { x: 18, y: 10 } : undefined,
     webPreferences: {
       preload: join(__dirname, '../preload/index.mjs'),
       sandbox: false,
@@ -662,6 +680,12 @@ function broadcastActiveAssistantChange(): void {
   }
 }
 
+function broadcastSettingsChange(settings: AppSettings): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) window.webContents.send('settings:changed', settings)
+  }
+}
+
 function broadcastConversationChange(conversationId: string, action: 'saved' | 'deleted'): void {
   for (const window of BrowserWindow.getAllWindows()) {
     if (!window.isDestroyed()) {
@@ -891,6 +915,7 @@ app.whenReady().then(() => {
     }
 
     const saved = setSettings(settings)
+    broadcastSettingsChange(saved)
 
     if (!previous.telemetryEnabled && saved.telemetryEnabled) {
       await trackTelemetryEvent('telemetry_enabled')
@@ -906,6 +931,7 @@ app.whenReady().then(() => {
   })
   ipcMain.handle('provider:delete', (_, id: string) => deleteProvider(id))
   ipcMain.handle('provider:check', (_, provider) => checkProviderConnection(provider))
+  ipcMain.handle('provider:check-theme-entitlement', (_, provider) => checkGllmThemeEntitlement(provider))
   ipcMain.handle('provider:refresh-models', async (_, provider) => {
     try {
       const models = await fetchProviderModels(provider)
@@ -928,6 +954,9 @@ app.whenReady().then(() => {
   ipcMain.handle('assistant:save', (_, assistant) => saveAssistant(assistant))
   ipcMain.handle('assistant:delete', (_, id: string) => deleteAssistant(id))
   ipcMain.handle('assistant:suggest', (_, request) => generateAssistantSuggestion(request))
+  ipcMain.handle('conversation:search', (_, request) =>
+    searchConversations(request, getConversationSearchSources())
+  )
   ipcMain.handle('conversation:save', (_, conversation) => {
     const saved = saveConversation(conversation)
     broadcastConversationChange(saved.id, 'saved')
@@ -957,6 +986,8 @@ app.whenReady().then(() => {
     let inputTokens = 0
     let outputTokens = 0
     let totalTokens = 0
+    let finishReason = ''
+    let isTruncated = false
 
     try {
       void trackTelemetryEvent('chat_started', getChatTelemetryProperties(request))
@@ -966,20 +997,33 @@ app.whenReady().then(() => {
           outputTokens = chunk.usage.outputTokens
           totalTokens = chunk.usage.totalTokens
         }
+        if (chunk.finishReason) finishReason = chunk.finishReason
+        if (chunk.isTruncated) isTruncated = true
         event.sender.send('chat:chunk', {
           ...chunkBase,
           content: chunk.content ?? '',
           usage: chunk.usage,
-          webSearch: chunk.webSearch
+          webSearch: chunk.webSearch,
+          finishReason: chunk.finishReason,
+          isTruncated: chunk.isTruncated
         })
       }
       void trackTelemetryEvent('chat_completed', {
         ...getChatTelemetryProperties(request),
         input_tokens: inputTokens,
         output_tokens: outputTokens,
-        total_tokens: totalTokens
+        total_tokens: totalTokens,
+        finish_reason: finishReason || 'unknown',
+        truncated: isTruncated
       })
-      event.sender.send('chat:chunk', { ...chunkBase, content: '', done: true })
+      event.sender.send('chat:chunk', {
+        ...chunkBase,
+        content: '',
+        done: true,
+        finishReason: finishReason || undefined,
+        isTruncated,
+        warning: isTruncated ? buildTruncationWarning(request, finishReason) : undefined
+      })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       void trackTelemetryEvent('chat_failed', {
