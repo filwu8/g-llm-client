@@ -871,6 +871,17 @@ function sanitizeMessage(message: ChatMessage): ChatMessage {
     })),
     workspaceChangedFiles: (message.workspaceChangedFiles ?? []).map(String).filter(Boolean).slice(0, 100),
     workspaceArtifactRoot: message.workspaceArtifactRoot?.trim() || undefined,
+    retryAttempts: (message.retryAttempts ?? []).slice(-12).map((attempt) => ({
+      attemptedAt: Number.isFinite(attempt.attemptedAt) ? Number(attempt.attemptedAt) : Date.now(),
+      error: String(attempt.error ?? '').trim().slice(0, 500) || '工作区任务失败',
+      activities: (attempt.activities ?? []).slice(0, 80).map((activity) => ({
+        id: String(activity.id ?? '').trim() || `activity_${Date.now()}`,
+        tool: String(activity.tool ?? '').trim(),
+        label: String(activity.label ?? '').trim() || '工作区操作',
+        status: activity.status === 'running' || activity.status === 'failed' ? activity.status : 'completed',
+        detail: activity.detail ? String(activity.detail).slice(0, 500) : undefined
+      }))
+    })),
     translation: translation || undefined,
     tokenCount: sanitizeTokenCount(message.tokenCount),
     inputTokens: sanitizeTokenCount(message.inputTokens),

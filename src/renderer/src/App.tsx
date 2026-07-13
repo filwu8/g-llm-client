@@ -107,6 +107,7 @@ import type {
   ApiProvider,
   AppSettings,
   AppStateSnapshot,
+  AppUpdateInfo,
   Assistant,
   AssistantIcon,
   AssistantMemory,
@@ -124,6 +125,7 @@ import type {
   LocalTaskPlan,
   LocalTaskProgress,
   LocalTaskResult,
+  MessageRetryAttempt,
   PreparedAttachment,
   Project,
   ProviderCheckResult,
@@ -505,6 +507,21 @@ function createMessage(
     outputTokens,
     createdAt: Date.now()
   }
+}
+
+function formatWorkspaceError(value: string): string {
+  const normalized = value
+    .replace(/^Error invoking remote method 'workspace-agent:run':\s*Error:\s*/i, '')
+    .trim()
+  const status = normalized.match(/(?:请求失败：|HTTP\s*)(429|500|502|503|504)\b/i)?.[1]
+  if (/<!doctype\s+html|<html[\s>]/i.test(normalized)) {
+    if (status === '429') return '模型服务当前请求较多（429），自动重试后仍未恢复。'
+    if (status === '502') return '模型网关暂时无法连接上游服务（502），自动重试后仍未恢复。'
+    if (status === '503') return '模型服务暂时不可用（503），自动重试后仍未恢复。'
+    if (status === '504') return '模型服务响应超时（504），自动重试后仍未恢复。'
+    return '模型服务返回了异常网页响应，请稍后重试。'
+  }
+  return normalized || '工作区任务发生未知错误'
 }
 
 function applyChatChunkToConversation(conversation: Conversation, chunk: ChatChunk): Conversation {
@@ -1637,7 +1654,8 @@ export default function App() {
   async function executeWorkspaceConversation(
     nextConversation: Conversation,
     workspace: ConversationWorkspace,
-    provider: ApiProvider
+    provider: ApiProvider,
+    retryAttempts: MessageRetryAttempt[] = []
   ) {
     if (!settings) return
     setWorkspaceActivities([])
@@ -1655,7 +1673,8 @@ export default function App() {
         ...createMessage('assistant', result.content),
         workspaceActivities: result.activities,
         workspaceChangedFiles: result.changedFiles,
-        workspaceArtifactRoot: workspace.rootPath
+        workspaceArtifactRoot: workspace.rootPath,
+        retryAttempts: retryAttempts.length > 0 ? retryAttempts : undefined
       }
       const completedConversation = withConversationTokens({
         ...nextConversation,
@@ -1667,7 +1686,12 @@ export default function App() {
       void window.gllm.saveConversation(completedConversation)
       if (result.changedFiles.length > 0) showToolNotice(`已修改 ${result.changedFiles.length} 个工作区文件`)
     } catch (error) {
-      const message = error instanceof Error ? error.message : '未知错误'
+      const message = formatWorkspaceError(error instanceof Error ? error.message : '未知错误')
+      const currentAttempt: MessageRetryAttempt = {
+        attemptedAt: Date.now(),
+        error: message,
+        activities: workspaceActivitiesRef.current
+      }
       const failedConversation = withConversationTokens({
         ...nextConversation,
         workspace,
@@ -1675,7 +1699,8 @@ export default function App() {
           ...createMessage('assistant', `工作区任务失败：${message}`),
           error: message,
           workspaceActivities: workspaceActivitiesRef.current,
-          workspaceArtifactRoot: workspace.rootPath
+          workspaceArtifactRoot: workspace.rootPath,
+          retryAttempts: [...retryAttempts, currentAttempt]
         }],
         updatedAt: Date.now()
       })
@@ -1699,6 +1724,7 @@ export default function App() {
       return
     }
 
+    const message = activeConversation.messages[messageIndex]
     const messages = activeConversation.messages.slice(0, messageIndex)
     if (!messages.some((message) => message.role === 'user')) {
       showToolNotice('这条消息前没有用户问题')
@@ -1714,7 +1740,12 @@ export default function App() {
     setIsStreaming(true)
     saveConversationUpdate(nextConversation)
     if (activeConversation.workspace) {
-      void executeWorkspaceConversation(nextConversation, activeConversation.workspace, conversationProvider)
+      const retryAttempts: MessageRetryAttempt[] = message.error
+        ? message.retryAttempts?.length
+          ? message.retryAttempts
+          : [{ attemptedAt: message.createdAt, error: formatWorkspaceError(message.error), activities: message.workspaceActivities }]
+        : []
+      void executeWorkspaceConversation(nextConversation, activeConversation.workspace, conversationProvider, retryAttempts)
       return
     }
     streamingConversationDraftsRef.current[nextConversation.id] = nextConversation
@@ -2241,6 +2272,19 @@ export default function App() {
                             <RefreshCw size={15} />
                             <span>{'\u91cd\u65b0\u53d1\u9001'}</span>
                           </button>
+                        )}
+                        {(message.retryAttempts?.length ?? 0) > 0 && (
+                          <details className="message-retry-history">
+                            <summary>执行尝试记录（{message.retryAttempts!.length}）</summary>
+                            <ol>
+                              {message.retryAttempts!.map((attempt, index) => (
+                                <li key={`${attempt.attemptedAt}_${index}`}>
+                                  <time>{new Date(attempt.attemptedAt).toLocaleString()}</time>
+                                  <span>{formatWorkspaceError(attempt.error)}</span>
+                                </li>
+                              ))}
+                            </ol>
+                          </details>
                         )}
                         {message.attachments && message.attachments.length > 0 && (
                           <div className="message-attachments">
@@ -4550,6 +4594,8 @@ function SettingsPanel({
   const [themeEntitlementStatus, setThemeEntitlementStatus] = useState('')
   const [isChangingDataLocation, setIsChangingDataLocation] = useState(false)
   const [isArchivingData, setIsArchivingData] = useState(false)
+  const [isCheckingUpdate, setIsCheckingUpdate] = useState(false)
+  const [updateInfo, setUpdateInfo] = useState<AppUpdateInfo | null>(null)
   const [dataArchiveNeedsRestart, setDataArchiveNeedsRestart] = useState(false)
   const [apiKeyVisible, setApiKeyVisible] = useState(false)
   const [activeSettingsTab, setActiveSettingsTab] = useState<SettingsTab>('providers')
@@ -4800,6 +4846,28 @@ function SettingsPanel({
 
   async function relaunchApp() {
     await window.gllm.relaunchApp()
+  }
+
+  async function checkForUpdates() {
+    setIsCheckingUpdate(true)
+    setUpdateInfo(null)
+    try {
+      setUpdateInfo(await window.gllm.checkForUpdates())
+    } catch (error) {
+      setUpdateInfo({
+        currentVersion: appVersion,
+        updateAvailable: false,
+        status: 'unavailable',
+        downloadPageUrl: 'https://llm.gprophet.com/download',
+        message: error instanceof Error ? error.message : '检查更新失败，请稍后重试。'
+      })
+    } finally {
+      setIsCheckingUpdate(false)
+    }
+  }
+
+  async function openDownloadPage() {
+    await window.gllm.openDownloadPage()
   }
 
   const isWindows = window.gllm.platform === 'win32'
@@ -5321,16 +5389,35 @@ function SettingsPanel({
                   <span>版本</span>
                   <strong>V{appVersion}{appBuildCode ? `(${appBuildCode})` : ''}</strong>
                 </div>
-                <a
-                  className="about-release-link"
-                  href="https://llm.gprophet.com/download#release-notes"
-                  rel="noreferrer"
-                  target="_blank"
-                >
-                  <ExternalLink size={15} />
-                  查看更新日志
-                </a>
+                <div className="about-update-actions">
+                  <button
+                    className="about-release-link"
+                    disabled={isCheckingUpdate}
+                    onClick={() => void checkForUpdates()}
+                    type="button"
+                  >
+                    <RefreshCw className={isCheckingUpdate ? 'spin' : ''} size={15} />
+                    {isCheckingUpdate ? '正在检查...' : '检查新版本'}
+                  </button>
+                  <button className="about-release-link" onClick={() => void openDownloadPage()} type="button">
+                    <ExternalLink size={15} />
+                    下载与更新日志
+                  </button>
+                </div>
               </div>
+              {updateInfo && (
+                <div className={`about-update-result ${updateInfo.status}`} role="status">
+                  <strong>{updateInfo.message}</strong>
+                  {updateInfo.updatedAt && <small>发布日期：{updateInfo.updatedAt}</small>}
+                  {updateInfo.releaseNotes && <p>{updateInfo.releaseNotes}</p>}
+                  {(updateInfo.updateAvailable || updateInfo.status === 'unavailable') && (
+                    <button onClick={() => void openDownloadPage()} type="button">
+                      前往官网下载页
+                      <ExternalLink size={14} />
+                    </button>
+                  )}
+                </div>
+              )}
             </section>
 
             <section className="privacy-section">

@@ -41,7 +41,8 @@ const toolDefinitions = [
   { type: 'function', function: { name: 'list_directory', description: '列出工作区内目录内容', parameters: { type: 'object', properties: { path: { type: 'string', description: '相对工作区路径，默认 .' } } } } },
   { type: 'function', function: { name: 'inspect_file', description: '检查文件或目录的类型、大小和修改时间', parameters: { type: 'object', required: ['path'], properties: { path: { type: 'string' } } } } },
   { type: 'function', function: { name: 'read_file', description: '读取工作区内 UTF-8 文本文件', parameters: { type: 'object', required: ['path'], properties: { path: { type: 'string' } } } } },
-  { type: 'function', function: { name: 'read_document', description: '提取工作区内 PDF、Word（.docx）或 PowerPoint（.pptx）的正文文本，适合阅读和分析文档；返回内容可能因长度限制而截断', parameters: { type: 'object', required: ['path'], properties: { path: { type: 'string' } } } } },
+  { type: 'function', function: { name: 'read_document', description: '分段提取工作区内 PDF、Word（.docx）或 PowerPoint（.pptx）的正文文本，适合阅读和分析文档；较长文档可根据返回的范围继续读取。', parameters: { type: 'object', required: ['path'], properties: { path: { type: 'string' }, offset: { type: 'number', description: '从第几个字符开始，默认 0' }, maxCharacters: { type: 'number', description: '本次最多读取字符数，默认 60000，最大 120000' } } } } },
+  { type: 'function', function: { name: 'create_docx', description: '在工作区生成真正的 Microsoft Word .docx 文档。content 支持普通文本和基础 Markdown 标题、列表、表格文本；生成后工具会重新读取并验证正文。', parameters: { type: 'object', required: ['output', 'content'], properties: { output: { type: 'string', description: '相对工作区的 .docx 输出路径' }, title: { type: 'string', description: '可选文档标题' }, content: { type: 'string', description: '要写入 Word 的完整正文，支持基础 Markdown' }, author: { type: 'string', description: '可选作者' } } } } },
   { type: 'function', function: { name: 'write_file', description: '在工作区内创建或完整写入 UTF-8 文本文件', parameters: { type: 'object', required: ['path', 'content'], properties: { path: { type: 'string' }, content: { type: 'string' } } } } },
   { type: 'function', function: { name: 'replace_text', description: '精确替换文本文件中的一段内容；适合修改代码并避免重写整文件', parameters: { type: 'object', required: ['path', 'oldText', 'newText'], properties: { path: { type: 'string' }, oldText: { type: 'string' }, newText: { type: 'string' }, replaceAll: { type: 'boolean' } } } } },
   { type: 'function', function: { name: 'create_directory', description: '在工作区内创建目录', parameters: { type: 'object', required: ['path'], properties: { path: { type: 'string' } } } } },
@@ -56,6 +57,92 @@ const toolDefinitions = [
 function providerUrl(request: WorkspaceAgentRequest): string {
   const path = request.provider.chatCompletionsPath ?? '/chat/completions'
   return `${request.provider.apiBaseUrl.replace(/\/$/, '')}${path.startsWith('/') ? path : `/${path}`}`
+}
+
+const retryableModelStatuses = new Set([408, 425, 429, 500, 502, 503, 504])
+
+interface ModelRetryInfo {
+  attempt: number
+  maxAttempts: number
+  status?: number
+  reason: string
+}
+
+function wait(milliseconds: number): Promise<void> {
+  return new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds))
+}
+
+function friendlyModelStatus(status: number): string {
+  if (status === 429) return '模型服务当前请求较多（429），请稍后重试'
+  if (status === 502) return '模型网关暂时无法连接上游服务（502）'
+  if (status === 503) return '模型服务暂时不可用（503）'
+  if (status === 504) return '模型服务响应超时（504）'
+  if (status >= 500) return `模型服务发生临时故障（${status}）`
+  return `模型请求失败（HTTP ${status}）`
+}
+
+async function safeResponseError(response: Response): Promise<string> {
+  const fallback = friendlyModelStatus(response.status)
+  try {
+    const contentType = response.headers.get('content-type')?.toLocaleLowerCase() ?? ''
+    const body = (await response.text()).trim()
+    if (!body || contentType.includes('text/html') || /<!doctype\s+html|<html[\s>]/i.test(body)) return fallback
+    if (contentType.includes('json')) {
+      const payload = JSON.parse(body) as { error?: { message?: unknown } | string; message?: unknown }
+      const message = typeof payload.error === 'string'
+        ? payload.error
+        : typeof payload.error?.message === 'string'
+          ? payload.error.message
+          : typeof payload.message === 'string'
+            ? payload.message
+            : ''
+      return message.trim() ? `${fallback}：${message.trim().slice(0, 240)}` : fallback
+    }
+    const plain = body.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 240)
+    return plain ? `${fallback}：${plain}` : fallback
+  } catch {
+    return fallback
+  }
+}
+
+async function fetchModelWithRetry(
+  request: WorkspaceAgentRequest,
+  body: Record<string, unknown>,
+  onRetry: (info: ModelRetryInfo) => void,
+  maxAttempts = 3
+): Promise<Response> {
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const response = await fetch(providerUrl(request), {
+        method: 'POST',
+        headers: {
+          ...(request.provider.apiKey ? { Authorization: `Bearer ${request.provider.apiKey}` } : {}),
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(120_000)
+      })
+      if (response.ok || !retryableModelStatuses.has(response.status) || attempt === maxAttempts) return response
+
+      onRetry({
+        attempt,
+        maxAttempts,
+        status: response.status,
+        reason: friendlyModelStatus(response.status)
+      })
+      await response.arrayBuffer().catch(() => undefined)
+    } catch (error) {
+      const reason = error instanceof Error && error.name === 'TimeoutError'
+        ? '模型服务在 120 秒内没有响应'
+        : error instanceof Error
+          ? `网络连接异常：${error.message}`
+          : '网络连接异常'
+      if (attempt === maxAttempts) throw new Error(`模型请求阶段失败：${reason}`)
+      onRetry({ attempt, maxAttempts, reason })
+    }
+    await wait([800, 1_800, 3_000][attempt - 1] ?? 3_000)
+  }
+  throw new Error('模型请求阶段失败：已达到自动重试上限')
 }
 
 function ensureRelativePath(input: unknown): string {
@@ -115,7 +202,7 @@ function decodeXmlText(value: string): string {
     .replace(/&amp;/g, '&')
 }
 
-async function extractDocumentText(path: string): Promise<string> {
+export async function extractDocumentText(path: string): Promise<string> {
   const extension = extname(path).toLocaleLowerCase()
   if (extension === '.docx') {
     const result = await mammoth.extractRawText({ path })
@@ -147,6 +234,90 @@ async function extractDocumentText(path: string): Promise<string> {
     }
   }
   throw new Error('read_document 当前支持 .pdf、.docx 和 .pptx')
+}
+
+function escapeXml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;')
+}
+
+function normalizeMarkdownInline(value: string): string {
+  return value
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1（$2）')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/__([^_]+)__/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/~~([^~]+)~~/g, '$1')
+    .trim()
+}
+
+function docxRun(text: string, options: { bold?: boolean; size?: number } = {}): string {
+  const properties = [
+    options.bold ? '<w:b/>' : '',
+    options.size ? `<w:sz w:val="${options.size}"/><w:szCs w:val="${options.size}"/>` : '',
+    '<w:rFonts w:ascii="Aptos" w:hAnsi="Aptos" w:eastAsia="Microsoft YaHei"/>'
+  ].join('')
+  return `<w:r><w:rPr>${properties}</w:rPr><w:t xml:space="preserve">${escapeXml(text)}</w:t></w:r>`
+}
+
+function docxParagraph(text: string, style?: string): string {
+  const paragraphProperties = style ? `<w:pPr><w:pStyle w:val="${style}"/></w:pPr>` : ''
+  return `<w:p>${paragraphProperties}${text ? docxRun(text) : ''}</w:p>`
+}
+
+function markdownToDocxParagraphs(content: string): string {
+  const paragraphs: string[] = []
+  for (const rawLine of content.replace(/\r\n/g, '\n').split('\n')) {
+    const line = rawLine.trim()
+    if (!line) {
+      paragraphs.push('<w:p/>')
+      continue
+    }
+    if (/^[-*_]{3,}$/.test(line)) continue
+    const heading = line.match(/^(#{1,6})\s+(.+)$/)
+    if (heading) {
+      paragraphs.push(docxParagraph(normalizeMarkdownInline(heading[2]), `Heading${Math.min(3, heading[1].length)}`))
+      continue
+    }
+    const bullet = line.match(/^[-*+]\s+(.+)$/)
+    if (bullet) {
+      paragraphs.push(docxParagraph(`• ${normalizeMarkdownInline(bullet[1])}`, 'ListParagraph'))
+      continue
+    }
+    const numbered = line.match(/^(\d+)[.)、]\s*(.+)$/)
+    if (numbered) {
+      paragraphs.push(docxParagraph(`${numbered[1]}. ${normalizeMarkdownInline(numbered[2])}`, 'ListParagraph'))
+      continue
+    }
+    if (/^\|?\s*:?-{3,}/.test(line) && line.includes('|')) continue
+    if (line.includes('|')) {
+      const cells = line.replace(/^\||\|$/g, '').split('|').map((cell) => normalizeMarkdownInline(cell))
+      paragraphs.push(docxParagraph(cells.join('    |    '), 'TableText'))
+      continue
+    }
+    const quote = line.match(/^>\s*(.+)$/)
+    paragraphs.push(docxParagraph(normalizeMarkdownInline(quote?.[1] ?? line), quote ? 'Quote' : undefined))
+  }
+  return paragraphs.join('')
+}
+
+export async function createDocxBuffer(title: string, content: string, author: string): Promise<Buffer> {
+  const archive = new JSZip()
+  const now = new Date().toISOString()
+  const body = [title.trim() ? docxParagraph(title.trim(), 'Title') : '', markdownToDocxParagraphs(content)].join('')
+  archive.file('[Content_Types].xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/><Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/></Types>`)
+  archive.file('_rels/.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/></Relationships>`)
+  archive.file('word/_rels/document.xml.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`)
+  archive.file('word/document.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${body}<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr></w:body></w:document>`)
+  archive.file('word/styles.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Aptos" w:hAnsi="Aptos" w:eastAsia="Microsoft YaHei"/><w:sz w:val="22"/><w:szCs w:val="22"/><w:lang w:val="en-US" w:eastAsia="zh-CN"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="120" w:line="360" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:pPr><w:jc w:val="center"/><w:spacing w:before="240" w:after="360"/></w:pPr><w:rPr><w:b/><w:sz w:val="36"/><w:szCs w:val="36"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:pPr><w:keepNext/><w:spacing w:before="360" w:after="180"/></w:pPr><w:rPr><w:b/><w:sz w:val="30"/><w:szCs w:val="30"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:pPr><w:keepNext/><w:spacing w:before="300" w:after="150"/></w:pPr><w:rPr><w:b/><w:sz w:val="26"/><w:szCs w:val="26"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading3"><w:name w:val="heading 3"/><w:basedOn w:val="Normal"/><w:pPr><w:keepNext/><w:spacing w:before="240" w:after="120"/></w:pPr><w:rPr><w:b/><w:sz w:val="23"/><w:szCs w:val="23"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="ListParagraph"><w:name w:val="List Paragraph"/><w:basedOn w:val="Normal"/><w:pPr><w:ind w:left="420" w:hanging="220"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:basedOn w:val="Normal"/><w:pPr><w:ind w:left="480" w:right="480"/></w:pPr><w:rPr><w:i/><w:color w:val="595959"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="TableText"><w:name w:val="Table Text"/><w:basedOn w:val="Normal"/><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:style></w:styles>`)
+  archive.file('docProps/core.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:title>${escapeXml(title)}</dc:title><dc:creator>${escapeXml(author || 'G-LLM')}</dc:creator><cp:lastModifiedBy>G-LLM</cp:lastModifiedBy><dcterms:created xsi:type="dcterms:W3CDTF">${now}</dcterms:created><dcterms:modified xsi:type="dcterms:W3CDTF">${now}</dcterms:modified></cp:coreProperties>`)
+  archive.file('docProps/app.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"><Application>G-LLM</Application><AppVersion>1.0</AppVersion></Properties>`)
+  return archive.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 6 } })
 }
 
 async function snapshotWorkspace(root: string): Promise<Map<string, string>> {
@@ -267,8 +438,33 @@ async function executeTool(request: WorkspaceAgentRequest, root: string, permiss
     if (info.size > 80 * 1024 * 1024) throw new Error('文档超过 80 MB，当前版本不自动读取')
     const text = await extractDocumentText(target)
     if (!text.trim()) throw new Error('文档中没有提取到可读文字，可能是扫描件或纯图片文档')
-    const truncated = text.length > 350_000
-    return { output: `${text.slice(0, 350_000)}${truncated ? '\n\n[内容过长，已截断]' : ''}` }
+    const offset = Math.max(0, Math.min(text.length, Math.round(Number(args.offset) || 0)))
+    const maxCharacters = Math.max(5_000, Math.min(120_000, Math.round(Number(args.maxCharacters) || 60_000)))
+    const end = Math.min(text.length, offset + maxCharacters)
+    const range = text.slice(offset, end)
+    const continuation = end < text.length ? `\n\n[文档尚未读完：本次范围 ${offset}-${end}，总字符数 ${text.length}；继续读取时传 offset=${end}]` : ''
+    return { output: `${range}${continuation}` }
+  }
+  if (name === 'create_docx') {
+    requireWrite()
+    const target = await resolveWritable(root, args.output)
+    if (extname(target).toLocaleLowerCase() !== '.docx') throw new Error('Word 输出文件必须使用 .docx 扩展名')
+    const content = String(args.content ?? '').trim()
+    if (!content) throw new Error('Word 文档正文不能为空')
+    if (Buffer.byteLength(content) > 900_000) throw new Error('单次生成的 Word 正文不能超过 900 KB')
+    const buffer = await createDocxBuffer(
+      String(args.title ?? '').trim(),
+      content,
+      String(args.author ?? '').trim()
+    )
+    await writeFile(target, buffer)
+    const verifiedText = await extractDocumentText(target)
+    const info = await stat(target)
+    if (!verifiedText.trim() || info.size < 1_000) throw new Error('Word 文档已写入，但重新读取验证失败')
+    return {
+      output: `已生成并验证 ${relative(root, target)}（${info.size} 字节，可读取正文 ${verifiedText.trim().length} 字）`,
+      changedFile: relative(root, target)
+    }
   }
   if (name === 'write_file') {
     requireWrite()
@@ -377,7 +573,7 @@ async function executeTool(request: WorkspaceAgentRequest, root: string, permiss
 }
 
 function activityLabel(tool: string): string {
-  return ({ list_directory: '查看目录', inspect_file: '检查文件', read_file: '读取文件', read_document: '读取文档正文', write_file: '写入文件', replace_text: '修改文件', create_directory: '创建目录', move_file: '移动文件', search_files: '搜索文件', compress_image: '压缩图片', compress_pdf: '压缩 PDF', run_javascript: '运行临时脚本', generate_image: '生成图片' } as Record<string, string>)[tool] ?? tool
+  return ({ list_directory: '查看目录', inspect_file: '检查文件', read_file: '读取文件', read_document: '读取文档正文', create_docx: '生成 Word 文档', write_file: '写入文件', replace_text: '修改文件', create_directory: '创建目录', move_file: '移动文件', search_files: '搜索文件', compress_image: '压缩图片', compress_pdf: '压缩 PDF', run_javascript: '运行临时脚本', generate_image: '生成图片' } as Record<string, string>)[tool] ?? tool
 }
 
 function extractJson(value: string): Record<string, unknown> | null {
@@ -489,27 +685,92 @@ async function runWorkspaceAgentUnlocked(request: WorkspaceAgentRequest, onProgr
   ]
   let nativeToolMode = true
   let needsVerification = false
+  const completeVerifiedArtifacts = (usedLocalFallback = false): WorkspaceAgentResult => {
+    const completedFiles = Array.from(changedFiles)
+    const completionActivity: WorkspaceToolActivity = {
+      id: `local_completion_${randomUUID()}`,
+      tool: 'local_completion',
+      label: '完成工作区任务',
+      status: 'completed',
+      detail: usedLocalFallback
+        ? '文件已生成并验证；最终说明请求未响应，已使用本地结果完成本轮任务'
+        : '文件已生成并验证，已在本地完成结果整理'
+    }
+    activities.push(completionActivity)
+    onProgress?.({ conversationId: request.conversationId, activity: { ...completionActivity } })
+    return {
+      conversationId: request.conversationId,
+      content: `文件已经生成并验证完成。\n\n输出文件：\n${completedFiles.map((file) => `- ${file}`).join('\n')}${usedLocalFallback ? '\n\n最终说明请求未响应，但不影响上述文件。' : ''}`,
+      activities,
+      changedFiles: completedFiles
+    }
+  }
 
   for (let turn = 0; turn < 14; turn += 1) {
-    let response = await fetch(providerUrl(request), {
-      method: 'POST',
-      headers: { ...(request.provider.apiKey ? { Authorization: `Bearer ${request.provider.apiKey}` } : {}), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: request.provider.defaultModel, messages: nativeToolMode ? messages : fallbackMessages(messages), ...(nativeToolMode ? { tools: toolDefinitions, tool_choice: 'auto' } : {}), stream: false, temperature: request.settings.enableTemperature ? Math.min(request.settings.temperature, 0.4) : 0.2, max_tokens: request.settings.enableMaxTokens ? request.settings.maxTokens : 4096 }),
-      signal: AbortSignal.timeout(120_000)
-    })
-    if (!response.ok && nativeToolMode && [400, 404, 422].includes(response.status)) {
-      nativeToolMode = false
-      response = await fetch(providerUrl(request), {
-        method: 'POST',
-        headers: { ...(request.provider.apiKey ? { Authorization: `Bearer ${request.provider.apiKey}` } : {}), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: request.provider.defaultModel, messages: fallbackMessages(messages), stream: false, temperature: 0.1, max_tokens: request.settings.enableMaxTokens ? request.settings.maxTokens : 4096 }),
-        signal: AbortSignal.timeout(120_000)
-      })
+    let retryActivity: WorkspaceToolActivity | null = null
+    const requestModel = async (body: Record<string, unknown>, maxAttempts = 3): Promise<Response> => {
+      try {
+        const response = await fetchModelWithRetry(request, body, (info) => {
+          retryActivity ??= {
+            id: `model_retry_${randomUUID()}`,
+            tool: 'model_request_retry',
+            label: '自动重试模型请求',
+            status: 'running'
+          }
+          retryActivity.detail = `${info.reason}；正在进行第 ${info.attempt + 1}/${info.maxAttempts} 次请求`
+          onProgress?.({ conversationId: request.conversationId, activity: { ...retryActivity } })
+        }, maxAttempts)
+        if (retryActivity) {
+          retryActivity.status = response.ok ? 'completed' : 'failed'
+          retryActivity.detail = response.ok
+            ? `${retryActivity.detail ?? '模型请求已重试'}；连接已恢复`
+            : `${friendlyModelStatus(response.status)}；已达到自动重试上限`
+          activities.push(retryActivity)
+          onProgress?.({ conversationId: request.conversationId, activity: { ...retryActivity } })
+        }
+        return response
+      } catch (error) {
+        if (retryActivity) {
+          retryActivity.status = 'failed'
+          retryActivity.detail = error instanceof Error ? error.message : '自动重试后仍然失败'
+          activities.push(retryActivity)
+          onProgress?.({ conversationId: request.conversationId, activity: { ...retryActivity } })
+        }
+        throw error
+      }
     }
-    if (!response.ok) throw new Error(`工作区 Agent 请求失败：${response.status} ${(await response.text()).slice(0, 300)}`)
-    const payload = await response.json() as { choices?: Array<{ message?: { content?: string | null; tool_calls?: ToolCall[] } }> }
-    const message = payload.choices?.[0]?.message
-    if (!message) throw new Error('模型没有返回可用响应')
+    const isArtifactSummaryRequest = changedFiles.size > 0 && !needsVerification
+    let message: { content?: string | null; tool_calls?: ToolCall[] }
+    try {
+      let response = await requestModel({
+        model: request.provider.defaultModel,
+        messages: nativeToolMode ? messages : fallbackMessages(messages),
+        ...(nativeToolMode ? { tools: toolDefinitions, tool_choice: 'auto' } : {}),
+        stream: false,
+        temperature: request.settings.enableTemperature ? Math.min(request.settings.temperature, 0.4) : 0.2,
+        max_tokens: request.settings.enableMaxTokens ? request.settings.maxTokens : 4096
+      }, isArtifactSummaryRequest ? 1 : 3)
+      if (!response.ok && nativeToolMode && [400, 404, 422].includes(response.status)) {
+        nativeToolMode = false
+        await response.arrayBuffer().catch(() => undefined)
+        retryActivity = null
+        response = await requestModel({
+          model: request.provider.defaultModel,
+          messages: fallbackMessages(messages),
+          stream: false,
+          temperature: 0.1,
+          max_tokens: request.settings.enableMaxTokens ? request.settings.maxTokens : 4096
+        }, isArtifactSummaryRequest ? 1 : 3)
+      }
+      if (!response.ok) throw new Error(`模型请求阶段失败：${await safeResponseError(response)}`)
+      const payload = await response.json() as { choices?: Array<{ message?: { content?: string | null; tool_calls?: ToolCall[] } }> }
+      const responseMessage = payload.choices?.[0]?.message
+      if (!responseMessage) throw new Error('模型没有返回可用响应')
+      message = responseMessage
+    } catch (error) {
+      if (!isArtifactSummaryRequest) throw error
+      return completeVerifiedArtifacts(true)
+    }
     let calls = Array.isArray(message.tool_calls) ? message.tool_calls : []
     if (!nativeToolMode && calls.length === 0) {
       const instruction = extractJson(message.content ?? '')
@@ -564,6 +825,7 @@ async function runWorkspaceAgentUnlocked(request: WorkspaceAgentRequest, onProgr
       }
       onProgress?.({ conversationId: request.conversationId, activity: { ...activity } })
     }
+    if (changedFiles.size > 0 && !needsVerification) return completeVerifiedArtifacts()
   }
   return { conversationId: request.conversationId, content: '已达到本次工作区操作的最大步骤数，请检查当前结果后继续。', activities, changedFiles: Array.from(changedFiles) }
 }

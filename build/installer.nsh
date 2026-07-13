@@ -16,6 +16,33 @@ Var GLLMDataDialog
 Var GLLMDataIntroLabel
 Var GLLMDataInput
 Var GLLMDataBrowseButton
+Var GLLMPreviousVersion
+Var GLLMPreviousUninstallString
+
+LangString GLLMPreviousVersionPrompt 1033 "G-LLM $GLLMPreviousVersion is already installed.$\r$\n$\r$\nThe old version must be uninstalled before this version is installed. Conversations, settings, and other user data will be preserved.$\r$\n$\r$\nContinue?"
+LangString GLLMPreviousVersionPrompt 2052 "检测到已安装 G-LLM V$GLLMPreviousVersion。$\r$\n$\r$\n继续安装前将先卸载旧版本；会话、设置和其他用户数据会保留。$\r$\n$\r$\n是否继续？"
+
+!macro customInit
+  StrCpy $GLLMPreviousVersion ""
+  StrCpy $GLLMPreviousUninstallString ""
+  ReadRegStr $GLLMPreviousUninstallString HKLM "${UNINSTALL_REGISTRY_KEY}" "UninstallString"
+  ReadRegStr $GLLMPreviousVersion HKLM "${UNINSTALL_REGISTRY_KEY}" "DisplayVersion"
+  ${If} $GLLMPreviousUninstallString == ""
+    ReadRegStr $GLLMPreviousUninstallString HKCU "${UNINSTALL_REGISTRY_KEY}" "UninstallString"
+    ReadRegStr $GLLMPreviousVersion HKCU "${UNINSTALL_REGISTRY_KEY}" "DisplayVersion"
+  ${EndIf}
+  ${If} $GLLMPreviousUninstallString != ""
+    ${If} $GLLMPreviousVersion == ""
+      StrCpy $GLLMPreviousVersion "(unknown)"
+    ${EndIf}
+    IfSilent GLLMPreviousVersionConfirmed
+    MessageBox MB_YESNO|MB_ICONINFORMATION|MB_DEFBUTTON1 "$(GLLMPreviousVersionPrompt)" /SD IDYES IDYES GLLMPreviousVersionConfirmed
+    Abort
+    GLLMPreviousVersionConfirmed:
+    # electron-builder calls uninstallOldVersion before extracting the new application.
+    # Its /KEEP_APP_DATA and --updated flags preserve conversations and settings during an upgrade.
+  ${EndIf}
+!macroend
 
 LangString GLLMInstallModePageTitle 1033 "Choose installation mode"
 LangString GLLMInstallModePageTitle 2052 "选择安装模式"

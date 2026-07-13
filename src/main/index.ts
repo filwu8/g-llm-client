@@ -20,6 +20,7 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 import type { AppSettings, ChatRequest, Conversation } from '../shared/types'
+import { checkForAppUpdate, DOWNLOAD_PAGE_URL } from './appUpdate'
 import { pickAttachments, preparePastedAttachments } from './attachments'
 import { captureScreenshot } from './screenshot'
 import { cancelLocalFileTask, executeLocalFileTask, getLocalTaskOutputDirectory, prepareLocalFileTask } from './localFileTasks'
@@ -804,6 +805,10 @@ app.whenReady().then(() => {
   })
 
   ipcMain.handle('app:get-state', () => getAppStateSnapshot())
+  ipcMain.handle('app:check-for-updates', () => checkForAppUpdate(app.getVersion()))
+  ipcMain.handle('app:open-download-page', async () => {
+    await shell.openExternal(DOWNLOAD_PAGE_URL)
+  })
 
   ipcMain.handle('storage:get-data-location', () => getDataLocationInfo())
   ipcMain.handle('storage:open-data-directory', async () => {

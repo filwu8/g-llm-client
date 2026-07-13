@@ -13,6 +13,7 @@ export interface ChatMessage {
   workspaceActivities?: WorkspaceToolActivity[]
   workspaceChangedFiles?: string[]
   workspaceArtifactRoot?: string
+  retryAttempts?: MessageRetryAttempt[]
   translation?: string
   tokenCount?: number
   inputTokens?: number
@@ -31,6 +32,12 @@ export interface PreparedAttachment {
   text?: string
   dataUrl?: string
   localExecutable?: boolean
+}
+
+export interface MessageRetryAttempt {
+  attemptedAt: number
+  error: string
+  activities?: WorkspaceToolActivity[]
 }
 
 export type LocalTaskStatus = 'awaiting-approval' | 'running' | 'completed' | 'partial' | 'failed' | 'cancelled'
@@ -469,6 +476,17 @@ export interface ConversationChangeEvent {
   action: 'saved' | 'deleted'
   conversationId: string
   conversations: Conversation[]
+}
+
+export interface AppUpdateInfo {
+  currentVersion: string
+  latestVersion?: string
+  updateAvailable: boolean
+  status: 'available' | 'latest' | 'unavailable'
+  downloadPageUrl: string
+  releaseNotes?: string
+  updatedAt?: string
+  message: string
 }
 
 export interface AppStateSnapshot {

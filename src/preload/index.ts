@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 
 import type {
   ApiProvider,
+  AppUpdateInfo,
   AppSettings,
   AppStateSnapshot,
   AttachmentKind,
@@ -36,6 +37,8 @@ import type {
 const api = {
   platform: process.platform,
   getState: (): Promise<AppStateSnapshot> => ipcRenderer.invoke('app:get-state'),
+  checkForUpdates: (): Promise<AppUpdateInfo> => ipcRenderer.invoke('app:check-for-updates'),
+  openDownloadPage: (): Promise<void> => ipcRenderer.invoke('app:open-download-page'),
   saveSettings: (settings: AppSettings): Promise<AppSettings> => ipcRenderer.invoke('settings:save', settings),
   saveProvider: (provider: ApiProvider): Promise<ApiProvider> => ipcRenderer.invoke('provider:save', provider),
   deleteProvider: (id: string): Promise<void> => ipcRenderer.invoke('provider:delete', id),
