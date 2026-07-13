@@ -267,7 +267,7 @@ function createWindow(): BrowserWindow {
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 820,
-    minWidth: 980,
+    minWidth: 1100,
     minHeight: 680,
     title: '无极界',
     backgroundColor: getSettings().theme === 'dark' ? '#0f172a' : '#f4f7f6',
