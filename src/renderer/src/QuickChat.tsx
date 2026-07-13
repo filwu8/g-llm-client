@@ -169,6 +169,7 @@ export default function QuickChat() {
   const isWindows = window.gllm.platform === 'win32'
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const [goldThemeEntitled, setGoldThemeEntitled] = useState(false)
+  const [goldThemeEntitlementChecked, setGoldThemeEntitlementChecked] = useState(false)
   const [providers, setProviders] = useState<ApiProvider[]>([DEFAULT_PROVIDER])
   const [assistants, setAssistants] = useState<Assistant[]>(DEFAULT_ASSISTANTS)
   const [conversations, setConversations] = useState<Conversation[]>([])
@@ -222,10 +223,12 @@ export default function QuickChat() {
       const result = await window.gllm.checkThemeEntitlement(candidate)
       if (result.ok && result.eligible) {
         setGoldThemeEntitled(true)
+        setGoldThemeEntitlementChecked(true)
         return
       }
     }
     setGoldThemeEntitled(false)
+    setGoldThemeEntitlementChecked(true)
   }
 
   useEffect(() => {
@@ -252,8 +255,8 @@ export default function QuickChat() {
   }, [])
 
   useEffect(() => {
-    if (settings) applyDocumentTheme(settings.theme, goldThemeEntitled)
-  }, [goldThemeEntitled, settings?.theme])
+    if (settings) applyDocumentTheme(settings.theme, goldThemeEntitled || !goldThemeEntitlementChecked)
+  }, [goldThemeEntitled, goldThemeEntitlementChecked, settings?.theme])
 
   useEffect(() => {
     return window.gllm.onSettingsChanged((nextSettings) => {

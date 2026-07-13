@@ -270,7 +270,8 @@ function createWindow(): BrowserWindow {
     minWidth: 1100,
     minHeight: 680,
     title: '无极界',
-    backgroundColor: getSettings().theme === 'dark' ? '#0f172a' : '#f4f7f6',
+    backgroundColor:
+      getSettings().theme === 'dark' ? '#0f172a' : getSettings().theme === 'gold' ? '#1c1008' : '#f4f7f6',
     autoHideMenuBar: true,
     skipTaskbar: false,
     icon: getAppIconPath(),

@@ -901,8 +901,8 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    if (settings) applyDocumentTheme(settings.theme, goldThemeEntitled)
-  }, [goldThemeEntitled, settings?.theme])
+    if (settings) applyDocumentTheme(settings.theme, goldThemeEntitled || !goldThemeEntitlementChecked)
+  }, [goldThemeEntitled, goldThemeEntitlementChecked, settings?.theme])
 
   useEffect(() => {
     void window.gllm.setActiveAssistantId(activeAssistantId)

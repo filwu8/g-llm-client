@@ -1213,6 +1213,10 @@ img.space-logo {
   box-shadow: 0 6px 18px hsl(var(--shadow-color) / 0.04);
 }
 
+.message.user .markdown-body p {
+  white-space: pre-wrap;
+}
+
 .message.assistant .message-bubble {
   border: 1px solid hsl(var(--border));
   background: hsl(var(--card));
@@ -6185,6 +6189,10 @@ img.space-logo {
 .quick-message.message-error .quick-message-bubble {
   border-color: hsl(var(--destructive-border));
   background: hsl(var(--destructive-background));
+}
+
+.quick-message.user .quick-message-bubble p {
+  white-space: pre-wrap;
 }
 
 .quick-message-bubble p,
