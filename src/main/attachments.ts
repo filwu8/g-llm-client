@@ -12,6 +12,7 @@ const maxDocumentBytes = 12 * 1024 * 1024
 const maxImageBytes = 8 * 1024 * 1024
 const maxImageSide = 2048
 const sendableImageMimeTypes = new Set(['image/png', 'image/jpeg', 'image/webp'])
+const selectedAttachmentPaths = new Map<string, string>()
 
 const textExtensions = new Set([
   '.txt',
@@ -243,7 +244,13 @@ async function readAttachment(filePath: string, kind: AttachmentKind): Promise<P
     name: basename(filePath),
     mimeType,
     size: fileStat.size,
-    kind: actualKind
+    kind: actualKind,
+    localExecutable: true
+  }
+  selectedAttachmentPaths.set(base.id, filePath)
+  if (selectedAttachmentPaths.size > 200) {
+    const oldestId = selectedAttachmentPaths.keys().next().value
+    if (oldestId) selectedAttachmentPaths.delete(oldestId)
   }
 
   if (actualKind === 'image') {
@@ -281,6 +288,10 @@ async function readAttachment(filePath: string, kind: AttachmentKind): Promise<P
   }
 
   return base
+}
+
+export function getSelectedAttachmentPath(attachmentId: string): string | undefined {
+  return selectedAttachmentPaths.get(attachmentId)
 }
 
 function getClipboardAttachmentName(input: ClipboardAttachmentInput, index: number): string {

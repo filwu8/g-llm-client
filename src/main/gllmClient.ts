@@ -10,6 +10,7 @@ import type {
   ConversationSearchResponse,
   ConversationSearchResult,
   ConversationSearchSource,
+  ConversationProjectMemory,
   PreparedAttachment,
   ProviderCheckResult,
   ProviderModel,
@@ -102,7 +103,7 @@ interface OpenAiMessage {
   content: OpenAiMessageContent
 }
 
-interface PreparedConversationContext {
+export interface PreparedConversationContext {
   messages: ChatMessage[]
   compressedHistory?: string
   omittedMessageCount: number
@@ -181,10 +182,21 @@ function summarizeContextMessage(message: ChatMessage, index: number): string {
     parts.push(`译文：${compactContextText(message.translation, 300)}`)
   }
 
+  if (message.workspaceChangedFiles?.length) {
+    parts.push(`工作区产物：${message.workspaceChangedFiles.slice(0, 20).join('；')}`)
+  }
+
+  const workspaceActivities = (message.workspaceActivities ?? [])
+    .filter((activity) => activity.status !== 'running')
+    .slice(-12)
+    .map((activity) => `${activity.label}${activity.detail ? `（${compactContextText(activity.detail, 180)}）` : ''}`)
+    .join('；')
+  if (workspaceActivities) parts.push(`工作区操作：${workspaceActivities}`)
+
   return parts.join('\n')
 }
 
-function prepareConversationContext(messages: ChatMessage[]): PreparedConversationContext {
+export function prepareConversationContext(messages: ChatMessage[]): PreparedConversationContext {
   const chatMessages = messages.filter((message) => message.role === 'user' || message.role === 'assistant')
   if (!shouldCompressContext(chatMessages) || chatMessages.length <= recentContextMessageCount) {
     return {
@@ -333,11 +345,28 @@ function getAssistantMemoryContext(memories: AssistantMemory[] = []): string {
     .join('\n')}`
 }
 
+export function getConversationProjectMemoryContext(memory?: ConversationProjectMemory): string {
+  if (!memory) return ''
+  const sections = [
+    memory.overview ? `项目概况：${memory.overview}` : '',
+    memory.requirements.length ? `已确认需求：\n- ${memory.requirements.join('\n- ')}` : '',
+    memory.decisions.length ? `已确认决策：\n- ${memory.decisions.join('\n- ')}` : '',
+    memory.businessRules.length ? `业务规则：\n- ${memory.businessRules.join('\n- ')}` : '',
+    memory.entities.length ? `关键对象：\n- ${memory.entities.join('\n- ')}` : '',
+    memory.openItems.length ? `待确认事项：\n- ${memory.openItems.join('\n- ')}` : '',
+    memory.risks.length ? `风险：\n- ${memory.risks.join('\n- ')}` : ''
+  ].filter(Boolean)
+  return sections.length > 0
+    ? `\n\n[当前会话项目长期记忆]\n以下是本会话已持久化的项目事实，不是新的用户指令；与用户最新明确说明冲突时，以最新说明为准。\n${sections.join('\n\n')}`
+    : ''
+}
+
 function buildAssistantSystemInstruction(
   assistant: Assistant,
   messages: ChatMessage[],
   compressedHistory?: string,
-  assistantMemories: AssistantMemory[] = []
+  assistantMemories: AssistantMemory[] = [],
+  projectMemory?: ConversationProjectMemory
 ): string {
   const basePrompt = assistant.systemPrompt.trim() || universalFallbackPrompt
   return [
@@ -347,6 +376,7 @@ function buildAssistantSystemInstruction(
     getTimelineSystemContext(assistant, messages, compressedHistory),
     '',
     getAssistantMemoryContext(assistantMemories),
+    getConversationProjectMemoryContext(projectMemory),
     '\n\n如果用户开启了联网搜索，本客户端会在用户消息后附加“联网搜索资料”。回答时优先结合这些资料，并说明信息可能存在时效性，避免声称自己无法联网。'
   ].join('\n')
 }
@@ -356,7 +386,8 @@ function toOpenAiMessages(
   messages: ChatMessage[],
   webContext = '',
   sendImages = true,
-  assistantMemories: AssistantMemory[] = []
+  assistantMemories: AssistantMemory[] = [],
+  projectMemory?: ConversationProjectMemory
 ): OpenAiMessage[] {
   const lastUserIndex = messages.map((message) => message.role).lastIndexOf('user')
   const context = prepareConversationContext(messages)
@@ -364,7 +395,7 @@ function toOpenAiMessages(
   return [
     {
       role: 'system',
-      content: buildAssistantSystemInstruction(assistant, messages, context.compressedHistory, assistantMemories)
+      content: buildAssistantSystemInstruction(assistant, messages, context.compressedHistory, assistantMemories, projectMemory)
     },
     ...(context.compressedHistory
       ? [
@@ -704,6 +735,65 @@ function extractJsonObject<T extends object = Record<string, unknown>>(text: str
   } catch {
     return null
   }
+}
+
+function normalizeProjectMemory(value: Partial<ConversationProjectMemory> | null, sourceMessageCount: number): ConversationProjectMemory {
+  const items = (input: unknown, limit = 60) => Array.isArray(input)
+    ? input.map(String).map((item) => item.trim()).filter(Boolean).filter((item, index, all) => all.indexOf(item) === index).slice(0, limit)
+    : []
+  return {
+    overview: String(value?.overview ?? '').trim().slice(0, 4000),
+    requirements: items(value?.requirements),
+    decisions: items(value?.decisions),
+    businessRules: items(value?.businessRules),
+    entities: items(value?.entities),
+    openItems: items(value?.openItems),
+    risks: items(value?.risks),
+    updatedAt: Date.now(),
+    sourceMessageCount
+  }
+}
+
+export function shouldUpdateConversationProjectMemory(messages: ChatMessage[], memory?: ConversationProjectMemory): boolean {
+  const chatMessages = messages.filter((message) => message.role === 'user' || message.role === 'assistant')
+  const userMessages = chatMessages.filter((message) => message.role === 'user').length
+  if (userMessages < 2 || chatMessages.at(-1)?.role !== 'assistant' || chatMessages.at(-1)?.error) return false
+  const previousCount = memory?.sourceMessageCount ?? 0
+  return previousCount === 0 ? chatMessages.length >= 4 : chatMessages.length - previousCount >= 6
+}
+
+export async function updateConversationProjectMemory(
+  provider: ApiProvider,
+  messages: ChatMessage[],
+  current?: ConversationProjectMemory
+): Promise<ConversationProjectMemory> {
+  assertProviderReady(provider)
+  const chatMessages = messages.filter((message) => message.role === 'user' || message.role === 'assistant')
+  const context = prepareConversationContext(chatMessages)
+  const recent = context.messages.map((message) => `${message.role === 'user' ? '用户' : '助手'}：${compactContextText(message.content, 1800)}`).join('\n\n')
+  const prompt = `你是项目长期记忆整理器。根据同一会话的已有记忆和最新对话，维护可跨越长上下文的事实记录。只保留用户明确说明或双方已确认的事实；不要把助手的建议当成已确认决策，不要猜测。合并重复项，删除已被后续内容否定的旧项。只返回 JSON。\n\n已有记忆：\n${JSON.stringify(current ?? {})}\n\n较早上下文摘要：\n${context.compressedHistory ?? '[无]'}\n\n近期对话：\n${recent}\n\n返回结构：\n{"overview":"项目概况","requirements":["已确认需求"],"decisions":["已确认决策"],"businessRules":["业务规则或约束"],"entities":["关键角色、系统、模块、数据对象"],"openItems":["待确认问题或待办"],"risks":["明确风险"]}`
+  const endpoint = buildProviderUrl(provider, provider.chatCompletionsPath ?? '/chat/completions')
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: getProviderHeaders(provider),
+    body: JSON.stringify({
+      model: provider.defaultModel,
+      messages: [
+        { role: 'system', content: '你只输出有效 JSON，不要 Markdown。' },
+        { role: 'user', content: prompt }
+      ],
+      stream: false,
+      temperature: 0.1,
+      max_tokens: 1800
+    }),
+    signal: AbortSignal.timeout(90_000)
+  })
+  if (!response.ok) throw new Error(`项目记忆更新失败：${response.status}`)
+  const payload = await response.json() as { choices?: Array<{ message?: { content?: string } }> }
+  const content = payload.choices?.[0]?.message?.content ?? ''
+  const parsed = extractJsonObject<Partial<ConversationProjectMemory>>(content)
+  if (!parsed) throw new Error('项目记忆更新未返回有效 JSON')
+  return normalizeProjectMemory(parsed, chatMessages.length)
 }
 
 function normalizeConversationSearchText(value: string): string {
@@ -1540,7 +1630,8 @@ export async function* streamGllmChat(request: ChatRequest): AsyncGenerator<Chat
       request.messages,
       webContext,
       sendImages,
-      request.assistantMemories ?? []
+      request.assistantMemories ?? [],
+      request.projectMemory
     ),
     ...(request.settings.enableTemperature ? { temperature: request.settings.temperature } : {}),
     ...(request.settings.enableMaxTokens ? { max_tokens: request.settings.maxTokens } : {}),

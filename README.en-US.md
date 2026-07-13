@@ -15,6 +15,8 @@ G-LLM Client is a cross-platform desktop AI client built by GPROPHET LIMITED for
 - Streaming chat, starter prompts, Markdown rendering, conversation history, local persistence, and token display.
 - Local-first features including lightweight knowledge base, assistant memory, local data storage, and data import/export.
 - Attachments and visual inputs including files, images, pasted clipboard content, system screenshots, and image copy to the system clipboard.
+- Local file tasks that compress images or PDFs to a requested byte limit with approval, PDF rasterization warnings, non-destructive output, and per-file verification.
+- Conversation workspaces that grant a single conversation controlled access to inspect, search, create, and modify files with a visible tool activity timeline.
 - Web search and tool configuration so retrieved source material can be injected into the conversation context.
 - Privacy-friendly anonymous telemetry. The client only sends anonymous metadata and does not collect chat content, API keys, file content, screenshot content, knowledge base content, or memory content. Users can disable telemetry in settings.
 

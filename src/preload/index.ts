@@ -20,11 +20,17 @@ import type {
   DataLocationChangeResult,
   DataLocationInfo,
   KnowledgeNote,
+  LocalTaskPlan,
+  LocalTaskProgress,
+  LocalTaskResult,
   PreparedAttachment,
   Project,
   ProviderCheckResult,
   ThemeEntitlementResult,
-  ToolConfig
+  ToolConfig,
+  WorkspaceAgentProgress,
+  WorkspaceAgentRequest,
+  WorkspaceAgentResult
 } from '../shared/types'
 
 const api = {
@@ -41,6 +47,11 @@ const api = {
   setActiveProjectId: (id: string): Promise<AppStateSnapshot> => ipcRenderer.invoke('project:set-active', id),
   saveProject: (project: Project): Promise<{ saved: Project; state: AppStateSnapshot }> =>
     ipcRenderer.invoke('project:save', project),
+  chooseWorkspaceDirectory: (): Promise<string | null> => ipcRenderer.invoke('project:choose-workspace'),
+  runWorkspaceAgent: (request: WorkspaceAgentRequest): Promise<WorkspaceAgentResult> =>
+    ipcRenderer.invoke('workspace-agent:run', request),
+  revealWorkspaceFile: (rootPath: string, relativePath: string): Promise<void> =>
+    ipcRenderer.invoke('workspace:reveal-file', rootPath, relativePath),
   deleteProject: (id: string): Promise<AppStateSnapshot> => ipcRenderer.invoke('project:delete', id),
   saveAssistant: (assistant: Assistant): Promise<Assistant> => ipcRenderer.invoke('assistant:save', assistant),
   deleteAssistant: (id: string): Promise<void> => ipcRenderer.invoke('assistant:delete', id),
@@ -60,6 +71,11 @@ const api = {
   pickAttachments: (kind: AttachmentKind): Promise<PreparedAttachment[]> => ipcRenderer.invoke('attachment:pick', kind),
   preparePastedAttachments: (inputs: ClipboardAttachmentInput[]): Promise<PreparedAttachment[]> =>
     ipcRenderer.invoke('attachment:prepare-pasted', inputs),
+  prepareLocalFileTask: (request: string, attachmentIds: string[]): Promise<LocalTaskPlan> =>
+    ipcRenderer.invoke('local-task:prepare', request, attachmentIds),
+  executeLocalFileTask: (planId: string): Promise<LocalTaskResult> => ipcRenderer.invoke('local-task:execute', planId),
+  cancelLocalFileTask: (planId: string): Promise<void> => ipcRenderer.invoke('local-task:cancel', planId),
+  openLocalTaskOutput: (planId: string): Promise<void> => ipcRenderer.invoke('local-task:open-output', planId),
   captureScreenshot: (): Promise<PreparedAttachment | null> => ipcRenderer.invoke('attachment:screenshot'),
   copyImageToClipboard: (dataUrl: string): Promise<void> => ipcRenderer.invoke('clipboard:copy-image', dataUrl),
   getDataLocation: (): Promise<DataLocationInfo> => ipcRenderer.invoke('storage:get-data-location'),
@@ -96,6 +112,16 @@ const api = {
     const handler = (_event: Electron.IpcRendererEvent, chunk: ChatChunk) => listener(chunk)
     ipcRenderer.on('chat:chunk', handler)
     return () => ipcRenderer.removeListener('chat:chunk', handler)
+  },
+  onLocalTaskProgress: (listener: (progress: LocalTaskProgress) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, progress: LocalTaskProgress) => listener(progress)
+    ipcRenderer.on('local-task:progress', handler)
+    return () => ipcRenderer.removeListener('local-task:progress', handler)
+  },
+  onWorkspaceAgentProgress: (listener: (progress: WorkspaceAgentProgress) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, progress: WorkspaceAgentProgress) => listener(progress)
+    ipcRenderer.on('workspace-agent:progress', handler)
+    return () => ipcRenderer.removeListener('workspace-agent:progress', handler)
   },
   onConversationChanged: (listener: (event: ConversationChangeEvent) => void): (() => void) => {
     const handler = (_event: Electron.IpcRendererEvent, change: ConversationChangeEvent) => listener(change)

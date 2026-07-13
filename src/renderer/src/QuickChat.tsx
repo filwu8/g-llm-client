@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, AtSign, Copy, ExternalLink, MessageSquarePlus, Minus, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, AtSign, Copy, ExternalLink, MessageSquarePlus, Minus, RefreshCw, X } from 'lucide-react'
 import {
   type KeyboardEvent,
   type MouseEvent as ReactMouseEvent,
@@ -126,6 +126,7 @@ function applyChatChunk(conversation: Conversation, chunk: ChatChunk): Conversat
     messages[messages.length - 1] = {
       ...last,
       content,
+      error: chunk.error ?? last.error,
       webSearch: chunk.webSearch ?? last.webSearch,
       tokenCount: chunk.usage?.totalTokens ?? estimateTokenCount(content),
       inputTokens: chunk.usage?.inputTokens ?? last.inputTokens,
@@ -134,6 +135,7 @@ function applyChatChunk(conversation: Conversation, chunk: ChatChunk): Conversat
   } else {
     messages.push({
       ...createMessage('assistant', nextContent),
+      error: chunk.error,
       webSearch: chunk.webSearch,
       tokenCount: chunk.usage?.totalTokens ?? estimateTokenCount(nextContent),
       inputTokens: chunk.usage?.inputTokens ?? 0,
@@ -433,6 +435,45 @@ export default function QuickChat() {
     setStatus('')
   }
 
+  function retryMessage(messageId: string) {
+    if (!settings || isStreaming || !conversation) return
+
+    if (needsApiKey) {
+      setStatus(`请先在主窗口配置 ${selectedProvider.name} API Key`)
+      void openMainWindow()
+      return
+    }
+
+    const messageIndex = conversation.messages.findIndex((message) => message.id === messageId)
+    if (messageIndex <= 0) return
+
+    const messages = conversation.messages.slice(0, messageIndex)
+    if (!messages.some((message) => message.role === 'user')) return
+
+    const nextConversation: Conversation = {
+      ...conversation,
+      messages,
+      modelProviderId: selectedProvider.id,
+      modelId: selectedProvider.defaultModel,
+      updatedAt: Date.now()
+    }
+
+    setStatus('')
+    setIsStreaming(true)
+    setConversation(nextConversation)
+    setConversations((current) => [nextConversation, ...current.filter((item) => item.id !== nextConversation.id)])
+    conversationRef.current = nextConversation
+    void window.gllm.saveConversation(nextConversation)
+    window.gllm.streamChat({
+      conversationId: nextConversation.id,
+      assistant,
+      assistantMemories,
+      provider: selectedProvider,
+      messages: nextConversation.messages,
+      settings
+    })
+  }
+
   function sendMessage(content = draft) {
     if (!settings || isStreaming) return
 
@@ -598,6 +639,17 @@ export default function QuickChat() {
             >
               <div className="quick-message-bubble">
                 <MarkdownMessage content={message.content || (message.role === 'assistant' ? '正在思考...' : '')} />
+                {message.error && (
+                  <button
+                    className="message-retry-button"
+                    disabled={isStreaming}
+                    type="button"
+                    onClick={() => retryMessage(message.id)}
+                  >
+                    <RefreshCw size={15} />
+                    <span>{'\u91cd\u65b0\u53d1\u9001'}</span>
+                  </button>
+                )}
               </div>
             </article>
           ))

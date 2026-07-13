@@ -6,9 +6,13 @@ export interface ChatMessage {
   id: string
   role: Role
   content: string
+  error?: string
   attachments?: PreparedAttachment[]
   knowledgeRefs?: KnowledgeReference[]
   webSearch?: WebSearchActivity
+  workspaceActivities?: WorkspaceToolActivity[]
+  workspaceChangedFiles?: string[]
+  workspaceArtifactRoot?: string
   translation?: string
   tokenCount?: number
   inputTokens?: number
@@ -26,6 +30,58 @@ export interface PreparedAttachment {
   kind: AttachmentKind
   text?: string
   dataUrl?: string
+  localExecutable?: boolean
+}
+
+export type LocalTaskStatus = 'awaiting-approval' | 'running' | 'completed' | 'partial' | 'failed' | 'cancelled'
+
+export interface LocalTaskFilePlan {
+  attachmentId: string
+  name: string
+  mimeType: string
+  originalSize: number
+  supported: boolean
+  action: 'compress-image' | 'compress-pdf' | 'copy' | 'unsupported'
+  warning?: string
+}
+
+export interface LocalTaskPlan {
+  id: string
+  request: string
+  targetBytes: number
+  targetLabel: string
+  status: LocalTaskStatus
+  files: LocalTaskFilePlan[]
+  outputDirectoryName: string
+  createdAt: number
+}
+
+export interface LocalTaskArtifact {
+  attachmentId: string
+  sourceName: string
+  outputName?: string
+  originalSize: number
+  outputSize?: number
+  outputPath?: string
+  success: boolean
+  verified: boolean
+  message: string
+}
+
+export interface LocalTaskProgress {
+  planId: string
+  current: number
+  total: number
+  message: string
+}
+
+export interface LocalTaskResult {
+  planId: string
+  status: LocalTaskStatus
+  targetBytes: number
+  outputDirectory?: string
+  artifacts: LocalTaskArtifact[]
+  completedAt: number
 }
 
 export interface ClipboardAttachmentInput {
@@ -99,6 +155,8 @@ export interface Conversation {
   messages: ChatMessage[]
   modelProviderId?: string
   modelId?: string
+  workspace?: ConversationWorkspace
+  projectMemory?: ConversationProjectMemory
   totalTokens?: number
   totalInputTokens?: number
   totalOutputTokens?: number
@@ -266,8 +324,59 @@ export interface Project {
   logoDataUrl?: string
   modelProviderId?: string
   modelId?: string
+  workspacePath?: string
+  workspacePermission?: 'read' | 'read-write'
   createdAt: number
   updatedAt: number
+}
+
+export interface ConversationProjectMemory {
+  overview: string
+  requirements: string[]
+  decisions: string[]
+  businessRules: string[]
+  entities: string[]
+  openItems: string[]
+  risks: string[]
+  updatedAt: number
+  sourceMessageCount: number
+}
+
+export interface ConversationWorkspace {
+  rootPath: string
+  displayName: string
+  permission: 'read' | 'read-write'
+  grantedAt: number
+  lastVerifiedAt: number
+}
+
+export interface WorkspaceToolActivity {
+  id: string
+  tool: string
+  label: string
+  status: 'running' | 'completed' | 'failed'
+  detail?: string
+}
+
+export interface WorkspaceAgentRequest {
+  conversationId: string
+  workspace: ConversationWorkspace
+  provider: ApiProvider
+  messages: ChatMessage[]
+  settings: AppSettings
+  projectMemory?: ConversationProjectMemory
+}
+
+export interface WorkspaceAgentProgress {
+  conversationId: string
+  activity: WorkspaceToolActivity
+}
+
+export interface WorkspaceAgentResult {
+  conversationId: string
+  content: string
+  activities: WorkspaceToolActivity[]
+  changedFiles: string[]
 }
 
 export interface AssistantSuggestion {
@@ -329,6 +438,7 @@ export interface ChatRequest {
   conversationId: string
   assistant: Assistant
   assistantMemories?: AssistantMemory[]
+  projectMemory?: ConversationProjectMemory
   provider: ApiProvider
   messages: ChatMessage[]
   settings: AppSettings

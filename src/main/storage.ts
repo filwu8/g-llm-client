@@ -3,7 +3,7 @@ import Store from 'electron-store'
 import JSZip from 'jszip'
 import { randomUUID } from 'node:crypto'
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 
 import { DEFAULT_ASSISTANTS } from '../shared/assistants'
 import { inferModelType, normalizeModelCapabilities } from '../shared/modelCapabilities'
@@ -628,6 +628,8 @@ function sanitizeProject(project: Project): Project {
     logoDataUrl: isDefaultProject ? undefined : sanitizeProjectLogo(project.logoDataUrl),
     modelProviderId: project.modelProviderId?.trim() || undefined,
     modelId: project.modelId?.trim() || undefined,
+    workspacePath: project.workspacePath?.trim() || undefined,
+    workspacePermission: project.workspacePath ? 'read-write' : undefined,
     createdAt: Number.isFinite(project.createdAt) ? Number(project.createdAt) : now,
     updatedAt: now
   }
@@ -836,6 +838,12 @@ function sanitizeAppTheme(value: unknown): AppTheme {
 
 function sanitizeMessage(message: ChatMessage): ChatMessage {
   const role = message.role === 'assistant' || message.role === 'user' || message.role === 'system' ? message.role : 'user'
+  const content = String(message.content ?? '')
+  const inferredError =
+    message.error?.trim() ||
+    (role === 'assistant'
+      ? content.match(/^(?:\u8bf7\u6c42\u5931\u8d25|\u53d1\u9001\u5931\u8d25)\uff1a(.+)$/)?.[1]?.trim()
+      : undefined)
   const translation = message.translation?.trim()
   const attachments = (message.attachments ?? [])
     .map(sanitizeAttachment)
@@ -849,10 +857,20 @@ function sanitizeMessage(message: ChatMessage): ChatMessage {
   return {
     id: message.id?.trim() || `msg_${Date.now()}_${Math.random().toString(16).slice(2)}`,
     role,
-    content: String(message.content ?? ''),
+    content,
+    error: inferredError || undefined,
     attachments: attachments.length > 0 ? attachments : undefined,
     knowledgeRefs: knowledgeRefs.length > 0 ? knowledgeRefs : undefined,
     webSearch: sanitizeWebSearchActivity(message.webSearch),
+    workspaceActivities: (message.workspaceActivities ?? []).slice(0, 80).map((activity) => ({
+      id: String(activity.id ?? '').trim() || `activity_${Date.now()}`,
+      tool: String(activity.tool ?? '').trim(),
+      label: String(activity.label ?? '').trim() || '工作区操作',
+      status: activity.status === 'running' || activity.status === 'failed' ? activity.status : 'completed',
+      detail: activity.detail ? String(activity.detail).slice(0, 500) : undefined
+    })),
+    workspaceChangedFiles: (message.workspaceChangedFiles ?? []).map(String).filter(Boolean).slice(0, 100),
+    workspaceArtifactRoot: message.workspaceArtifactRoot?.trim() || undefined,
     translation: translation || undefined,
     tokenCount: sanitizeTokenCount(message.tokenCount),
     inputTokens: sanitizeTokenCount(message.inputTokens),
@@ -863,7 +881,30 @@ function sanitizeMessage(message: ChatMessage): ChatMessage {
 
 function sanitizeConversation(conversation: Conversation, fallbackProjectId = getActiveProjectId()): Conversation {
   const now = Date.now()
-  const messages = (conversation.messages ?? []).map(sanitizeMessage)
+  const workspace =
+    conversation.workspace?.rootPath?.trim()
+      ? {
+          rootPath: conversation.workspace.rootPath.trim(),
+          displayName: conversation.workspace.displayName?.trim() || basename(conversation.workspace.rootPath),
+          permission: conversation.workspace.permission === 'read' ? 'read' as const : 'read-write' as const,
+          grantedAt: Number.isFinite(conversation.workspace.grantedAt) ? conversation.workspace.grantedAt : now,
+          lastVerifiedAt: Number.isFinite(conversation.workspace.lastVerifiedAt) ? conversation.workspace.lastVerifiedAt : now
+        }
+      : undefined
+  const messages = (conversation.messages ?? []).map(sanitizeMessage).map((message) => {
+    if (message.role !== 'assistant' || !workspace || (message.workspaceChangedFiles?.length ?? 0) > 0) return message
+    const candidates = Array.from(message.content.matchAll(/`([^`\r\n]+\.(?:pdf|png|jpe?g|webp|gif|docx?|xlsx?|pptx?|zip|txt|md|csv|json|html?|css|jsx?|tsx?|py))`/gi))
+      .map((match) => match[1].trim())
+      .filter((file, index, files) => files.indexOf(file) === index)
+      .filter((file) => {
+        if (isAbsolute(file)) return false
+        const target = resolve(workspace.rootPath, file)
+        return isPathInside(target, workspace.rootPath) && existsSync(target) && statSync(target).isFile()
+      })
+    return candidates.length > 0
+      ? { ...message, workspaceChangedFiles: candidates, workspaceArtifactRoot: workspace.rootPath }
+      : message
+  })
   const totalTokens =
     sanitizeTokenCount(conversation.totalTokens) ??
     messages.reduce((sum, message) => sum + (sanitizeTokenCount(message.tokenCount) ?? 0), 0)
@@ -873,6 +914,23 @@ function sanitizeConversation(conversation: Conversation, fallbackProjectId = ge
   const totalOutputTokens =
     sanitizeTokenCount(conversation.totalOutputTokens) ??
     messages.reduce((sum, message) => sum + (sanitizeTokenCount(message.outputTokens) ?? 0), 0)
+  const memory = conversation.projectMemory
+  const sanitizeMemoryItems = (items: unknown, limit: number) => Array.isArray(items)
+    ? items.map(String).map((item) => item.trim()).filter(Boolean).slice(0, limit)
+    : []
+  const projectMemory = memory && typeof memory === 'object'
+    ? {
+        overview: String(memory.overview ?? '').trim().slice(0, 4000),
+        requirements: sanitizeMemoryItems(memory.requirements, 80),
+        decisions: sanitizeMemoryItems(memory.decisions, 80),
+        businessRules: sanitizeMemoryItems(memory.businessRules, 80),
+        entities: sanitizeMemoryItems(memory.entities, 80),
+        openItems: sanitizeMemoryItems(memory.openItems, 80),
+        risks: sanitizeMemoryItems(memory.risks, 80),
+        updatedAt: Number.isFinite(memory.updatedAt) ? Number(memory.updatedAt) : now,
+        sourceMessageCount: Number.isFinite(memory.sourceMessageCount) ? Math.max(0, Number(memory.sourceMessageCount)) : 0
+      }
+    : undefined
 
   return {
     ...conversation,
@@ -883,6 +941,8 @@ function sanitizeConversation(conversation: Conversation, fallbackProjectId = ge
     messages,
     modelProviderId: conversation.modelProviderId?.trim() || undefined,
     modelId: conversation.modelId?.trim() || undefined,
+    workspace,
+    projectMemory,
     totalTokens,
     totalInputTokens,
     totalOutputTokens,
@@ -1162,6 +1222,13 @@ export function getConversations(projectId = getActiveProjectId()): Conversation
 export function saveConversation(conversation: Conversation, projectId = getActiveProjectId()): Conversation {
   const normalized = sanitizeConversation(conversation, projectId)
   const conversations = getAllConversations()
+  if (normalized.workspace) {
+    const workspaceKey = normalizePathForCompare(normalized.workspace.rootPath)
+    const conflict = conversations.find(
+      (item) => item.id !== normalized.id && item.workspace && normalizePathForCompare(item.workspace.rootPath) === workspaceKey
+    )
+    if (conflict) throw new Error(`该工作目录已授权给会话「${conflict.title}」，请先解除原会话授权`)
+  }
   const next = [normalized, ...conversations.filter((item) => item.id !== normalized.id)]
   store.set('conversations', next.slice(0, 1000))
   return normalized

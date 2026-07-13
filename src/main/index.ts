@@ -19,16 +19,20 @@ import { appendFileSync, mkdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-import type { AppSettings, ChatRequest } from '../shared/types'
+import type { AppSettings, ChatRequest, Conversation } from '../shared/types'
 import { pickAttachments, preparePastedAttachments } from './attachments'
 import { captureScreenshot } from './screenshot'
+import { cancelLocalFileTask, executeLocalFileTask, getLocalTaskOutputDirectory, prepareLocalFileTask } from './localFileTasks'
+import { resolveWorkspaceItem, runWorkspaceAgent } from './workspaceAgent'
 import {
   checkGllmThemeEntitlement,
   checkProviderConnection,
   fetchProviderModels,
   generateAssistantSuggestion,
   searchConversations,
-  streamGllmChat
+  shouldUpdateConversationProjectMemory,
+  streamGllmChat,
+  updateConversationProjectMemory
 } from './gllmClient'
 import {
   adoptExistingDataRoot,
@@ -96,6 +100,29 @@ let tray: Tray | null = null
 let isQuitting = false
 let activeAssistantId = 'general'
 let mainHiddenMode: 'none' | 'tray' | 'floating' = 'none'
+const conversationMemoryUpdates = new Set<string>()
+
+async function maybeUpdateProjectMemory(conversation: Conversation): Promise<void> {
+  if (conversationMemoryUpdates.has(conversation.id)) return
+  if (!shouldUpdateConversationProjectMemory(conversation.messages, conversation.projectMemory)) return
+  const providers = getProviders()
+  const settings = getSettings()
+  const baseProvider = providers.find((provider) => provider.id === (conversation.modelProviderId || settings.activeProviderId)) ?? providers[0]
+  if (!baseProvider) return
+  const provider = { ...baseProvider, defaultModel: conversation.modelId || baseProvider.defaultModel }
+  conversationMemoryUpdates.add(conversation.id)
+  try {
+    const projectMemory = await updateConversationProjectMemory(provider, conversation.messages, conversation.projectMemory)
+    const latest = getConversations(conversation.projectId).find((item) => item.id === conversation.id)
+    if (!latest) return
+    const saved = saveConversation({ ...latest, projectMemory, updatedAt: latest.updatedAt }, conversation.projectId)
+    broadcastConversationChange(saved.id, 'saved')
+  } catch {
+    // 项目记忆是后台增强能力，失败不影响正常会话。
+  } finally {
+    conversationMemoryUpdates.delete(conversation.id)
+  }
+}
 let lastMainWindowBounds: Rectangle | null = null
 let floatingLogoBounds: Rectangle | null = null
 let floatingLogoDragOffset: Point | null = null
@@ -960,6 +987,7 @@ app.whenReady().then(() => {
   ipcMain.handle('conversation:save', (_, conversation) => {
     const saved = saveConversation(conversation)
     broadcastConversationChange(saved.id, 'saved')
+    void maybeUpdateProjectMemory(saved)
     return saved
   })
   ipcMain.handle('conversation:delete', (_, id: string) => {
@@ -974,6 +1002,32 @@ app.whenReady().then(() => {
   ipcMain.handle('tool:delete', (_, id: string) => deleteTool(id))
   ipcMain.handle('attachment:pick', (event, kind) => pickAttachments(BrowserWindow.fromWebContents(event.sender), kind))
   ipcMain.handle('attachment:prepare-pasted', (_, inputs) => preparePastedAttachments(inputs))
+  ipcMain.handle('local-task:prepare', (_, request: string, attachmentIds: string[]) =>
+    prepareLocalFileTask(request, attachmentIds)
+  )
+  ipcMain.handle('local-task:execute', async (event, planId: string) =>
+    executeLocalFileTask(planId, (progress) => event.sender.send('local-task:progress', progress))
+  )
+  ipcMain.handle('local-task:cancel', (_, planId: string) => cancelLocalFileTask(planId))
+  ipcMain.handle('local-task:open-output', async (_, planId: string) => {
+    const outputPath = getLocalTaskOutputDirectory(planId)
+    if (!outputPath) throw new Error('任务输出目录已失效')
+    const error = await shell.openPath(outputPath)
+    if (error) throw new Error(error)
+  })
+  ipcMain.handle('project:choose-workspace', async (event) => {
+    const owner = BrowserWindow.fromWebContents(event.sender)
+    const options: Electron.OpenDialogOptions = { title: '选择空间工作目录', properties: ['openDirectory', 'createDirectory'] }
+    const result = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options)
+    return result.canceled ? null : result.filePaths[0] ?? null
+  })
+  ipcMain.handle('workspace-agent:run', async (event, request) =>
+    runWorkspaceAgent(request, (progress) => event.sender.send('workspace-agent:progress', progress))
+  )
+  ipcMain.handle('workspace:reveal-file', async (_, rootPath: string, relativePath: string) => {
+    const filePath = await resolveWorkspaceItem(rootPath, relativePath)
+    shell.showItemInFolder(filePath)
+  })
   ipcMain.handle('attachment:screenshot', (event) => captureScreenshotForWindow(BrowserWindow.fromWebContents(event.sender)))
   ipcMain.handle('clipboard:copy-image', (_, dataUrl: string) => copyImageDataUrlToClipboard(dataUrl))
 

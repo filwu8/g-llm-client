@@ -76,6 +76,8 @@ import {
 } from './composerInput'
 import { getMessageSendShortcutLabel, shouldSendMessageFromKeyboard } from './keyboard'
 import { MarkdownMessage } from './MarkdownMessage'
+import { LocalTaskPanel } from './LocalTaskPanel'
+import { WorkspaceActivityLog, WorkspaceBar } from './WorkspaceBar'
 import { getModelDisplayLabel, getModelOptions, ModelPickerMenu } from './ModelPicker'
 import { applyDocumentTheme } from './theme'
 import {
@@ -119,6 +121,9 @@ import type {
   DataLocationInfo,
   KnowledgeReference,
   KnowledgeNote,
+  LocalTaskPlan,
+  LocalTaskProgress,
+  LocalTaskResult,
   PreparedAttachment,
   Project,
   ProviderCheckResult,
@@ -127,7 +132,9 @@ import type {
   ToolConfig,
   ToolConfigType,
   ThemeEntitlementResult,
-  WebSearchActivity
+  WebSearchActivity,
+  ConversationWorkspace,
+  WorkspaceToolActivity
 } from '@shared/types'
 
 const iconMap: Record<AssistantIcon, LucideIcon> = {
@@ -186,6 +193,14 @@ interface SpaceFormPayload {
   name: string
   description: string
   logoDataUrl?: string
+  workspacePath?: string
+}
+
+interface WorkspaceArtifactContextMenu {
+  x: number
+  y: number
+  rootPath: string
+  relativePath: string
 }
 
 const settingsTabs: Array<{ id: SettingsTab; label: string }> = [
@@ -505,7 +520,10 @@ function applyChatChunkToConversation(conversation: Conversation, chunk: ChatChu
       return withTokenCount({ ...message, translation: `${message.translation ?? ''}${chunk.content}` })
     })
   } else if (chunk.error) {
-    messages.push(createMessage('assistant', `请求失败：${chunk.error}`))
+    messages.push({
+      ...createMessage('assistant', `请求失败：${chunk.error}`),
+      error: chunk.error
+    })
   } else if (chunk.webSearch) {
     if (last?.role === 'assistant') {
       messages[messages.length - 1] = withWebSearchActivity(last, chunk.webSearch)
@@ -667,6 +685,13 @@ export default function App() {
   const [draft, setDraft] = useState(() => readComposerDraft(MAIN_COMPOSER_DRAFT_KEY))
   const [isStreaming, setIsStreaming] = useState(false)
   const [isPickingAttachment, setIsPickingAttachment] = useState(false)
+  const [localTaskPlan, setLocalTaskPlan] = useState<LocalTaskPlan | null>(null)
+  const [localTaskProgress, setLocalTaskProgress] = useState<LocalTaskProgress | null>(null)
+  const [localTaskResult, setLocalTaskResult] = useState<LocalTaskResult | null>(null)
+  const [localTaskRunning, setLocalTaskRunning] = useState(false)
+  const [draftWorkspace, setDraftWorkspace] = useState<ConversationWorkspace | undefined>()
+  const [workspaceActivities, setWorkspaceActivities] = useState<WorkspaceToolActivity[]>([])
+  const workspaceActivitiesRef = useRef<WorkspaceToolActivity[]>([])
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [assistantCenterOpen, setAssistantCenterOpen] = useState(false)
   const [assistantSettingsOpen, setAssistantSettingsOpen] = useState(false)
@@ -684,9 +709,15 @@ export default function App() {
   const [conversationSearchLoading, setConversationSearchLoading] = useState(false)
   const [conversationSearchError, setConversationSearchError] = useState('')
   const [webSearchEnabled, setWebSearchEnabled] = useState(false)
-  const [toolNotice, setToolNotice] = useState('')
+  const [toolNotice, setToolNotice] = useState<{
+    message: string
+    emphasis: boolean
+    requiresConfirmation: boolean
+    conversationId?: string
+  } | null>(null)
   const [selectionMenu, setSelectionMenu] = useState<SelectionContextMenu | null>(null)
   const [imageAttachmentMenu, setImageAttachmentMenu] = useState<ImageAttachmentContextMenu | null>(null)
+  const [workspaceArtifactMenu, setWorkspaceArtifactMenu] = useState<WorkspaceArtifactContextMenu | null>(null)
   const [pendingAttachments, setPendingAttachments] = useState<PreparedAttachment[]>([])
   const [pendingQuoteRefs, setPendingQuoteRefs] = useState<KnowledgeReference[]>([])
   const [pendingKnowledgeRefs, setPendingKnowledgeRefs] = useState<KnowledgeReference[]>([])
@@ -723,6 +754,7 @@ export default function App() {
   )
   const activeConversation =
     activeAssistantConversations.find((conversation) => conversation.id === activeConversationId) ?? null
+  const currentWorkspace = activeConversation ? activeConversation.workspace : draftWorkspace
   const conversationProvider = useMemo(
     () => (activeConversation ? getEffectiveProvider(activeConversation, assistantDefaultProvider, providers) : assistantDefaultProvider),
     [activeConversation, assistantDefaultProvider, providers]
@@ -735,6 +767,12 @@ export default function App() {
   const topbarConversationTitle = activeConversation?.title || '新会话'
   const activeConversationTokenSummary = `当前会话总词元数：${formatTokenUnit(activeConversationTokenUsage.total)}  ↑${formatTokenUnit(activeConversationTokenUsage.input)}  ↓${formatTokenUnit(activeConversationTokenUsage.output)}`
   const activeConversationTokenDetail = `当前会话总词元数：${formatTokenUnit(activeConversationTokenUsage.total)}，发送 ${formatTokenUnit(activeConversationTokenUsage.input)}，接收 ${formatTokenUnit(activeConversationTokenUsage.output)}`
+  const projectMemorySummary = activeConversation?.projectMemory
+    ? [
+        activeConversation.projectMemory.overview,
+        `需求 ${activeConversation.projectMemory.requirements.length} · 决策 ${activeConversation.projectMemory.decisions.length} · 规则 ${activeConversation.projectMemory.businessRules.length} · 待办 ${activeConversation.projectMemory.openItems.length} · 风险 ${activeConversation.projectMemory.risks.length}`
+      ].filter(Boolean).join('\n')
+    : ''
   const showScrollToLatest = Boolean(activeConversation?.messages.length && !isNearMessageBottom)
   const waitingForAssistantResponse = Boolean(isStreaming && activeConversation?.messages.at(-1)?.role === 'user')
   const modelCapabilities = useMemo(() => getModelCapabilities(conversationProvider), [conversationProvider])
@@ -926,11 +964,12 @@ export default function App() {
   }, [activeAssistantId])
 
   useEffect(() => {
-    if (!selectionMenu && !imageAttachmentMenu) return
+    if (!selectionMenu && !imageAttachmentMenu && !workspaceArtifactMenu) return
 
     const closeMenu = () => {
       setSelectionMenu(null)
       setImageAttachmentMenu(null)
+      setWorkspaceArtifactMenu(null)
     }
     const closeMenuOnPointerDown = (event: PointerEvent) => {
       const target = event.target
@@ -949,13 +988,34 @@ export default function App() {
       window.removeEventListener('resize', closeMenu)
       window.removeEventListener('keydown', closeMenuOnEscape)
     }
-  }, [selectionMenu, imageAttachmentMenu])
+  }, [selectionMenu, imageAttachmentMenu, workspaceArtifactMenu])
+
+  useEffect(() => window.gllm.onLocalTaskProgress(setLocalTaskProgress), [])
+
+  useEffect(
+    () => window.gllm.onWorkspaceAgentProgress((progress) => {
+      setWorkspaceActivities((current) => {
+        const existing = current.findIndex((activity) => activity.id === progress.activity.id)
+        const next = existing < 0
+          ? [...current, progress.activity]
+          : current.map((activity, index) => index === existing ? progress.activity : activity)
+        workspaceActivitiesRef.current = next
+        return next
+      })
+    }),
+    []
+  )
 
   useEffect(() => {
     setMessageAutoFollow(true)
     setIsNearMessageBottom(true)
     window.requestAnimationFrame(() => scrollToLatest('auto', { resumeAutoFollow: true }))
   }, [activeConversationId])
+
+  useEffect(() => {
+    if (!isStreaming || workspaceActivities.length === 0) return
+    window.requestAnimationFrame(() => scrollToLatest('smooth', { requireAutoFollow: true }))
+  }, [workspaceActivities])
 
   useEffect(() => {
     const composer = composerRef.current
@@ -979,10 +1039,41 @@ export default function App() {
     activeConversationTranslationSignature
   ])
 
-  function showToolNotice(message: string, duration = 2600) {
-    setToolNotice(message)
+  function showToolNotice(
+    message: string,
+    duration = 2600,
+    options: { emphasis?: boolean; requiresConfirmation?: boolean; conversationId?: string } = {}
+  ) {
+    setToolNotice({
+      message,
+      emphasis: Boolean(options.emphasis),
+      requiresConfirmation: Boolean(options.requiresConfirmation),
+      conversationId: options.conversationId
+    })
     if (toolNoticeTimerRef.current) window.clearTimeout(toolNoticeTimerRef.current)
-    toolNoticeTimerRef.current = window.setTimeout(() => setToolNotice(''), duration)
+    toolNoticeTimerRef.current = null
+    if (!options.requiresConfirmation) {
+      toolNoticeTimerRef.current = window.setTimeout(() => setToolNotice(null), duration)
+    }
+  }
+
+  function dismissToolNotice() {
+    if (toolNoticeTimerRef.current) window.clearTimeout(toolNoticeTimerRef.current)
+    toolNoticeTimerRef.current = null
+    setToolNotice(null)
+  }
+
+  function openToolNoticeConversation(conversationId: string) {
+    const conversation = conversations.find((item) => item.id === conversationId)
+    if (!conversation) {
+      showToolNotice('对应会话已不存在', 3200, { emphasis: true })
+      return
+    }
+    setDraftWorkspace(undefined)
+    setActiveAssistantId(conversation.assistantId)
+    setActiveConversationId(conversation.id)
+    dismissToolNotice()
+    window.requestAnimationFrame(() => scrollToLatest('auto', { resumeAutoFollow: true }))
   }
 
   function clearSpaceTransientState() {
@@ -1059,6 +1150,8 @@ export default function App() {
       name,
       description: payload.description.trim() || undefined,
       logoDataUrl: payload.logoDataUrl,
+      workspacePath: payload.workspacePath,
+      workspacePermission: payload.workspacePath ? 'read-write' : undefined,
       createdAt: now,
       updatedAt: now
     })
@@ -1078,6 +1171,8 @@ export default function App() {
       name,
       description: payload.description.trim() || undefined,
       logoDataUrl: space.id === defaultSpaceId ? undefined : payload.logoDataUrl,
+      workspacePath: payload.workspacePath,
+      workspacePermission: payload.workspacePath ? 'read-write' : undefined,
       updatedAt: Date.now()
     })
     applyAppState(state)
@@ -1304,6 +1399,7 @@ export default function App() {
   }
 
   function openAssistant(assistant: Assistant) {
+    setDraftWorkspace(undefined)
     setActiveAssistantId(assistant.id)
     setPendingQuoteRefs([])
     setPendingKnowledgeRefs([])
@@ -1312,6 +1408,7 @@ export default function App() {
   }
 
   function startNewChat() {
+    setDraftWorkspace(undefined)
     const conversation = createConversation(activeAssistant, assistantDefaultProvider, activeProjectId)
     setConversations((current) => [conversation, ...current])
     setActiveConversationId(conversation.id)
@@ -1537,6 +1634,58 @@ export default function App() {
     showToolNotice('消息已删除')
   }
 
+  async function executeWorkspaceConversation(
+    nextConversation: Conversation,
+    workspace: ConversationWorkspace,
+    provider: ApiProvider
+  ) {
+    if (!settings) return
+    setWorkspaceActivities([])
+    workspaceActivitiesRef.current = []
+    try {
+      const result = await window.gllm.runWorkspaceAgent({
+        conversationId: nextConversation.id,
+        workspace,
+      provider,
+      messages: nextConversation.messages,
+      settings,
+      projectMemory: nextConversation.projectMemory
+      })
+      const assistantMessage: ChatMessage = {
+        ...createMessage('assistant', result.content),
+        workspaceActivities: result.activities,
+        workspaceChangedFiles: result.changedFiles,
+        workspaceArtifactRoot: workspace.rootPath
+      }
+      const completedConversation = withConversationTokens({
+        ...nextConversation,
+        workspace,
+        messages: [...nextConversation.messages, assistantMessage],
+        updatedAt: Date.now()
+      })
+      setConversations((current) => [completedConversation, ...current.filter((item) => item.id !== completedConversation.id)])
+      void window.gllm.saveConversation(completedConversation)
+      if (result.changedFiles.length > 0) showToolNotice(`已修改 ${result.changedFiles.length} 个工作区文件`)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '未知错误'
+      const failedConversation = withConversationTokens({
+        ...nextConversation,
+        workspace,
+        messages: [...nextConversation.messages, {
+          ...createMessage('assistant', `工作区任务失败：${message}`),
+          error: message,
+          workspaceActivities: workspaceActivitiesRef.current,
+          workspaceArtifactRoot: workspace.rootPath
+        }],
+        updatedAt: Date.now()
+      })
+      setConversations((current) => [failedConversation, ...current.filter((item) => item.id !== failedConversation.id)])
+      void window.gllm.saveConversation(failedConversation)
+    } finally {
+      setIsStreaming(false)
+    }
+  }
+
   function regenerateMessage(messageId: string) {
     if (!settings || isStreaming || !activeConversation) return
     if (needsApiKey) {
@@ -1564,11 +1713,16 @@ export default function App() {
 
     setIsStreaming(true)
     saveConversationUpdate(nextConversation)
+    if (activeConversation.workspace) {
+      void executeWorkspaceConversation(nextConversation, activeConversation.workspace, conversationProvider)
+      return
+    }
     streamingConversationDraftsRef.current[nextConversation.id] = nextConversation
     window.gllm.streamChat({
       conversationId: nextConversation.id,
       assistant: activeAssistant,
       assistantMemories: enabledAssistantMemories,
+      projectMemory: nextConversation.projectMemory,
       provider: conversationProvider,
       messages: nextConversation.messages,
       settings,
@@ -1576,8 +1730,167 @@ export default function App() {
     })
   }
 
-  function sendMessage(content = draft) {
+  function shouldPrepareLocalTask(text: string): boolean {
+    return pendingAttachments.some((attachment) => attachment.localExecutable) &&
+      /压缩|文件太大|附件太大|超出.{0,6}(限制|大小)|上传.{0,6}限制|不超过\s*\d+|最多\s*\d+|2097152|帮我弄一下/.test(text)
+  }
+
+  function openWorkspaceArtifactMenu(event: ReactMouseEvent, rootPath: string, relativePath: string) {
+    event.preventDefault()
+    event.stopPropagation()
+    setSelectionMenu(null)
+    setImageAttachmentMenu(null)
+    setWorkspaceArtifactMenu({
+      x: Math.min(event.clientX, window.innerWidth - 230),
+      y: Math.min(event.clientY, window.innerHeight - 70),
+      rootPath,
+      relativePath
+    })
+  }
+
+  async function openWorkspaceArtifact(rootPath: string, relativePath: string) {
+    try {
+      await window.gllm.revealWorkspaceFile(rootPath, relativePath)
+    } catch (error) {
+      showToolNotice(error instanceof Error ? error.message : '无法定位该文件')
+    }
+  }
+
+  async function revealWorkspaceArtifact() {
+    if (!workspaceArtifactMenu) return
+    try {
+      await openWorkspaceArtifact(workspaceArtifactMenu.rootPath, workspaceArtifactMenu.relativePath)
+    } finally {
+      setWorkspaceArtifactMenu(null)
+    }
+  }
+
+  async function preparePendingLocalTask(text: string) {
+    try {
+      const plan = await window.gllm.prepareLocalFileTask(text, pendingAttachments.map((attachment) => attachment.id))
+      setLocalTaskPlan(plan)
+      setLocalTaskProgress(null)
+      setLocalTaskResult(null)
+    } catch (error) {
+      showToolNotice(error instanceof Error ? error.message : '无法建立本地文件任务')
+    }
+  }
+
+  async function executePendingLocalTask() {
+    if (!localTaskPlan || localTaskRunning) return
+    setLocalTaskRunning(true)
+    setLocalTaskResult(null)
+    try {
+      const result = await window.gllm.executeLocalFileTask(localTaskPlan.id)
+      setLocalTaskResult(result)
+      const baseConversation =
+        activeConversation?.assistantId === activeAssistant.id
+          ? activeConversation
+          : createConversation(activeAssistant, assistantDefaultProvider, activeProjectId)
+      const userMessage = createMessage('user', localTaskPlan.request, pendingAttachments)
+      const successCount = result.artifacts.filter((artifact) => artifact.success).length
+      const resultLines = result.artifacts.map((artifact) => {
+        const sizeChange = artifact.outputSize === undefined
+          ? formatAttachmentSize(artifact.originalSize)
+          : `${formatAttachmentSize(artifact.originalSize)} → ${formatAttachmentSize(artifact.outputSize)}`
+        return `${artifact.success ? '✓' : '⚠'} ${artifact.outputName ?? artifact.sourceName}：${sizeChange}；${artifact.message}`
+      })
+      const assistantMessage = createMessage(
+        'assistant',
+        `本地文件任务${result.status === 'completed' ? '已完成' : result.status === 'partial' ? '部分完成' : '未完成'}：${successCount}/${result.artifacts.length} 个文件已验证达标。\n\n${resultLines.join('\n')}\n\n原始文件未被修改。`
+      )
+      const nextConversation = withConversationTokens({
+        ...baseConversation,
+        assistantId: activeAssistant.id,
+        title: baseConversation.messages.length === 0 ? localTaskPlan.request.slice(0, 28) : baseConversation.title,
+        messages: [...baseConversation.messages, userMessage, assistantMessage],
+        updatedAt: Date.now()
+      })
+      setActiveConversationId(nextConversation.id)
+      setConversations((current) => [nextConversation, ...current.filter((item) => item.id !== nextConversation.id)])
+      void window.gllm.saveConversation(nextConversation)
+      setPendingAttachments([])
+      setDraft('')
+    } catch (error) {
+      showToolNotice(error instanceof Error ? error.message : '本地文件任务执行失败')
+    } finally {
+      setLocalTaskRunning(false)
+    }
+  }
+
+  function closeLocalTask() {
+    if (localTaskRunning) return
+    setLocalTaskPlan(null)
+    setLocalTaskProgress(null)
+    setLocalTaskResult(null)
+  }
+
+  async function bindConversationWorkspace() {
+    try {
+      const rootPath = await window.gllm.chooseWorkspaceDirectory()
+      if (!rootPath) return
+      const normalizeWorkspacePath = (path: string) => {
+        const normalized = path.replace(/[\\/]+$/, '').replace(/\\/g, '/')
+        return window.gllm.platform === 'linux' ? normalized : normalized.toLocaleLowerCase()
+      }
+      const conflictingConversation = conversations.find((conversation) =>
+        conversation.id !== activeConversation?.id &&
+        conversation.workspace?.permission === 'read-write' &&
+        normalizeWorkspacePath(conversation.workspace.rootPath) === normalizeWorkspacePath(rootPath)
+      )
+      if (conflictingConversation) {
+        showToolNotice(
+          `该目录已授权给会话「${conflictingConversation.title}」，请先在原会话解除授权`,
+          0,
+          { emphasis: true, requiresConfirmation: true, conversationId: conflictingConversation.id }
+        )
+        return
+      }
+      const displayName = rootPath.split(/[\\/]/).filter(Boolean).at(-1) || '工作区'
+      const workspace: ConversationWorkspace = {
+        rootPath,
+        displayName,
+        permission: 'read-write',
+        grantedAt: Date.now(),
+        lastVerifiedAt: Date.now()
+      }
+      setWorkspaceActivities([])
+      workspaceActivitiesRef.current = []
+      if (!activeConversation) {
+        setDraftWorkspace(workspace)
+        return
+      }
+      const nextConversation = { ...activeConversation, workspace, updatedAt: Date.now() }
+      const saved = await window.gllm.saveConversation(nextConversation)
+      setConversations((current) => [saved, ...current.filter((item) => item.id !== saved.id)])
+    } catch (error) {
+      showToolNotice(error instanceof Error ? error.message : '工作目录授权失败')
+    }
+  }
+
+  async function unbindConversationWorkspace() {
+    setWorkspaceActivities([])
+    workspaceActivitiesRef.current = []
+    if (!activeConversation) {
+      setDraftWorkspace(undefined)
+      return
+    }
+    const nextConversation = { ...activeConversation, workspace: undefined, updatedAt: Date.now() }
+    try {
+      const saved = await window.gllm.saveConversation(nextConversation)
+      setConversations((current) => [saved, ...current.filter((item) => item.id !== saved.id)])
+    } catch (error) {
+      showToolNotice(error instanceof Error ? error.message : '解除工作目录授权失败')
+    }
+  }
+
+  async function sendMessage(content = draft) {
     if (!settings || isStreaming) return
+    const candidateText = content.trim()
+    if (shouldPrepareLocalTask(candidateText)) {
+      await preparePendingLocalTask(candidateText)
+      return
+    }
     if (needsApiKey) {
       setSettingsOpen(true)
       return
@@ -1605,6 +1918,7 @@ export default function App() {
     const userMessage = createMessage('user', messageText, attachments, knowledgeRefs)
     const nextConversation: Conversation = withConversationTokens({
       ...baseConversation,
+      workspace: currentWorkspace,
       assistantId: activeAssistant.id,
       title: baseConversation.messages.length === 0 ? messageText.slice(0, 28) : baseConversation.title,
       messages: [...baseConversation.messages, userMessage],
@@ -1619,11 +1933,21 @@ export default function App() {
     setActiveConversationId(nextConversation.id)
     setConversations((current) => [nextConversation, ...current.filter((item) => item.id !== nextConversation.id)])
     void window.gllm.saveConversation(nextConversation)
+    if (currentWorkspace) {
+      if (!activeConversation) setDraftWorkspace(undefined)
+      await executeWorkspaceConversation(
+        nextConversation,
+        currentWorkspace,
+        activeConversation?.assistantId === activeAssistant.id ? conversationProvider : assistantDefaultProvider
+      )
+      return
+    }
     streamingConversationDraftsRef.current[nextConversation.id] = nextConversation
     window.gllm.streamChat({
       conversationId: nextConversation.id,
       assistant: activeAssistant,
       assistantMemories: enabledAssistantMemories,
+      projectMemory: nextConversation.projectMemory,
       provider: activeConversation?.assistantId === activeAssistant.id ? conversationProvider : assistantDefaultProvider,
       messages: nextConversation.messages,
       settings,
@@ -1836,6 +2160,16 @@ export default function App() {
             </div>
           </div>
           <div className="topbar-actions">
+            {activeConversation?.projectMemory && (
+              <button
+                className="icon-button compact project-memory-button"
+                onClick={() => showToolNotice(`项目长期记忆：${projectMemorySummary.slice(0, 700)}`, 9000)}
+                title={`项目长期记忆\n${projectMemorySummary}`}
+                type="button"
+              >
+                <Brain size={16} />
+              </button>
+            )}
             <button className="icon-button compact" onClick={() => setAssistantSettingsOpen(true)} title="助手设置" type="button">
               <Pencil size={16} />
             </button>
@@ -1876,17 +2210,37 @@ export default function App() {
                 return (
                   <article
                     key={message.id}
-                    className={`message ${message.role}`}
+                    className={`message ${message.role} ${message.error ? 'message-error' : ''}`}
                     data-message-id={message.id}
                     onContextMenu={(event) => openSelectionContextMenu(event, message)}
                   >
                     <div className="message-stack">
                       <div className="message-bubble">
                         {message.webSearch && <WebSearchActivityCard activity={message.webSearch} />}
+                        {((message.workspaceActivities?.length ?? 0) > 0 || (message.workspaceChangedFiles?.length ?? 0) > 0) && (
+                          <WorkspaceActivityLog
+                            activities={message.workspaceActivities ?? []}
+                            changedFiles={message.workspaceChangedFiles}
+                            artifactRoot={message.workspaceArtifactRoot}
+                            onArtifactOpen={(rootPath, relativePath) => void openWorkspaceArtifact(rootPath, relativePath)}
+                            onArtifactContextMenu={openWorkspaceArtifactMenu}
+                          />
+                        )}
                         {(message.content.trim() || !message.webSearch) && (
                           <div className="message-content markdown-body">
                             <MarkdownMessage content={message.content} />
                           </div>
+                        )}
+                        {message.error && (
+                          <button
+                            className="message-retry-button"
+                            disabled={isStreaming}
+                            type="button"
+                            onClick={() => regenerateMessage(message.id)}
+                          >
+                            <RefreshCw size={15} />
+                            <span>{'\u91cd\u65b0\u53d1\u9001'}</span>
+                          </button>
                         )}
                         {message.attachments && message.attachments.length > 0 && (
                           <div className="message-attachments">
@@ -1944,7 +2298,7 @@ export default function App() {
                           <button title="复制整条原始 Markdown" type="button" onClick={() => void copyMessage(message.content)}>
                             <Copy size={16} />
                           </button>
-                          {message.role === 'assistant' && (
+                          {message.role === 'assistant' && !message.error && (
                             <button
                               disabled={isStreaming}
                               title="重新生成"
@@ -1990,14 +2344,18 @@ export default function App() {
                 <article className="message assistant pending-response" aria-live="polite">
                   <div className="message-stack">
                     <div className="message-bubble pending-response-bubble">
-                      <div className="pending-response-content">
-                        <span className="typing-dots" aria-hidden="true">
-                          <i />
-                          <i />
-                          <i />
-                        </span>
-                        <span>正在等待 {conversationProvider.defaultModel} 响应...</span>
-                      </div>
+                      {currentWorkspace ? (
+                        <WorkspaceActivityLog activities={workspaceActivities} running />
+                      ) : (
+                        <div className="pending-response-content">
+                          <span className="typing-dots" aria-hidden="true">
+                            <i />
+                            <i />
+                            <i />
+                          </span>
+                          <span>正在等待 {conversationProvider.defaultModel} 响应...</span>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </article>
@@ -2032,6 +2390,19 @@ export default function App() {
               <button type="button" onClick={() => void copyImageAttachmentToClipboard()}>
                 <Copy size={15} />
                 复制图片
+              </button>
+            </div>
+          )}
+          {workspaceArtifactMenu && (
+            <div
+              className="selection-context-menu workspace-artifact-context-menu"
+              style={{ left: workspaceArtifactMenu.x, top: workspaceArtifactMenu.y }}
+              onClick={(event) => event.stopPropagation()}
+              onMouseDown={(event) => event.preventDefault()}
+            >
+              <button type="button" onClick={() => void revealWorkspaceArtifact()}>
+                <FolderOpen size={15} />
+                {isMac ? '在 Finder 中显示' : '在文件资源管理器中显示'}
               </button>
             </div>
           )}
@@ -2075,6 +2446,14 @@ export default function App() {
                   <ImagePlus size={16} />
                 </button>
                 <button
+                  className={currentWorkspace ? 'active' : ''}
+                  title="会话授权工作文件夹"
+                  type="button"
+                  onClick={() => void bindConversationWorkspace()}
+                >
+                  <FolderOpen size={16} />
+                </button>
+                <button
                   className={knowledgeOpen || pendingKnowledgeRefs.length > 0 ? 'active' : ''}
                   title="知识库"
                   type="button"
@@ -2113,7 +2492,32 @@ export default function App() {
                 onChange={changeActiveConversationModel}
               />
             </div>
-            {toolNotice && <div className="composer-notice">{toolNotice}</div>}
+            {currentWorkspace && (
+              <WorkspaceBar
+                workspace={currentWorkspace}
+                onUnbind={() => void unbindConversationWorkspace()}
+              />
+            )}
+            {toolNotice && (
+              <div
+                className={`composer-notice ${toolNotice.emphasis ? 'emphasis' : ''}`}
+                role={toolNotice.emphasis ? 'alert' : 'status'}
+              >
+                <span>{toolNotice.message}</span>
+                {(toolNotice.conversationId || toolNotice.requiresConfirmation) && (
+                  <div className="composer-notice-actions">
+                    {toolNotice.conversationId && (
+                      <button type="button" onClick={() => openToolNoticeConversation(toolNotice.conversationId!)}>
+                        前往会话
+                      </button>
+                    )}
+                    {toolNotice.requiresConfirmation && (
+                      <button className="secondary" type="button" onClick={dismissToolNotice}>确认</button>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
             {pendingQuoteRefs.length > 0 && (
               <div className="composer-quote-cards">
                 {pendingQuoteRefs.map((reference) => (
@@ -2137,8 +2541,8 @@ export default function App() {
                 {pendingAttachments.map((attachment) => (
                   <span
                     key={attachment.id}
-                    className={`attachment-chip ${attachment.kind === 'image' && attachment.dataUrl ? 'image-chip' : ''} ${attachment.kind === 'image' && !attachment.dataUrl ? 'warning' : ''}`}
-                    title={`${attachment.name} · ${formatAttachmentSize(attachment.size)} · ${getAttachmentSupportLabel(attachment, modelCapabilities)}`}
+                    className={`attachment-chip ${attachment.kind === 'image' && attachment.dataUrl ? 'image-chip' : ''} ${attachment.kind === 'image' && !attachment.dataUrl ? 'warning' : ''} ${attachment.localExecutable ? 'local-executable' : ''}`}
+                    title={`${attachment.name} · ${formatAttachmentSize(attachment.size)} · ${attachment.localExecutable ? '可执行本地处理' : getAttachmentSupportLabel(attachment, modelCapabilities)}`}
                     onContextMenu={(event) => openImageAttachmentMenu(event, attachment)}
                   >
                     {attachment.kind === 'image' && attachment.dataUrl ? (
@@ -2225,7 +2629,16 @@ export default function App() {
                   setActiveConversationId(conversation.id)
                 }}
               >
-                <span>{conversation.title}</span>
+                <span className="history-item-title">
+                  <span>{conversation.title}</span>
+                  {conversation.workspace && (
+                    <FolderOpen
+                      className="history-workspace-badge"
+                      size={13}
+                      aria-label="已授权工作文件夹"
+                    />
+                  )}
+                </span>
                 <Trash2
                   size={15}
                   onClick={(event) => {
@@ -2332,6 +2745,18 @@ export default function App() {
           onRefreshProviderModels={refreshProviderModels}
           onDeleteProvider={deleteProvider}
           onDataLocationChange={setDataLocation}
+        />
+      )}
+      {localTaskPlan && (
+        <LocalTaskPanel
+          plan={localTaskPlan}
+          progress={localTaskProgress}
+          result={localTaskResult}
+          running={localTaskRunning}
+          onApprove={() => void executePendingLocalTask()}
+          onCancel={() => void window.gllm.cancelLocalFileTask(localTaskPlan.id)}
+          onClose={closeLocalTask}
+          onOpenOutput={(planId) => void window.gllm.openLocalTaskOutput(planId)}
         />
       )}
     </div>
@@ -2469,10 +2894,12 @@ function SpaceCenterDialog({
   const [newName, setNewName] = useState('工作空间')
   const [newDescription, setNewDescription] = useState('')
   const [newLogoDataUrl, setNewLogoDataUrl] = useState('')
+  const [newWorkspacePath, setNewWorkspacePath] = useState('')
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [editName, setEditName] = useState('')
   const [editDescription, setEditDescription] = useState('')
   const [editLogoDataUrl, setEditLogoDataUrl] = useState('')
+  const [editWorkspacePath, setEditWorkspacePath] = useState('')
   const [savingAction, setSavingAction] = useState<string | null>(null)
   const [error, setError] = useState('')
   const newLogoInputRef = useRef<HTMLInputElement>(null)
@@ -2485,7 +2912,20 @@ function SpaceCenterDialog({
     setEditName(getSpaceName(space))
     setEditDescription(space.description ?? '')
     setEditLogoDataUrl(space.logoDataUrl ?? '')
+    setEditWorkspacePath(space.workspacePath ?? '')
     setError('')
+  }
+
+  async function chooseWorkspace(target: 'create' | 'edit') {
+    try {
+      const path = await window.gllm.chooseWorkspaceDirectory()
+      if (!path) return
+      if (target === 'create') setNewWorkspacePath(path)
+      else setEditWorkspacePath(path)
+      setError('')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '工作目录选择失败')
+    }
   }
 
   async function chooseSpaceLogo(event: ChangeEvent<HTMLInputElement>, target: 'create' | 'edit') {
@@ -2528,11 +2968,12 @@ function SpaceCenterDialog({
     setSavingAction('create')
     setError('')
     try {
-      await onCreate({ name, description: newDescription, logoDataUrl: newLogoDataUrl || undefined })
+      await onCreate({ name, description: newDescription, logoDataUrl: newLogoDataUrl || undefined, workspacePath: newWorkspacePath || undefined })
       setCreating(false)
       setNewName('新空间')
       setNewDescription('')
       setNewLogoDataUrl('')
+      setNewWorkspacePath('')
     } catch (err) {
       setError(err instanceof Error ? err.message : '空间创建失败')
     } finally {
@@ -2553,7 +2994,7 @@ function SpaceCenterDialog({
     setSavingAction(renamingId)
     setError('')
     try {
-      await onRename(renamingId, { name, description: editDescription, logoDataUrl: editLogoDataUrl || undefined })
+      await onRename(renamingId, { name, description: editDescription, logoDataUrl: editLogoDataUrl || undefined, workspacePath: editWorkspacePath || undefined })
       setRenamingId(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : '空间保存失败')
@@ -2694,6 +3135,15 @@ function SpaceCenterDialog({
                             rows={2}
                           />
                         </label>
+                        <div className="space-workspace-field">
+                          <span>本地工作目录</span>
+                          <strong title={editWorkspacePath}>{editWorkspacePath || '未绑定'}</strong>
+                          <div>
+                            <button className="secondary-action" onClick={() => void chooseWorkspace('edit')} type="button"><FolderOpen size={15} />选择目录</button>
+                            <button className="secondary-action" disabled={!editWorkspacePath} onClick={() => setEditWorkspacePath('')} type="button">解除绑定</button>
+                          </div>
+                          <small>G-LLM 仅在你确认本地任务后写入该目录；macOS 首次访问时可能显示系统权限提示。</small>
+                        </div>
                         <div className="space-form-actions">
                           <button className="secondary-action" onClick={() => setRenamingId(null)} type="button">
                             取消
@@ -2791,6 +3241,15 @@ function SpaceCenterDialog({
                 rows={2}
               />
             </label>
+            <div className="space-workspace-field">
+              <span>本地工作目录</span>
+              <strong title={newWorkspacePath}>{newWorkspacePath || '可选，创建后也可绑定'}</strong>
+              <div>
+                <button className="secondary-action" onClick={() => void chooseWorkspace('create')} type="button"><FolderOpen size={15} />选择目录</button>
+                <button className="secondary-action" disabled={!newWorkspacePath} onClick={() => setNewWorkspacePath('')} type="button">清除</button>
+              </div>
+              <small>目录路径只保存在本机，不会发送给模型供应商。</small>
+            </div>
             {error && <p className="space-error">{error}</p>}
             <div className="space-form-actions">
               {hasMultipleSpaces && (
