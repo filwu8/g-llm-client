@@ -2,9 +2,19 @@
 
 [简体中文](./README.md) | [English](./README.en-US.md)
 
-Current version: V1.0.7
+Current version: [V1.0.10](https://github.com/filwu8/g-llm-client/releases/tag/v1.0.10)
+
+[Download](https://llm.gprophet.com/download) | [Full changelog](https://llm.gprophet.com/download/changelog) | [GitHub Releases](https://github.com/filwu8/g-llm-client/releases)
 
 G-LLM Client is a cross-platform desktop AI client built by GPROPHET LIMITED for Windows, macOS, and Linux. The product direction is assistant-first: users choose or create a role-based assistant, then use one desktop client for model configuration, knowledge references, screenshots, file understanding, and multi-turn conversations.
+
+## V1.0.10 Highlights
+
+- Conversation workspace agent: authorize a local folder for a conversation so the model can inspect, search, create, modify, and organize files within the controlled directory, with visible operation progress and results.
+- Persistent project memory: automatically maintains the project overview, confirmed requirements, decisions, rules, tasks, and risks so long-running work survives model switches and large conversation histories.
+- Local file tasks: compress images and PDFs to upload limits with a plan and risk preview, result verification, and non-destructive output.
+- Long-session continuity and reliability: older messages become a project timeline, while transient rate limits, gateway failures, and service errors are retried automatically.
+- Update checks: check for a newer client from About and open the official download page.
 
 ## Features
 
@@ -12,17 +22,20 @@ G-LLM Client is a cross-platform desktop AI client built by GPROPHET LIMITED for
 - Assistant workflow with built-in assistants for general chat, documents, contracts, code, business analysis, and learning, plus custom assistant creation and editing.
 - Multi-provider and multi-model setup with the default G-LLM gateway and OpenAI-compatible provider templates.
 - Model management with connection tests, `/models` fetching, capability detection, and default model selection.
+- Unified model selection across chat, global defaults, assistant settings, and quick chat, with capability labels and natural name sorting.
 - Streaming chat, starter prompts, Markdown rendering, conversation history, local persistence, and token display.
-- Local-first features including lightweight knowledge base, assistant memory, local data storage, and data import/export.
+- Intelligent conversation search across spaces using topics, people, tasks, or conclusions, with direct navigation back to the original conversation.
+- Local-first features including lightweight knowledge base, assistant memory, persistent project memory, local data storage, and data import/export.
 - Attachments and visual inputs including files, images, pasted clipboard content, system screenshots, and image copy to the system clipboard.
 - Local file tasks that compress images or PDFs to a requested byte limit with approval, PDF rasterization warnings, non-destructive output, and per-file verification.
 - Conversation workspaces that grant a single conversation controlled access to inspect, search, create, and modify files with a visible tool activity timeline.
 - Web search and tool configuration so retrieved source material can be injected into the conversation context.
+- Light and dark themes for all users, plus a gold theme unlocked by a valid official G-LLM API key.
 - Privacy-friendly anonymous telemetry. The client only sends anonymous metadata and does not collect chat content, API keys, file content, screenshot content, knowledge base content, or memory content. Users can disable telemetry in settings.
 
 ## Windows Desktop Behavior
 
-V1.0.7 includes Windows-specific desktop refinements:
+The Windows client includes the following desktop behavior:
 
 - Closing the main window hides the app to the system tray instead of quitting.
 - Minimizing the main window shows a floating G-LLM logo on the desktop.
