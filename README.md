@@ -4,9 +4,23 @@
 
 当前版本：[V1.0.10](https://github.com/filwu8/g-llm-client/releases/tag/v1.0.10)
 
+> `main` 分支正在开发 V1.1.0。V1.1.0 起采用 BUSL-1.1，允许个人和企业免费内部使用，并于 2030-07-14 自动转换为 AGPL-3.0-only；V1.0.10 及以前版本继续适用其发布标签中的 AGPL-3.0-only。
+
 [下载客户端](https://llm.gprophet.com/download) | [完整更新日志](https://llm.gprophet.com/download/changelog) | [GitHub Releases](https://github.com/filwu8/g-llm-client/releases)
 
 G-LLM Client 是 GPROPHET LIMITED 自研的跨平台桌面 AI 客户端，支持 Windows、macOS 和 Linux。当前产品方向是“助手优先”：用户先选择或创建适合场景的助手，再在同一个桌面客户端里完成模型配置、知识引用、截图提问、文件理解和多轮对话。
+
+## 界面预览
+
+工作区 Agent 可以在用户授权的目录中读取和修改文件，并把操作过程直接呈现在会话里。符合条件的 G-LLM 付费用户还可启用专属金色主题。
+
+![金色主题中的融资 BP 顾问与工作区 Agent](./docs/images/gllm-gold-workspace.png)
+
+本地文件处理支持在对话中生成、修改和压缩文件，界面提供亮色与暗色两种基础主题。
+
+| 暗色主题 | 亮色主题 |
+| --- | --- |
+| ![暗色主题中的 PDF 压缩任务](./docs/images/gllm-dark-file-tools.png) | ![亮色主题中的 PDF 压缩任务](./docs/images/gllm-light-file-tools.png) |
 
 ## V1.0.10 重点更新
 
@@ -118,11 +132,13 @@ Authorization: Bearer {apiKey}
 
 ## License
 
-G-LLM Desktop Client 由 GPROPHET LIMITED 发布，社区版采用 [AGPL-3.0-only](./LICENSE) 许可证。
+G-LLM Desktop Client 由 GPROPHET LIMITED 发布。当前开发版本 V1.1.0 采用 [Business Source License 1.1](./LICENSE)，并附带额外使用授权。
 
-你可以在遵守 AGPL-3.0-only 的前提下使用、修改、分发和商用本项目。若你希望闭源分发、白标改造、嵌入商业产品、交付私有定制版，或免除 AGPL 的源码开放义务，需要取得单独的商业授权。
+个人使用、学习研究、测试评估和企业内部业务使用免费。未经 GPROPHET LIMITED 书面商业授权，不得白标或 OEM、转售或出租、作为竞品发布或分发，也不得向第三方提供托管、代运营、外包或应用服务。
 
-商业授权说明见 [COMMERCIAL_LICENSE.md](./COMMERCIAL_LICENSE.md)。
+V1.1.0 将于 2030-07-14 自动转换为 AGPL-3.0-only。V1.0.10 及以前版本不受本次变更影响，继续适用各自发布标签中已经附带的许可证。
+
+完整许可边界见 [LICENSE](./LICENSE) 和 [LICENSE_POLICY.md](./LICENSE_POLICY.md)，商业授权说明见 [COMMERCIAL_LICENSE.md](./COMMERCIAL_LICENSE.md)，贡献代码前请阅读 [CONTRIBUTING.md](./CONTRIBUTING.md)。
 
 商业授权、OEM 合作、企业部署、白标授权请联系：
 
@@ -132,4 +148,4 @@ Email: licensing@gprophet.com
 Website: https://llm.gprophet.com/
 ```
 
-源码许可证不自动授权使用 "G-LLM"、"WujiJie"、"无极界" 及相关 Logo、图标、宣传语或品牌资产。品牌和商标使用规则见 [TRADEMARKS.md](./TRADEMARKS.md)。
+源码许可证不自动授权使用 "G-LLM"、"WujiJie"、"无极界" 及相关 Logo、图标、宣传语或品牌资产。品牌和商标使用规则见 [TRADEMARKS.md](./TRADEMARKS.md)，第三方组件许可证见 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)。

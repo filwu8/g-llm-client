@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 GPROPHET LIMITED
+ * SPDX-License-Identifier: BUSL-1.1
+ * Change Date: 2030-07-14
+ */
+
 import { useRef, useState } from 'react'
 
 import floatingLogo from '../../../resources/app-icon-win-Top.png'

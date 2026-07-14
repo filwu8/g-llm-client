@@ -1,17 +1,22 @@
 {
   "name": "g-llm-client",
-  "version": "1.0.10",
+  "version": "1.1.0",
   "description": "WujiJie / G-LLM desktop client",
   "main": "./out/main/index.js",
   "author": "GPROPHET LIMITED <licensing@gprophet.com>",
-  "license": "AGPL-3.0-only",
+  "license": "BUSL-1.1",
   "homepage": "https://llm.gprophet.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/filwu8/g-llm-client.git"
+  },
   "desktopName": "G-LLM",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "electron-vite dev",
-    "build": "tsc --noEmit && electron-vite build",
+    "build": "pnpm licenses:generate && tsc --noEmit && electron-vite build",
+    "licenses:generate": "node scripts/generate-third-party-notices.mjs",
     "preview": "electron-vite preview",
     "package:win": "pnpm build && electron-builder --win --x64 --publish never",
     "package:mac": "pnpm build && electron-builder --mac --arm64 --x64 --publish never",
@@ -93,6 +98,30 @@
       {
         "from": "resources/workspace-script-runner.cjs",
         "to": "resources/workspace-script-runner.cjs"
+      },
+      {
+        "from": "LICENSE",
+        "to": "legal/LICENSE.txt"
+      },
+      {
+        "from": "NOTICE",
+        "to": "legal/NOTICE.txt"
+      },
+      {
+        "from": "LICENSE_POLICY.md",
+        "to": "legal/LICENSE_POLICY.md"
+      },
+      {
+        "from": "COMMERCIAL_LICENSE.md",
+        "to": "legal/COMMERCIAL_LICENSE.md"
+      },
+      {
+        "from": "TRADEMARKS.md",
+        "to": "legal/TRADEMARKS.md"
+      },
+      {
+        "from": "THIRD_PARTY_NOTICES.md",
+        "to": "legal/THIRD_PARTY_NOTICES.md"
       }
     ],
     "files": [

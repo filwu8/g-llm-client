@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 GPROPHET LIMITED
+ * SPDX-License-Identifier: BUSL-1.1
+ * Change Date: 2030-07-14
+ */
+
 import type { BrowserWindow } from 'electron'
 import { dialog } from 'electron'
 import { createCanvas, DOMMatrix, ImageData, loadImage, Path2D } from '@napi-rs/canvas'

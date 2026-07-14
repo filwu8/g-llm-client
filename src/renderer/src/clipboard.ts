@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 GPROPHET LIMITED
+ * SPDX-License-Identifier: BUSL-1.1
+ * Change Date: 2030-07-14
+ */
+
 export interface MessageSelectionSnapshot {
   text: string
   html: string

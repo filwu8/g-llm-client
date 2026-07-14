@@ -1,9 +1,18 @@
 G-LLM Desktop Client
 
-Copyright (c) 2026 GPROPHET LIMITED.
+Copyright (c) 2026 GPROPHET LIMITED. All rights reserved except for rights
+expressly granted by the applicable source license.
 
-The community edition source code is licensed under AGPL-3.0-only.
-Commercial licensing, OEM cooperation, enterprise deployment, and white-label authorization are available separately.
+G-LLM Desktop Client V1.1.0 is licensed under the Business Source License
+1.1 (BUSL-1.1), including the Additional Use Grant in the LICENSE file.
+V1.1.0 changes to AGPL-3.0-only on 2030-07-14.
+
+G-LLM Desktop Client V1.0.10 and earlier remain under the license included in
+their corresponding release tags.
+
+Commercial licensing, OEM cooperation, enterprise deployment, hosted or
+managed service rights, competing distribution, and white-label authorization
+are available only under a separate written agreement.
 
 Commercial licensing contact:
 licensing@gprophet.com
@@ -11,4 +20,9 @@ licensing@gprophet.com
 Website:
 https://llm.gprophet.com/
 
-G-LLM, WujiJie, 无极界, related logos, icons, slogans, and product visual assets are reserved brand assets of GPROPHET LIMITED unless otherwise authorized in writing.
+G-LLM, WujiJie, 无极界, related logos, icons, slogans, and product visual
+assets are reserved brand assets of GPROPHET LIMITED unless otherwise
+authorized in writing.
+
+This product includes third-party components under their own licenses. See
+THIRD_PARTY_NOTICES.md included with the distribution.

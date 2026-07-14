@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 GPROPHET LIMITED
+ * SPDX-License-Identifier: BUSL-1.1
+ * Change Date: 2030-07-14
+ */
+
 import {
   BarChart3,
   Brain,
@@ -122,6 +128,7 @@ import type {
   DataLocationInfo,
   KnowledgeReference,
   KnowledgeNote,
+  LegalDocument,
   LocalTaskPlan,
   LocalTaskProgress,
   LocalTaskResult,
@@ -4870,6 +4877,14 @@ function SettingsPanel({
     await window.gllm.openDownloadPage()
   }
 
+  async function openLegalDocument(document: LegalDocument) {
+    try {
+      await window.gllm.openLegalDocument(document)
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : '无法打开法律文件，请检查安装是否完整。')
+    }
+  }
+
   const isWindows = window.gllm.platform === 'win32'
 
   async function quitApp() {
@@ -5418,6 +5433,30 @@ function SettingsPanel({
                   )}
                 </div>
               )}
+              <div className="about-legal-summary">
+                <div>
+                  <strong>源码与商业使用</strong>
+                  <span>V1.1.0 允许个人和企业免费内部使用，2030-07-14 自动转换为 AGPL-3.0-only。</span>
+                </div>
+                <div className="about-legal-actions">
+                  <button className="about-release-link" onClick={() => void openLegalDocument('license')} type="button">
+                    <Scale size={15} />
+                    源码许可证
+                  </button>
+                  <button className="about-release-link" onClick={() => void openLegalDocument('third-party')} type="button">
+                    <BookOpen size={15} />
+                    第三方声明
+                  </button>
+                  <button className="about-release-link" onClick={() => void openLegalDocument('commercial')} type="button">
+                    <Briefcase size={15} />
+                    商业授权
+                  </button>
+                  <button className="about-release-link" onClick={() => void openLegalDocument('trademarks')} type="button">
+                    <FileText size={15} />
+                    商标政策
+                  </button>
+                </div>
+              </div>
             </section>
 
             <section className="privacy-section">

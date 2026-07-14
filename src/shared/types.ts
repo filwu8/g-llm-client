@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 GPROPHET LIMITED
+ * SPDX-License-Identifier: BUSL-1.1
+ * Change Date: 2030-07-14
+ */
+
 export type Role = 'system' | 'user' | 'assistant'
 export type MessageSendShortcut = 'enter' | 'ctrl-enter'
 export type AppTheme = 'light' | 'dark' | 'gold'
@@ -488,6 +494,8 @@ export interface AppUpdateInfo {
   updatedAt?: string
   message: string
 }
+
+export type LegalDocument = 'license' | 'third-party' | 'commercial' | 'trademarks'
 
 export interface AppStateSnapshot {
   appVersion: string

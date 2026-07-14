@@ -1,79 +1,91 @@
 # G-LLM Commercial Licensing
 
-This document explains the licensing model for G-LLM Desktop Client, published by GPROPHET LIMITED. It is a practical business summary, not a replacement for the full license text or legal advice.
+This document summarizes the licensing model for G-LLM Desktop Client. The
+controlling source license is [LICENSE](./LICENSE). Commercial rights are
+granted only by a separate written agreement signed by GPROPHET LIMITED.
 
-## Community License
+## Source-Available License
 
-The community edition of G-LLM Desktop Client is licensed under the GNU Affero General Public License v3.0 only (AGPL-3.0-only).
+G-LLM Desktop Client V1.1.0 is available under the Business Source License
+1.1 (`BUSL-1.1`) with an Additional Use Grant.
 
-You may use, study, modify, and redistribute the community edition, including for commercial purposes, as long as you comply with the AGPL-3.0-only license.
+Without charge, individuals and organizations may:
 
-Important AGPL obligations may include:
+- inspect, copy, modify, and redistribute the source for non-production use;
+- use the official or modified client for personal use; and
+- use it for the organization's own internal business operations.
 
-- If you distribute a modified version, you must provide the corresponding source code under AGPL-3.0-only.
-- If users interact with a modified version over a network, you must offer those users access to the corresponding source code.
-- You must preserve copyright notices, license notices, and disclaimers.
-- You must not impose additional restrictions that conflict with AGPL-3.0-only.
+The free Production Use grant does not include:
 
-See [LICENSE](./LICENSE) for the full license text.
+- white-label, OEM, reseller, rental, or paid redistribution;
+- selling or distributing a modified client as a product;
+- operating or distributing a competing desktop AI client;
+- providing substantial client functionality to third parties as a hosted,
+  managed, outsourcing, service-bureau, or application service;
+- removing license, copyright, attribution, or trademark notices; or
+- bypassing license keys, entitlement checks, or paid-feature controls.
 
-## Commercial License
+These uses require a separate commercial license.
 
-If you want to use G-LLM Desktop Client without AGPL obligations, you need a separate commercial license from GPROPHET LIMITED or another authorized copyright holder.
+## Automatic Open-Source Conversion
 
-Typical cases that require a commercial license include:
+G-LLM Desktop Client V1.1.0 will automatically convert to
+`AGPL-3.0-only` on 2030-07-14, or earlier if required by the Business Source
+License 1.1 terms.
 
-- Closed-source redistribution of modified versions.
-- White-label or rebranded distribution.
-- Embedding G-LLM Desktop Client into a proprietary product.
-- Selling a customized client to customers without releasing corresponding source code.
-- Offering a hosted, managed, or network-accessible modified version without AGPL source disclosure.
-- Enterprise deployment that requires private patches, custom branding, private plugins, or contractual support.
+Each later release is licensed separately and must state its own Change Date
+in the `LICENSE` file included with that release.
 
-Commercial licenses may grant additional rights such as:
+## Earlier Versions
 
-- Private modification and distribution.
-- White-label branding rights.
-- Enterprise deployment rights.
-- OEM or reseller rights.
-- Priority support, maintenance, or custom development.
-- Alternative warranty, liability, and service terms.
+G-LLM Desktop Client V1.0.10 and earlier releases remain licensed under the
+license included in their corresponding Git tag, currently
+`AGPL-3.0-only`. The V1.1.0 licensing change is prospective and does not
+withdraw rights already granted for earlier releases.
 
-Commercial license terms must be agreed in a separate written agreement.
+## Commercial Rights
 
-## Rights Not Granted by the Community License
+A commercial license may grant one or more of the following rights:
 
-The AGPL community license covers the source code, but it does not automatically grant:
+- private production modifications;
+- white-label and custom-brand distribution;
+- OEM, reseller, or customer redistribution rights;
+- hosted or managed service rights;
+- use in a competing or substitute product;
+- private plugins, enterprise deployment, and contractual support; or
+- negotiated warranty, indemnity, maintenance, and service terms.
 
-- Trademark rights to "G-LLM", "WujiJie", "无极界", or related logos.
-- Rights to represent your product as an official G-LLM product.
-- Rights to use G-LLM hosted services, APIs, model gateways, or paid infrastructure.
-- Rights to use private datasets, prompts, model configurations, or commercial assets that are not included in this repository.
+Commercial terms, scope, territory, duration, fees, support, and liability
+must be agreed in a separate written contract.
 
-See [TRADEMARKS.md](./TRADEMARKS.md) for brand usage rules.
+## Rights Reserved
+
+No source license automatically grants:
+
+- rights to the G-LLM, WujiJie, or 无极界 names, logos, icons, slogans, or
+  visual identity;
+- rights to claim official endorsement or partnership;
+- access to G-LLM hosted services, paid APIs, private datasets, or private
+  infrastructure; or
+- rights to assets expressly excluded from the Licensed Work.
+
+See [TRADEMARKS.md](./TRADEMARKS.md) and
+[LICENSE_POLICY.md](./LICENSE_POLICY.md).
 
 ## Contact
 
-For commercial licensing, OEM cooperation, enterprise deployment, or white-label authorization, contact the project owner:
-
 ```text
 GPROPHET LIMITED
 Email: licensing@gprophet.com
 Website: https://llm.gprophet.com/
 ```
 
-## Chinese Summary
+## 中文摘要
 
-G-LLM 桌面客户端由 GPROPHET LIMITED 发布。社区版采用 AGPL-3.0-only 许可证。你可以商用、修改和分发，但必须遵守 AGPL 的开源义务。
+G-LLM 桌面客户端 V1.1.0 采用 Business Source License 1.1。个人使用、
+学习研究、测试评估以及企业内部使用免费；未经书面商业授权，不得用于白标、
+OEM、转售、竞品分发或向第三方提供托管、管理服务，也不得绕过授权校验和
+付费功能控制。
 
-如果你希望闭源分发、白标改造、嵌入自有商业产品、向客户交付私有定制版，或不希望承担 AGPL 的源码开放义务，需要向 GPROPHET LIMITED 或其他授权版权方取得单独的商业授权。
-
-AGPL 许可证不自动授权使用 "G-LLM"、"WujiJie"、"无极界" 及相关 Logo、品牌、商标或官方服务。
-
-商业授权、OEM 合作、企业部署、白标授权请联系：
-
-```text
-GPROPHET LIMITED
-Email: licensing@gprophet.com
-Website: https://llm.gprophet.com/
-```
+V1.1.0 将于 2030-07-14 自动转换为 AGPL-3.0-only。V1.0.10 及以前
+版本继续适用相应历史版本中已经包含的 AGPL-3.0-only，不追溯撤回。

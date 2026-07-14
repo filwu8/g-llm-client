@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 GPROPHET LIMITED
+ * SPDX-License-Identifier: BUSL-1.1
+ * Change Date: 2030-07-14
+ */
+
 :root {
   color-scheme: light;
   --background: 210 40% 98%;
@@ -5643,6 +5649,35 @@ img.space-logo {
 .about-release-link:hover {
   border-color: hsl(var(--ring));
   background: hsl(var(--secondary));
+}
+
+.about-legal-summary {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid hsl(var(--border));
+  padding-top: 12px;
+}
+
+.about-legal-summary > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.about-legal-summary strong {
+  color: hsl(var(--foreground));
+  font-size: 13px;
+}
+
+.about-legal-summary span {
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.about-legal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .telemetry-switch {

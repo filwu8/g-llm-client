@@ -8,6 +8,14 @@
 - 确认 `package.json` 版本号与发布版本一致。
 - 执行 `git status -sb`，正式发布包必须来自干净工作区中的已提交 commit。
 - 执行 `pnpm build`，确保 TypeScript 和前端构建通过。
+- 执行 `pnpm licenses:generate`，确认 `THIRD_PARTY_NOTICES.md` 与锁定的生产依赖一致，且没有无法识别的许可证。
+- 确认 `LICENSE` 中的 Licensed Work 版本、Change Date 和 Change License 与本次发布一致；不得沿用上一版本参数而不复核。
+- 确认 `README.md`、`README.en-US.md`、`NOTICE`、安装协议和应用“关于本系统”中的许可说明一致。
+- 确认第一方源码保留版权、`SPDX-License-Identifier: BUSL-1.1` 和 Change Date 文件头。
+- 检查安装包资源目录包含 `legal/LICENSE.txt`、`legal/NOTICE.txt`、`legal/LICENSE_POLICY.md`、`legal/COMMERCIAL_LICENSE.md`、`legal/TRADEMARKS.md` 和 `legal/THIRD_PARTY_NOTICES.md`。
+- 从“关于本系统”逐一打开源码许可证、第三方声明、商业授权和商标政策，确认三端路径有效。
+- 对新依赖、复制代码、字体、图标、截图和其他资产做来源及许可证复核；不得发布来源不明或许可不兼容的内容。
+- 对拟公开的提交执行凭据、客户数据、私有提示词和内部资产扫描；仓库从私有改为公开前必须单独审批。
 - Windows 执行 `pnpm package:win`，确认生成 `dist/G-LLM-Setup-<version>-x64.exe`。
 - macOS 执行 `pnpm package:mac`，确认生成 macOS 产物。
 - Linux 执行 `pnpm package:linux`，确认生成 AppImage 和 deb 产物。

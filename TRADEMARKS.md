@@ -1,6 +1,6 @@
 # Trademark and Brand Policy
 
-This project contains source code licensed under AGPL-3.0-only. The license to the source code does not grant a license to use G-LLM brand assets owned or controlled by GPROPHET LIMITED.
+Current source is available under BUSL-1.1, while V1.0.10 and earlier remain under the license included in their release tags. No source license grants a license to use G-LLM brand assets owned or controlled by GPROPHET LIMITED.
 
 ## Protected Brand Assets
 
@@ -19,7 +19,7 @@ You may use the project name only when it is necessary to truthfully describe th
 
 - "Forked from G-LLM Desktop Client"
 - "Compatible with G-LLM API"
-- "Based on the open-source G-LLM client"
+- "Based on the source-available G-LLM client"
 
 These uses must not imply official endorsement, partnership, certification, or authorization.
 
@@ -35,11 +35,11 @@ Without written permission, you may not:
 
 ## Rebranded Forks
 
-If you distribute a fork or modified version, you should:
+If you are authorized to distribute a fork or modified version, you must:
 
 - Use your own product name and logo.
 - Clearly state that your version is a fork or derivative work.
-- Keep AGPL license notices and copyright notices.
+- Keep all applicable license notices and copyright notices.
 - Avoid using official G-LLM branding unless you have written authorization.
 
 ## Commercial Brand Authorization
@@ -56,11 +56,11 @@ Website: https://llm.gprophet.com/
 
 ## 中文说明
 
-本仓库源码采用 AGPL-3.0-only 许可证，但源码许可证不等于品牌、商标、Logo 授权。G-LLM、WujiJie、无极界及相关品牌资产由 GPROPHET LIMITED 保留权利。
+当前开发版本源码采用 BUSL-1.1；V1.0.10 及以前版本继续适用相应发布标签中的许可证。任何源码许可证都不等于品牌、商标或 Logo 授权。G-LLM、WujiJie、无极界及相关品牌资产由 GPROPHET LIMITED 保留权利。
 
 未经书面授权，不得使用 "G-LLM"、"WujiJie"、"无极界" 或相关 Logo、图标、宣传语、视觉资产发布修改版、白标版、商业发行版或对外服务。
 
-如果你基于本项目进行二次开发和分发，请使用自己的产品名称和 Logo，并清楚说明该版本是基于 G-LLM 开源项目的衍生版本。
+只有在相应源码许可证或商业授权允许分发时，才可以对外发布衍生版本；发布时必须使用自己的产品名称和 Logo，并清楚说明该版本是基于 G-LLM 源码可见项目的衍生版本。
 
 品牌授权、白标合作或联合品牌使用请联系：
 

@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 GPROPHET LIMITED
+ * SPDX-License-Identifier: BUSL-1.1
+ * Change Date: 2030-07-14
+ */
+
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import {
   app,
@@ -19,7 +25,7 @@ import { appendFileSync, mkdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-import type { AppSettings, ChatRequest, Conversation } from '../shared/types'
+import type { AppSettings, ChatRequest, Conversation, LegalDocument } from '../shared/types'
 import { checkForAppUpdate, DOWNLOAD_PAGE_URL } from './appUpdate'
 import { pickAttachments, preparePastedAttachments } from './attachments'
 import { captureScreenshot } from './screenshot'
@@ -134,6 +140,21 @@ const SCREENSHOT_WINDOW_HIDE_DELAY_MS = 180
 const APP_USER_MODEL_ID = 'com.gllm.wujijie'
 const shouldUseSingleInstanceLock = process.platform === 'win32'
 const gotSingleInstanceLock = !shouldUseSingleInstanceLock || app.requestSingleInstanceLock()
+const legalDocumentPaths = {
+  license: { development: 'LICENSE', packaged: 'LICENSE.txt' },
+  'third-party': { development: 'THIRD_PARTY_NOTICES.md', packaged: 'THIRD_PARTY_NOTICES.md' },
+  commercial: { development: 'COMMERCIAL_LICENSE.md', packaged: 'COMMERCIAL_LICENSE.md' },
+  trademarks: { development: 'TRADEMARKS.md', packaged: 'TRADEMARKS.md' }
+} satisfies Record<LegalDocument, { development: string; packaged: string }>
+
+function isLegalDocument(value: unknown): value is LegalDocument {
+  return typeof value === 'string' && Object.prototype.hasOwnProperty.call(legalDocumentPaths, value)
+}
+
+function getLegalDocumentPath(document: LegalDocument): string {
+  const fileName = legalDocumentPaths[document]
+  return is.dev ? join(process.cwd(), fileName.development) : join(process.resourcesPath, 'legal', fileName.packaged)
+}
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -809,6 +830,11 @@ app.whenReady().then(() => {
   ipcMain.handle('app:check-for-updates', () => checkForAppUpdate(app.getVersion()))
   ipcMain.handle('app:open-download-page', async () => {
     await shell.openExternal(DOWNLOAD_PAGE_URL)
+  })
+  ipcMain.handle('app:open-legal-document', async (_event, document: unknown) => {
+    if (!isLegalDocument(document)) throw new Error('Unsupported legal document')
+    const result = await shell.openPath(getLegalDocumentPath(document))
+    if (result) throw new Error(result)
   })
 
   ipcMain.handle('storage:get-data-location', () => getDataLocationInfo())

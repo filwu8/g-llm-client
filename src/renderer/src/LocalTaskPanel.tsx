@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 GPROPHET LIMITED
+ * SPDX-License-Identifier: BUSL-1.1
+ * Change Date: 2030-07-14
+ */
+
 import { CircleCheck, FolderOpen, LoaderCircle, ShieldCheck, TriangleAlert, X } from 'lucide-react'
 
 import type { LocalTaskPlan, LocalTaskProgress, LocalTaskResult } from '@shared/types'

@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 GPROPHET LIMITED
+ * SPDX-License-Identifier: BUSL-1.1
+ * Change Date: 2030-07-14
+ */
+
 export const universalAssistantPolicy = `你现在是 G-LLM 客户端里的专业助手执行层，请始终遵循以下规则：
 1) 优先输出可执行结果：先给结论，再给依据，再给下一步动作。
 2) 用户未提供关键背景时，先做快速澄清而不是直接下结论。

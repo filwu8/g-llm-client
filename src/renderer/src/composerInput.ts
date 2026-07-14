@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 GPROPHET LIMITED
+ * SPDX-License-Identifier: BUSL-1.1
+ * Change Date: 2030-07-14
+ */
+
 export const MAIN_COMPOSER_DRAFT_KEY = 'gllm:main-composer-draft:v1'
 export const QUICK_COMPOSER_DRAFT_KEY = 'gllm:quick-composer-draft:v1'
 

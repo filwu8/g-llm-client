@@ -4,9 +4,23 @@
 
 Current version: [V1.0.10](https://github.com/filwu8/g-llm-client/releases/tag/v1.0.10)
 
+> The `main` branch is developing V1.1.0. Starting with V1.1.0, the source is licensed under BUSL-1.1 for free personal and internal business use and will automatically change to AGPL-3.0-only on 2030-07-14. V1.0.10 and earlier remain under the AGPL-3.0-only license included in their release tags.
+
 [Download](https://llm.gprophet.com/download) | [Full changelog](https://llm.gprophet.com/download/changelog) | [GitHub Releases](https://github.com/filwu8/g-llm-client/releases)
 
 G-LLM Client is a cross-platform desktop AI client built by GPROPHET LIMITED for Windows, macOS, and Linux. The product direction is assistant-first: users choose or create a role-based assistant, then use one desktop client for model configuration, knowledge references, screenshots, file understanding, and multi-turn conversations.
+
+## Interface Preview
+
+The workspace agent can read and modify files inside a user-authorized directory while showing its actions in the conversation. Eligible paid G-LLM users can also enable the exclusive gold theme.
+
+![Business-plan assistant and workspace agent in the gold theme](./docs/images/gllm-gold-workspace.png)
+
+Local file tools can generate, modify, and compress files in a conversation. Light and dark themes are available to every user.
+
+| Dark theme | Light theme |
+| --- | --- |
+| ![PDF compression task in the dark theme](./docs/images/gllm-dark-file-tools.png) | ![PDF compression task in the light theme](./docs/images/gllm-light-file-tools.png) |
 
 ## V1.0.10 Highlights
 
@@ -111,11 +125,13 @@ Before shipping, use [docs/release-qa-checklist.md](./docs/release-qa-checklist.
 
 ## License
 
-G-LLM Desktop Client is published by GPROPHET LIMITED. The community edition is licensed under [AGPL-3.0-only](./LICENSE).
+G-LLM Desktop Client is published by GPROPHET LIMITED. The current V1.1.0 development version is licensed under the [Business Source License 1.1](./LICENSE) with an Additional Use Grant.
 
-You may use, modify, distribute, and commercially use this project as long as you comply with AGPL-3.0-only. If you want closed-source redistribution, white-label customization, embedding into a proprietary product, private customer delivery, or exemption from AGPL source disclosure obligations, you need a separate commercial license.
+Personal use, research, evaluation, and internal business operations are free. Without a written commercial license from GPROPHET LIMITED, you may not white-label or OEM the client, resell or rent it, release or distribute it as a competing product, or provide it to third parties as a hosted, managed, outsourcing, service-bureau, or application service.
 
-See [COMMERCIAL_LICENSE.md](./COMMERCIAL_LICENSE.md) for commercial licensing terms.
+V1.1.0 automatically changes to AGPL-3.0-only on 2030-07-14. V1.0.10 and earlier are unaffected and remain under the license included in each release tag.
+
+See [LICENSE](./LICENSE) and [LICENSE_POLICY.md](./LICENSE_POLICY.md) for the controlling scope, [COMMERCIAL_LICENSE.md](./COMMERCIAL_LICENSE.md) for commercial licensing, and [CONTRIBUTING.md](./CONTRIBUTING.md) before contributing code.
 
 For commercial licensing, OEM cooperation, enterprise deployment, or white-label authorization, contact:
 
@@ -125,4 +141,4 @@ Email: licensing@gprophet.com
 Website: https://llm.gprophet.com/
 ```
 
-The source code license does not grant rights to use "G-LLM", "WujiJie", "无极界", related logos, icons, slogans, or brand assets. See [TRADEMARKS.md](./TRADEMARKS.md) for trademark and brand usage rules.
+The source license does not grant rights to use "G-LLM", "WujiJie", "无极界", related logos, icons, slogans, or brand assets. See [TRADEMARKS.md](./TRADEMARKS.md) for brand rules and [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md) for third-party licenses.

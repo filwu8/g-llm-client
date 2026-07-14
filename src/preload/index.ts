@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 GPROPHET LIMITED
+ * SPDX-License-Identifier: BUSL-1.1
+ * Change Date: 2030-07-14
+ */
+
 import { contextBridge, ipcRenderer } from 'electron'
 
 import type {
@@ -21,6 +27,7 @@ import type {
   DataLocationChangeResult,
   DataLocationInfo,
   KnowledgeNote,
+  LegalDocument,
   LocalTaskPlan,
   LocalTaskProgress,
   LocalTaskResult,
@@ -39,6 +46,8 @@ const api = {
   getState: (): Promise<AppStateSnapshot> => ipcRenderer.invoke('app:get-state'),
   checkForUpdates: (): Promise<AppUpdateInfo> => ipcRenderer.invoke('app:check-for-updates'),
   openDownloadPage: (): Promise<void> => ipcRenderer.invoke('app:open-download-page'),
+  openLegalDocument: (document: LegalDocument): Promise<void> =>
+    ipcRenderer.invoke('app:open-legal-document', document),
   saveSettings: (settings: AppSettings): Promise<AppSettings> => ipcRenderer.invoke('settings:save', settings),
   saveProvider: (provider: ApiProvider): Promise<ApiProvider> => ipcRenderer.invoke('provider:save', provider),
   deleteProvider: (id: string): Promise<void> => ipcRenderer.invoke('provider:delete', id),
