@@ -68,6 +68,8 @@ import {
 } from 'react'
 
 import logo from './assets/gllm-logo.png'
+import { ChatErrorRetry } from './ChatErrorRetry'
+import { getChatErrorPresentation } from './chatErrors'
 import {
   getMessageSelectionSnapshot,
   writePlainTextToClipboard,
@@ -520,12 +522,13 @@ function formatWorkspaceError(value: string): string {
   const normalized = value
     .replace(/^Error invoking remote method 'workspace-agent:run':\s*Error:\s*/i, '')
     .trim()
-  const status = normalized.match(/(?:请求失败：|HTTP\s*)(429|500|502|503|504)\b/i)?.[1]
+  const status = normalized.match(/(?:请求失败：|HTTP\s*)(429|500|502|503|504|524)\b/i)?.[1]
   if (/<!doctype\s+html|<html[\s>]/i.test(normalized)) {
     if (status === '429') return '模型服务当前请求较多（429），自动重试后仍未恢复。'
     if (status === '502') return '模型网关暂时无法连接上游服务（502），自动重试后仍未恢复。'
     if (status === '503') return '模型服务暂时不可用（503），自动重试后仍未恢复。'
     if (status === '504') return '模型服务响应超时（504），自动重试后仍未恢复。'
+    if (status === '524') return '模型服务响应超时（524），自动重试后仍未恢复。'
     return '模型服务返回了异常网页响应，请稍后重试。'
   }
   return normalized || '工作区任务发生未知错误'
@@ -544,9 +547,11 @@ function applyChatChunkToConversation(conversation: Conversation, chunk: ChatChu
       return withTokenCount({ ...message, translation: `${message.translation ?? ''}${chunk.content}` })
     })
   } else if (chunk.error) {
+    const presentation = getChatErrorPresentation(chunk.error)
     messages.push({
-      ...createMessage('assistant', `请求失败：${chunk.error}`),
-      error: chunk.error
+      ...createMessage('assistant', presentation.userMessage),
+      error: presentation.technicalDetail,
+      retryAt: presentation.automaticallyRetryable ? Date.now() + 60_000 : undefined
     })
   } else if (chunk.webSearch) {
     if (last?.role === 'assistant') {
@@ -2241,7 +2246,7 @@ export default function App() {
               </div>
             ) : (
               <>
-              {activeConversation.messages.map((message) => {
+              {activeConversation.messages.map((message, messageIndex) => {
                 const isTranslating = translatingMessageIds.includes(message.id)
                 const messageTokens = estimateMessageTokenUsage(message)
 
@@ -2270,15 +2275,12 @@ export default function App() {
                           </div>
                         )}
                         {message.error && (
-                          <button
-                            className="message-retry-button"
+                          <ChatErrorRetry
+                            error={message.error}
+                            retryAt={messageIndex === activeConversation.messages.length - 1 && !message.workspaceArtifactRoot ? message.retryAt : undefined}
                             disabled={isStreaming}
-                            type="button"
-                            onClick={() => regenerateMessage(message.id)}
-                          >
-                            <RefreshCw size={15} />
-                            <span>{'\u91cd\u65b0\u53d1\u9001'}</span>
-                          </button>
+                            onRetry={() => regenerateMessage(message.id)}
+                          />
                         )}
                         {(message.retryAttempts?.length ?? 0) > 0 && (
                           <details className="message-retry-history">

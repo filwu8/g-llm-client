@@ -13,6 +13,7 @@ export interface ChatMessage {
   role: Role
   content: string
   error?: string
+  retryAt?: number
   attachments?: PreparedAttachment[]
   knowledgeRefs?: KnowledgeReference[]
   webSearch?: WebSearchActivity

@@ -4,7 +4,7 @@
  * Change Date: 2030-07-14
  */
 
-import { ArrowDown, ArrowUp, AtSign, Copy, ExternalLink, MessageSquarePlus, Minus, RefreshCw, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, AtSign, Copy, ExternalLink, MessageSquarePlus, Minus, X } from 'lucide-react'
 import {
   type KeyboardEvent,
   type MouseEvent as ReactMouseEvent,
@@ -16,6 +16,8 @@ import {
 } from 'react'
 
 import logo from './assets/gllm-logo.png'
+import { ChatErrorRetry } from './ChatErrorRetry'
+import { getChatErrorPresentation } from './chatErrors'
 import {
   getMessageSelectionSnapshot,
   writePlainTextToClipboard,
@@ -121,7 +123,8 @@ function createQuickConversation(assistant: Assistant, title = '快速对话'): 
 function applyChatChunk(conversation: Conversation, chunk: ChatChunk): Conversation {
   const messages = [...conversation.messages]
   const last = messages.at(-1)
-  const nextContent = chunk.error ? `发送失败：${chunk.error}` : chunk.content
+  const errorPresentation = chunk.error ? getChatErrorPresentation(chunk.error) : undefined
+  const nextContent = errorPresentation?.userMessage ?? chunk.content
 
   if (!nextContent && !chunk.webSearch && !chunk.usage) {
     return { ...conversation, updatedAt: Date.now() }
@@ -132,7 +135,8 @@ function applyChatChunk(conversation: Conversation, chunk: ChatChunk): Conversat
     messages[messages.length - 1] = {
       ...last,
       content,
-      error: chunk.error ?? last.error,
+      error: errorPresentation?.technicalDetail ?? last.error,
+      retryAt: errorPresentation?.automaticallyRetryable ? Date.now() + 60_000 : last.retryAt,
       webSearch: chunk.webSearch ?? last.webSearch,
       tokenCount: chunk.usage?.totalTokens ?? estimateTokenCount(content),
       inputTokens: chunk.usage?.inputTokens ?? last.inputTokens,
@@ -141,7 +145,8 @@ function applyChatChunk(conversation: Conversation, chunk: ChatChunk): Conversat
   } else {
     messages.push({
       ...createMessage('assistant', nextContent),
-      error: chunk.error,
+      error: errorPresentation?.technicalDetail,
+      retryAt: errorPresentation?.automaticallyRetryable ? Date.now() + 60_000 : undefined,
       webSearch: chunk.webSearch,
       tokenCount: chunk.usage?.totalTokens ?? estimateTokenCount(nextContent),
       inputTokens: chunk.usage?.inputTokens ?? 0,
@@ -362,7 +367,7 @@ export default function QuickChat() {
       if (chunk.done) {
         setIsStreaming(false)
         if (chunk.error) {
-          setStatus(chunk.error)
+          setStatus(getChatErrorPresentation(chunk.error).userMessage)
         } else if (chunk.warning) {
           setStatus(chunk.warning)
         }
@@ -639,25 +644,22 @@ export default function QuickChat() {
             </div>
           </section>
         ) : (
-          messages.map((message) => (
+          messages.map((message, messageIndex) => (
             <article
               key={message.id}
-              className={`quick-message ${message.role}`}
+              className={`quick-message ${message.role} ${message.error ? 'message-error' : ''}`}
               data-message-id={message.id}
               onContextMenu={(event) => openSelectionContextMenu(event, message)}
             >
               <div className="quick-message-bubble">
                 <MarkdownMessage content={message.content || (message.role === 'assistant' ? '正在思考...' : '')} />
                 {message.error && (
-                  <button
-                    className="message-retry-button"
+                  <ChatErrorRetry
+                    error={message.error}
+                    retryAt={messageIndex === messages.length - 1 ? message.retryAt : undefined}
                     disabled={isStreaming}
-                    type="button"
-                    onClick={() => retryMessage(message.id)}
-                  >
-                    <RefreshCw size={15} />
-                    <span>{'\u91cd\u65b0\u53d1\u9001'}</span>
-                  </button>
+                    onRetry={() => retryMessage(message.id)}
+                  />
                 )}
               </div>
             </article>

@@ -1265,6 +1265,40 @@ img.space-logo {
   opacity: 0.5;
 }
 
+.message-error-actions {
+  margin-top: 12px;
+}
+
+.message-error-actions .message-retry-button {
+  margin-top: 0;
+}
+
+.message-retry-countdown {
+  margin: 0 0 8px;
+  color: hsl(var(--muted-foreground));
+  font-size: 13px;
+}
+
+.message-error-detail {
+  margin-top: 10px;
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+}
+
+.message-error-detail summary {
+  width: fit-content;
+  cursor: pointer;
+}
+
+.message-error-detail pre {
+  max-height: 220px;
+  margin: 8px 0 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: 11px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
 .message-retry-history {
   margin-top: 10px;
   color: hsl(var(--muted-foreground));
