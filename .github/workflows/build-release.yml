@@ -11,17 +11,32 @@ on:
       - main
   workflow_dispatch:
 
-permissions:
-  contents: read
-
 concurrency:
   group: build-release-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  prepare-release:
+    name: Prepare GitHub Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Create draft release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
+            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft --generate-notes --title "$GITHUB_REF_NAME"
+
   build:
     name: Build ${{ matrix.name }}
+    needs: prepare-release
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
 
     strategy:
       fail-fast: false
@@ -29,16 +44,18 @@ jobs:
         include:
           - name: macOS x64 + arm64
             os: macos-latest
-            artifact_name: g-llm-macos
             package_script: package:mac
+            release_files: dist/*.dmg
           - name: Windows x64
             os: windows-latest
-            artifact_name: g-llm-windows
             package_script: package:win
+            release_files: dist/*.exe
           - name: Linux x64
             os: ubuntu-latest
-            artifact_name: g-llm-linux
             package_script: package:linux
+            release_files: |
+              dist/*.AppImage
+              dist/*.deb
 
     env:
       CSC_IDENTITY_AUTO_DISCOVERY: false
@@ -99,25 +116,15 @@ jobs:
             }
           }
 
-      - name: Upload packaged artifacts
-        uses: actions/upload-artifact@v4
+      - name: Upload release assets
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
         with:
-          name: ${{ matrix.artifact_name }}
-          if-no-files-found: error
-          retention-days: 14
-          path: |
-            dist/*.AppImage
-            dist/*.deb
-            dist/*.dmg
-            dist/*.exe
-            dist/*.msi
-            dist/*.pkg
-            dist/*.rpm
-            dist/*.zip
-            dist/*.blockmap
-            dist/latest*.yml
+          draft: true
+          fail_on_unmatched_files: true
+          files: ${{ matrix.release_files }}
 
-  release:
+  publish-release:
     name: Publish GitHub Release
     needs: build
     if: startsWith(github.ref, 'refs/tags/v')
@@ -127,28 +134,7 @@ jobs:
       contents: write
 
     steps:
-      - name: Download packaged artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: release-artifacts
-
-      - name: Show release files
-        run: find release-artifacts -maxdepth 3 -type f -print | sort
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          draft: false
-          prerelease: ${{ contains(github.ref_name, '-') }}
-          generate_release_notes: true
-          files: |
-            release-artifacts/**/*.AppImage
-            release-artifacts/**/*.deb
-            release-artifacts/**/*.dmg
-            release-artifacts/**/*.exe
-            release-artifacts/**/*.msi
-            release-artifacts/**/*.pkg
-            release-artifacts/**/*.rpm
-            release-artifacts/**/*.zip
-            release-artifacts/**/*.blockmap
-            release-artifacts/**/latest*.yml
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease=${{ contains(github.ref_name, '-') }}
