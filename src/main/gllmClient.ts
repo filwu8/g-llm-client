@@ -20,7 +20,6 @@ import type {
   PreparedAttachment,
   ProviderCheckResult,
   ProviderModel,
-  ThemeEntitlementResult,
   WebSearchActivity,
   WebSearchResult
 } from '../shared/types'
@@ -34,7 +33,7 @@ import {
   inferModelTypeFromMetadata,
   normalizeModelCapabilities
 } from '../shared/modelCapabilities'
-import { isOfficialGllmApiProvider } from '../shared/providers'
+import { supportsReasoningEffort } from '../shared/featureFlags'
 import { saveGeneratedImageResource } from './storage'
 
 interface ChatStreamEvent {
@@ -84,6 +83,12 @@ const compressedHistoryMaxCharacters = 14_000
 const compressedHistoryMessageCharacterLimit = 900
 const conversationSearchCatalogLimit = 160
 const conversationSearchTextLimit = 120_000
+
+function requestSignal(signal: AbortSignal | undefined, timeoutMs: number): AbortSignal {
+  const timeoutSignal = AbortSignal.timeout(timeoutMs)
+  return signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal
+}
+
 interface WebSearchPlan {
   intent: string
   queries: string[]
@@ -533,7 +538,7 @@ function readGeneratedImageDataUrl(source: string): { buffer: Buffer; extension:
   }
 }
 
-async function readGeneratedImageSource(source: string): Promise<{ buffer: Buffer; extension: string }> {
+async function readGeneratedImageSource(source: string, signal?: AbortSignal): Promise<{ buffer: Buffer; extension: string }> {
   if (source.startsWith('data:image/')) {
     const image = readGeneratedImageDataUrl(source)
     if (!image || image.buffer.byteLength === 0) throw new Error('图片生成接口返回了无效的 data URL')
@@ -544,7 +549,7 @@ async function readGeneratedImageSource(source: string): Promise<{ buffer: Buffe
     throw new Error('图片生成接口返回了不支持的图片地址')
   }
 
-  const response = await fetch(source, { signal: AbortSignal.timeout(120_000) })
+  const response = await fetch(source, { signal: requestSignal(signal, 120_000) })
   if (!response.ok) {
     throw new Error(`下载生成图片失败：${response.status}`)
   }
@@ -559,11 +564,11 @@ async function readGeneratedImageSource(source: string): Promise<{ buffer: Buffe
   }
 }
 
-async function persistGeneratedImageSources(sources: string[]): Promise<string[]> {
+async function persistGeneratedImageSources(sources: string[], signal?: AbortSignal): Promise<string[]> {
   const storedUrls: string[] = []
 
   for (const source of sources) {
-    const image = await readGeneratedImageSource(source)
+    const image = await readGeneratedImageSource(source, signal)
     const stored = saveGeneratedImageResource(image.buffer, image.extension)
     storedUrls.push(stored.url)
   }
@@ -643,13 +648,13 @@ function getImageGenerationFailureMessage(provider: ApiProvider, status: number,
   return `${provider.name} 图片生成请求失败：${status}${message ? ` ${message}` : ''}`.trim()
 }
 
-async function formatGeneratedImageResponse(prompt: string, payload: ImageGenerationPayload): Promise<string> {
+async function formatGeneratedImageResponse(prompt: string, payload: ImageGenerationPayload, signal?: AbortSignal): Promise<string> {
   const images = Array.from(new Set(collectGeneratedImageSources(payload)))
   if (images.length === 0) {
     throw new Error('图片生成接口没有返回可显示的图片 URL 或 b64_json')
   }
 
-  const storedImages = await persistGeneratedImageSources(images)
+  const storedImages = await persistGeneratedImageSources(images, signal)
   const revisedPrompts = getRevisedPrompts(payload)
   const blocks = [
     '已生成图片：',
@@ -663,7 +668,7 @@ async function formatGeneratedImageResponse(prompt: string, payload: ImageGenera
   return blocks.join('\n\n')
 }
 
-async function generateImageMessage(request: ChatRequest): Promise<string> {
+async function generateImageMessage(request: ChatRequest, signal?: AbortSignal): Promise<string> {
   const endpoint = buildProviderUrl(request.provider, request.provider.imageGenerationsPath ?? '/images/generations')
   const prompt = getImageGenerationPrompt(request)
   const response = await fetch(endpoint, {
@@ -675,7 +680,7 @@ async function generateImageMessage(request: ChatRequest): Promise<string> {
       n: 1,
       size: '1024x1024'
     }),
-    signal: AbortSignal.timeout(120_000)
+    signal: requestSignal(signal, 120_000)
   })
 
   if (!response.ok) {
@@ -684,7 +689,7 @@ async function generateImageMessage(request: ChatRequest): Promise<string> {
   }
 
   const payload = (await response.json()) as ImageGenerationPayload
-  return formatGeneratedImageResponse(prompt, payload)
+  return formatGeneratedImageResponse(prompt, payload, signal)
 }
 
 function fallbackAssistantSuggestion(keyword: string): AssistantSuggestion {
@@ -1179,7 +1184,7 @@ function getSearchPlanningContext(messages: ChatMessage[]): string {
     .map((message) => {
       const role = message.role === 'user' ? '用户' : '助手'
       const content = message.content.replace(/\s+/g, ' ').trim().slice(0, 700)
-      return `${formatLocalDateTime(message.createdAt)}｜${role}：${content}`
+      return `${role}：${content}`
     })
     .filter((line) => line.length > 3)
     .join('\n')
@@ -1192,7 +1197,15 @@ function sanitizeSearchPlan(plan: Partial<WebSearchPlan> | null, fallbackQuery: 
   const queries = Array.isArray(plan?.queries)
     ? plan.queries.map((query) => sanitizeSearchQuery(String(query))).filter(Boolean)
     : []
-  const uniqueQueries = Array.from(new Set(queries.length > 0 ? queries : [fallback].filter(Boolean))).slice(0, maxWebSearchQueries)
+  const includeFallback = fallback.length > 0 && fallback.length <= 48
+  const candidates = includeFallback ? [fallback, ...queries] : queries.length > 0 ? queries : [fallback].filter(Boolean)
+  const seen = new Set<string>()
+  const uniqueQueries = candidates.filter((query) => {
+    const key = query.toLocaleLowerCase()
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  }).slice(0, maxWebSearchQueries)
 
   return {
     intent,
@@ -1200,7 +1213,7 @@ function sanitizeSearchPlan(plan: Partial<WebSearchPlan> | null, fallbackQuery: 
   }
 }
 
-async function planWebSearch(request: ChatRequest): Promise<WebSearchPlan> {
+async function planWebSearch(request: ChatRequest, signal?: AbortSignal): Promise<WebSearchPlan> {
   const fallbackQuery = getLastUserQuery(request.messages)
   const context = getSearchPlanningContext(request.messages)
   if (!context) return sanitizeSearchPlan(null, fallbackQuery)
@@ -1216,18 +1229,18 @@ async function planWebSearch(request: ChatRequest): Promise<WebSearchPlan> {
           {
             role: 'system',
             content:
-              '你是联网搜索规划器。请根据对话上下文理解用户真正需要检索的公开信息，生成适合搜索引擎的简洁关键词。不要照抄用户整段原文，不要包含邮箱、手机号、身份证、API Key、客户姓名、合同全文、长编号等隐私或敏感内容。只返回 JSON。'
+              '你是联网搜索规划器。请根据对话上下文理解用户真正需要检索的公开信息，生成适合搜索引擎的简洁关键词。每条查询必须保留核心实体的完整名称、产品名或代码，不得把“科创50ETF”之类的实体拆成单字，也不得只保留年份或“最新、原因、分析”等泛化词。当前日期只能用于理解“今天、近期”等相对时间，不能取代主题实体。不要照抄用户整段原文，不要包含邮箱、手机号、身份证、API Key、客户姓名、合同全文、长编号等隐私或敏感内容。只返回 JSON。'
           },
           {
             role: 'user',
-            content: `对话上下文：\n${context}\n\n请返回 JSON：\n{\n  "intent": "一句话说明本次搜索意图",\n  "queries": ["1-3 个适合公开搜索的关键词，必要时包含时间、地点、公司名、股票代码、政策名等"]\n}`
+            content: `当前日期：${formatLocalDateTime(Date.now())}\n对话上下文：\n${context}\n\n请返回 JSON：\n{\n  "intent": "一句话说明本次搜索意图",\n  "queries": ["1-3 个适合公开搜索的关键词，必要时包含时间、地点、公司名、股票代码、政策名等"]\n}`
           }
         ],
         temperature: 0.1,
         max_tokens: 260,
         stream: false
       }),
-      signal: AbortSignal.timeout(12_000)
+      signal: requestSignal(signal, 12_000)
     })
 
     if (!response.ok) return sanitizeSearchPlan(null, fallbackQuery)
@@ -1236,18 +1249,19 @@ async function planWebSearch(request: ChatRequest): Promise<WebSearchPlan> {
     const content = payload.choices?.[0]?.message?.content ?? ''
     return sanitizeSearchPlan(extractJsonObject<Partial<WebSearchPlan>>(content), fallbackQuery)
   } catch {
+    signal?.throwIfAborted()
     return sanitizeSearchPlan(null, fallbackQuery)
   }
 }
 
-async function fetchPageExcerpt(url: string): Promise<string> {
+async function fetchPageExcerpt(url: string, signal?: AbortSignal): Promise<string> {
   if (!/^https?:\/\//i.test(url)) return ''
 
   const response = await fetch(url, {
     headers: {
       'User-Agent': 'Mozilla/5.0 G-LLM Desktop Client'
     },
-    signal: AbortSignal.timeout(8000)
+    signal: requestSignal(signal, 8000)
   })
   const contentType = response.headers.get('content-type') ?? ''
   if (!response.ok || !/text\/html|text\/plain|application\/json/i.test(contentType)) return ''
@@ -1255,14 +1269,14 @@ async function fetchPageExcerpt(url: string): Promise<string> {
   return stripHtml(await response.text()).slice(0, 1200)
 }
 
-async function searchWeb(query: string): Promise<WebSearchResult[]> {
+async function searchWeb(query: string, signal?: AbortSignal): Promise<WebSearchResult[]> {
   const searchUrl = `https://www.bing.com/search?format=rss&mkt=zh-CN&setlang=zh-CN&q=${encodeURIComponent(query)}`
   const response = await fetch(searchUrl, {
     headers: {
       Accept: 'application/rss+xml,text/xml,*/*',
       'User-Agent': 'Mozilla/5.0 G-LLM Desktop Client'
     },
-    signal: AbortSignal.timeout(10_000)
+    signal: requestSignal(signal, 10_000)
   })
 
   if (!response.ok) throw new Error(`搜索请求失败：${response.status}`)
@@ -1283,24 +1297,117 @@ async function searchWeb(query: string): Promise<WebSearchResult[]> {
   const withExcerpts = await Promise.all(
     results.slice(0, 3).map(async (result) => ({
       ...result,
-      excerpt: await fetchPageExcerpt(result.url).catch(() => '')
+      excerpt: await fetchPageExcerpt(result.url, signal).catch(() => {
+        signal?.throwIfAborted()
+        return ''
+      })
     }))
   )
 
   return [...withExcerpts, ...results.slice(3)]
 }
 
-async function searchWebWithPlan(plan: WebSearchPlan): Promise<WebSearchResult[]> {
-  const batches = await Promise.all(plan.queries.map((query) => searchWeb(query).catch(() => [])))
+async function searchNews(query: string, signal?: AbortSignal): Promise<WebSearchResult[]> {
+  const searchUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=zh-CN&gl=CN&ceid=CN:zh-Hans`
+  const response = await fetch(searchUrl, {
+    headers: {
+      Accept: 'application/rss+xml,text/xml,*/*',
+      'User-Agent': 'Mozilla/5.0 G-LLM Desktop Client'
+    },
+    signal: requestSignal(signal, 10_000)
+  })
+
+  if (!response.ok) throw new Error(`新闻搜索请求失败：${response.status}`)
+
+  const xml = await response.text()
+  return Array.from(xml.matchAll(/<item>([\s\S]*?)<\/item>/gi))
+    .slice(0, 8)
+    .map((match) => {
+      const item = match[1]
+      return {
+        title: getXmlTag(item, 'title'),
+        url: getXmlTag(item, 'link'),
+        snippet: getXmlTag(item, 'description')
+      }
+    })
+    .filter((item) => item.title && item.url)
+}
+
+const genericSearchTerms = new Set([
+  '最新', '近期', '今天', '今日', '本周', '本月', '原因', '分析', '市场', '行情', '相关', '主要', '情况',
+  '信息', '新闻', '消息', '影响', '变化', '上涨', '下跌', '大跌', '大涨', '资金', '政策', '数据', '报告',
+  'what', 'why', 'latest', 'recent', 'news', 'analysis', 'market', 'today'
+])
+
+function normalizeSearchMatchText(value: string): string {
+  return value.toLocaleLowerCase().replace(/[^\p{Letter}\p{Number}]+/gu, '')
+}
+
+function getSearchTopicTerms(plan: WebSearchPlan, fallbackQuery: string): string[] {
+  const source = `${fallbackQuery} ${plan.queries.join(' ')}`
+  const terms = Array.from(source.matchAll(/[\p{Script=Han}]{2,}|[a-zA-Z][a-zA-Z0-9._-]{2,}|\d{5,6}/gu))
+    .map((match) => normalizeSearchMatchText(match[0]))
+    .filter((term) => term.length >= 2 && !genericSearchTerms.has(term))
+  return Array.from(new Set(terms)).slice(0, 12)
+}
+
+function getSearchResultRelevance(result: WebSearchResult, terms: string[], fallbackQuery: string): number {
+  if (terms.length === 0) return 1
+  const title = normalizeSearchMatchText(result.title)
+  const details = normalizeSearchMatchText(`${result.snippet ?? ''} ${result.excerpt ?? ''} ${result.url}`)
+  const fallback = normalizeSearchMatchText(fallbackQuery)
+  let score = 0
+
+  if (fallback.length >= 3 && fallback.length <= 48) {
+    if (title.includes(fallback)) score += 10
+    else if (details.includes(fallback)) score += 5
+  }
+  for (const term of terms) {
+    if (title.includes(term)) score += 3
+    else if (details.includes(term)) score += 1
+  }
+  return score
+}
+
+function shouldSearchNews(plan: WebSearchPlan): boolean {
+  const text = `${plan.intent} ${plan.queries.join(' ')}`
+  return /最新|近期|今天|今日|本周|本月|新闻|消息|行情|上涨|下跌|大涨|大跌|资金|政策|ETF|股票|基金|指数|latest|recent|news|today/i.test(text)
+}
+
+async function searchWebWithPlan(plan: WebSearchPlan, fallbackQuery: string, signal?: AbortSignal): Promise<WebSearchResult[]> {
+  const includeNews = shouldSearchNews(plan)
+  const batches = await Promise.all(plan.queries.map(async (query) => {
+    const [newsResults, webResults] = await Promise.all([
+      includeNews ? searchNews(query, signal).catch(() => {
+        signal?.throwIfAborted()
+        return []
+      }) : Promise.resolve([]),
+      searchWeb(query, signal).catch(() => {
+        signal?.throwIfAborted()
+        return []
+      })
+    ])
+    return [...newsResults, ...webResults]
+  }))
+  const terms = getSearchTopicTerms(plan, fallbackQuery)
+  const rankedBatches = batches.map((batch) => batch
+    .map((result) => ({ result, relevance: getSearchResultRelevance(result, terms, fallbackQuery) }))
+    .filter((item) => item.relevance > 0)
+    .sort((first, second) => second.relevance - first.relevance))
   const seen = new Set<string>()
   const merged: WebSearchResult[] = []
 
-  for (const result of batches.flat()) {
-    const key = result.url.replace(/[?#].*$/, '').replace(/\/$/, '').toLowerCase()
-    if (!key || seen.has(key)) continue
-    seen.add(key)
-    merged.push(result)
-    if (merged.length >= 8) break
+  const maxBatchLength = Math.max(0, ...rankedBatches.map((batch) => batch.length))
+  for (let resultIndex = 0; resultIndex < maxBatchLength && merged.length < 8; resultIndex += 1) {
+    for (const batch of rankedBatches) {
+      const item = batch[resultIndex]
+      if (!item) continue
+      const key = item.result.url.replace(/[?#].*$/, '').replace(/\/$/, '').toLowerCase()
+      if (!key || seen.has(key)) continue
+      seen.add(key)
+      merged.push(item.result)
+      if (merged.length >= 8) break
+    }
   }
 
   return merged
@@ -1501,68 +1608,12 @@ export async function checkProviderConnection(provider: ApiProvider): Promise<Pr
   }
 }
 
-export async function checkGllmThemeEntitlement(provider: ApiProvider): Promise<ThemeEntitlementResult> {
-  if (!provider.apiKey.trim()) {
-    return {
-      ok: true,
-      eligible: false,
-      paid: false,
-      message: '需要先配置 G-LLM API Key'
-    }
-  }
-
-  if (!isOfficialGllmApiProvider(provider)) {
-    return {
-      ok: true,
-      eligible: false,
-      paid: false,
-      message: '金色主题仅支持 https://llm.gprophet.com/v1'
-    }
-  }
-
-  const endpoint = 'https://llm.gprophet.com/v1/client/entitlements'
-  try {
-    const response = await fetch(endpoint, {
-      method: 'GET',
-      headers: getProviderHeaders(provider)
-    })
-    if (!response.ok) {
-      const detail = extractProviderErrorMessage(await response.text().catch(() => ''))
-      return {
-        ok: false,
-        eligible: false,
-        paid: false,
-        message: `G-LLM 主题资格验证失败：${response.status}${detail ? ` ${detail}` : ''}`
-      }
-    }
-
-    const payload = (await response.json()) as {
-      paid?: unknown
-      entitlements?: { gold_theme?: unknown }
-    }
-    const paid = payload.paid === true
-    const eligible = payload.entitlements?.gold_theme === true
-    return {
-      ok: true,
-      eligible,
-      paid,
-      message: eligible ? '已验证官方 G-LLM API 资格' : '当前 API Key 尚未获得金色主题资格'
-    }
-  } catch (error) {
-    return {
-      ok: false,
-      eligible: false,
-      paid: false,
-      message: `G-LLM 主题资格验证失败：${error instanceof Error ? error.message : String(error)}`
-    }
-  }
-}
-
-export async function* streamGllmChat(request: ChatRequest): AsyncGenerator<ChatStreamEvent> {
+export async function* streamGllmChat(request: ChatRequest, signal?: AbortSignal): AsyncGenerator<ChatStreamEvent> {
   assertProviderReady(request.provider)
+  signal?.throwIfAborted()
 
   if (request.purpose !== 'translation' && shouldUseImageGenerationEndpoint(request.provider)) {
-    yield { content: await generateImageMessage(request) }
+    yield { content: await generateImageMessage(request, signal) }
     return
   }
 
@@ -1579,7 +1630,7 @@ export async function* streamGllmChat(request: ChatRequest): AsyncGenerator<Chat
         }
       }
 
-      const plan = await planWebSearch(request)
+      const plan = await planWebSearch(request, signal)
       yield {
         webSearch: {
           status: 'searching',
@@ -1592,7 +1643,7 @@ export async function* streamGllmChat(request: ChatRequest): AsyncGenerator<Chat
       }
 
       try {
-        const results = await searchWebWithPlan(plan)
+        const results = await searchWebWithPlan(plan, fallbackQuery, signal)
         const publicResults = results.map((result) => ({
           title: result.title.slice(0, 120),
           url: result.url,
@@ -1611,6 +1662,7 @@ export async function* streamGllmChat(request: ChatRequest): AsyncGenerator<Chat
           }
         }
       } catch (error) {
+        signal?.throwIfAborted()
         const message = error instanceof Error ? error.message : String(error)
         webContext = `\n\n[联网搜索资料]\n本次联网搜索没有成功：${message}。请明确告诉用户搜索失败，并基于已有上下文给出可核验的分析框架。`
         yield {
@@ -1629,7 +1681,12 @@ export async function* streamGllmChat(request: ChatRequest): AsyncGenerator<Chat
   }
 
   const endpoint = buildProviderUrl(request.provider, request.provider.chatCompletionsPath ?? '/chat/completions')
-  const buildRequestBody = (sendImages: boolean) => ({
+  const reasoningModel = request.provider.models.find((model) => model.id === request.provider.defaultModel)
+  const configuredReasoningEffort = supportsReasoningEffort(reasoningModel ?? request.provider.defaultModel) &&
+    request.reasoningEffort && request.reasoningEffort !== 'default'
+    ? request.reasoningEffort
+    : undefined
+  const buildRequestBody = (sendImages: boolean, includeReasoningEffort = true) => ({
     model: request.provider.defaultModel,
     messages: toOpenAiMessages(
       request.assistant,
@@ -1641,9 +1698,11 @@ export async function* streamGllmChat(request: ChatRequest): AsyncGenerator<Chat
     ),
     ...(request.settings.enableTemperature ? { temperature: request.settings.temperature } : {}),
     ...(request.settings.enableMaxTokens ? { max_tokens: request.settings.maxTokens } : {}),
+    ...(includeReasoningEffort && configuredReasoningEffort ? { reasoning_effort: configuredReasoningEffort } : {}),
     stream: true
   })
   const hasImages = hasSendableImageAttachments(request.messages)
+  let includeReasoningEffort = true
   let requestBody = buildRequestBody(true)
   let response = await fetch(endpoint, {
     method: 'POST',
@@ -1651,24 +1710,49 @@ export async function* streamGllmChat(request: ChatRequest): AsyncGenerator<Chat
     body: JSON.stringify({
       ...requestBody,
       stream_options: { include_usage: true }
-    })
+    }),
+    signal: requestSignal(signal, 120_000)
   })
 
   if (!response.ok && (response.status === 400 || response.status === 422)) {
     response = await fetch(endpoint, {
       method: 'POST',
       headers: getProviderHeaders(request.provider),
-      body: JSON.stringify(requestBody)
+      body: JSON.stringify(requestBody),
+      signal: requestSignal(signal, 120_000)
+    })
+  }
+
+  if (!response.ok && configuredReasoningEffort && (response.status === 400 || response.status === 422)) {
+    includeReasoningEffort = false
+    requestBody = buildRequestBody(true, false)
+    response = await fetch(endpoint, {
+      method: 'POST',
+      headers: getProviderHeaders(request.provider),
+      body: JSON.stringify(requestBody),
+      signal: requestSignal(signal, 120_000)
     })
   }
 
   if (!response.ok && hasImages && (response.status === 400 || response.status === 415 || response.status === 422)) {
-    requestBody = buildRequestBody(false)
+    requestBody = buildRequestBody(false, includeReasoningEffort)
     response = await fetch(endpoint, {
       method: 'POST',
       headers: getProviderHeaders(request.provider),
-      body: JSON.stringify(requestBody)
+      body: JSON.stringify(requestBody),
+      signal: requestSignal(signal, 120_000)
     })
+
+    if (!response.ok && configuredReasoningEffort && includeReasoningEffort && (response.status === 400 || response.status === 422)) {
+      includeReasoningEffort = false
+      requestBody = buildRequestBody(false, false)
+      response = await fetch(endpoint, {
+        method: 'POST',
+        headers: getProviderHeaders(request.provider),
+        body: JSON.stringify(requestBody),
+        signal: requestSignal(signal, 120_000)
+      })
+    }
   }
 
   if (!response.ok || !response.body) {

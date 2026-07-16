@@ -17,6 +17,7 @@ import type {
   AssistantSuggestion,
   AssistantSuggestionRequest,
   ChatChunk,
+  ChatActivityEvent,
   ChatRequest,
   ClipboardAttachmentInput,
   Conversation,
@@ -26,6 +27,8 @@ import type {
   DataArchiveResult,
   DataLocationChangeResult,
   DataLocationInfo,
+  FloatingMascotHintEvent,
+  FloatingMascotSkin,
   KnowledgeNote,
   LegalDocument,
   LocalTaskPlan,
@@ -52,8 +55,8 @@ const api = {
   saveProvider: (provider: ApiProvider): Promise<ApiProvider> => ipcRenderer.invoke('provider:save', provider),
   deleteProvider: (id: string): Promise<void> => ipcRenderer.invoke('provider:delete', id),
   checkProvider: (provider: ApiProvider): Promise<ProviderCheckResult> => ipcRenderer.invoke('provider:check', provider),
-  checkThemeEntitlement: (provider: ApiProvider): Promise<ThemeEntitlementResult> =>
-    ipcRenderer.invoke('provider:check-theme-entitlement', provider),
+  checkThemeEntitlement: (): Promise<ThemeEntitlementResult> =>
+    ipcRenderer.invoke('provider:check-theme-entitlement'),
   refreshProviderModels: (provider: ApiProvider): Promise<ApiProvider> =>
     ipcRenderer.invoke('provider:refresh-models', provider),
   setActiveProjectId: (id: string): Promise<AppStateSnapshot> => ipcRenderer.invoke('project:set-active', id),
@@ -104,12 +107,15 @@ const api = {
   showQuickPanel: (): Promise<void> => ipcRenderer.invoke('app:show-quick-panel'),
   hideQuickPanel: (): Promise<void> => ipcRenderer.invoke('app:hide-quick-panel'),
   showFloatingLogoMenu: (): Promise<void> => ipcRenderer.invoke('app:show-floating-logo-menu'),
+  getFloatingMascotSkin: (): Promise<FloatingMascotSkin> => ipcRenderer.invoke('app:get-floating-mascot-skin'),
+  getFloatingMascotHint: (): Promise<FloatingMascotHintEvent | null> => ipcRenderer.invoke('app:get-floating-mascot-hint'),
   beginFloatingLogoDrag: (): void => ipcRenderer.send('app:floating-logo-drag-start'),
   moveFloatingLogoDrag: (): void => ipcRenderer.send('app:floating-logo-drag-move'),
   endFloatingLogoDrag: (): void => ipcRenderer.send('app:floating-logo-drag-end'),
   getActiveAssistantId: (): Promise<string> => ipcRenderer.invoke('assistant:get-active'),
   setActiveAssistantId: (id: string): Promise<string> => ipcRenderer.invoke('assistant:set-active', id),
   streamChat: (request: ChatRequest): void => ipcRenderer.send('chat:stream', request),
+  cancelResponse: (conversationId: string): void => ipcRenderer.send('response:cancel', conversationId),
   onSettingsChanged: (listener: (settings: AppSettings) => void): (() => void) => {
     const handler = (_event: Electron.IpcRendererEvent, settings: AppSettings) => listener(settings)
     ipcRenderer.on('settings:changed', handler)
@@ -124,6 +130,21 @@ const api = {
     const handler = (_event: Electron.IpcRendererEvent, chunk: ChatChunk) => listener(chunk)
     ipcRenderer.on('chat:chunk', handler)
     return () => ipcRenderer.removeListener('chat:chunk', handler)
+  },
+  onChatActivity: (listener: (activity: ChatActivityEvent) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, activity: ChatActivityEvent) => listener(activity)
+    ipcRenderer.on('chat:activity', handler)
+    return () => ipcRenderer.removeListener('chat:activity', handler)
+  },
+  onFloatingMascotSkinChanged: (listener: (skin: FloatingMascotSkin) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, skin: FloatingMascotSkin) => listener(skin)
+    ipcRenderer.on('floating-mascot:skin-changed', handler)
+    return () => ipcRenderer.removeListener('floating-mascot:skin-changed', handler)
+  },
+  onFloatingMascotHint: (listener: (hint: FloatingMascotHintEvent) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, hint: FloatingMascotHintEvent) => listener(hint)
+    ipcRenderer.on('floating-mascot:hint', handler)
+    return () => ipcRenderer.removeListener('floating-mascot:hint', handler)
   },
   onLocalTaskProgress: (listener: (progress: LocalTaskProgress) => void): (() => void) => {
     const handler = (_event: Electron.IpcRendererEvent, progress: LocalTaskProgress) => listener(progress)

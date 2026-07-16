@@ -20,6 +20,7 @@ import type {
   WorkspaceAgentResult,
   WorkspaceToolActivity
 } from '../shared/types'
+import { supportsReasoningEffort } from '../shared/featureFlags'
 import { compressImageToTarget, renderPdfToTarget } from './localFileTasks'
 import { getConversationProjectMemoryContext, prepareConversationContext } from './gllmClient'
 
@@ -74,8 +75,25 @@ interface ModelRetryInfo {
   reason: string
 }
 
-function wait(milliseconds: number): Promise<void> {
-  return new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds))
+function requestSignal(signal: AbortSignal | undefined, timeoutMs: number): AbortSignal {
+  const timeoutSignal = AbortSignal.timeout(timeoutMs)
+  return signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal
+}
+
+function wait(milliseconds: number, signal?: AbortSignal): Promise<void> {
+  if (!signal) return new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds))
+  signal.throwIfAborted()
+  return new Promise((resolvePromise, rejectPromise) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', handleAbort)
+      resolvePromise()
+    }, milliseconds)
+    const handleAbort = () => {
+      clearTimeout(timer)
+      rejectPromise(signal.reason)
+    }
+    signal.addEventListener('abort', handleAbort, { once: true })
+  })
 }
 
 function friendlyModelStatus(status: number): string {
@@ -115,9 +133,11 @@ async function fetchModelWithRetry(
   request: WorkspaceAgentRequest,
   body: Record<string, unknown>,
   onRetry: (info: ModelRetryInfo) => void,
-  maxAttempts = 3
+  maxAttempts = 3,
+  signal?: AbortSignal
 ): Promise<Response> {
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    signal?.throwIfAborted()
     try {
       const response = await fetch(providerUrl(request), {
         method: 'POST',
@@ -126,7 +146,7 @@ async function fetchModelWithRetry(
           'Content-Type': 'application/json'
         },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(120_000)
+        signal: requestSignal(signal, 120_000)
       })
       if (response.ok || !retryableModelStatuses.has(response.status) || attempt === maxAttempts) return response
 
@@ -138,6 +158,7 @@ async function fetchModelWithRetry(
       })
       await response.arrayBuffer().catch(() => undefined)
     } catch (error) {
+      signal?.throwIfAborted()
       const reason = error instanceof Error && error.name === 'TimeoutError'
         ? '模型服务在 120 秒内没有响应'
         : error instanceof Error
@@ -146,7 +167,7 @@ async function fetchModelWithRetry(
       if (attempt === maxAttempts) throw new Error(`模型请求阶段失败：${reason}`)
       onRetry({ attempt, maxAttempts, reason })
     }
-    await wait([800, 1_800, 3_000][attempt - 1] ?? 3_000)
+    await wait([800, 1_800, 3_000][attempt - 1] ?? 3_000, signal)
   }
   throw new Error('模型请求阶段失败：已达到自动重试上限')
 }
@@ -416,7 +437,15 @@ async function runWorkspaceJavascript(root: string, code: string, purpose: strin
   return { output: `脚本任务：${purpose.trim().slice(0, 300) || '处理工作区文件'}\n${summary || '脚本执行完成'}${fileSummary}`.slice(0, 12_000), changedFiles }
 }
 
-async function executeTool(request: WorkspaceAgentRequest, root: string, permission: 'read' | 'read-write', name: string, args: Record<string, unknown>): Promise<{ output: string; changedFile?: string; changedFiles?: string[] }> {
+async function executeTool(
+  request: WorkspaceAgentRequest,
+  root: string,
+  permission: 'read' | 'read-write',
+  name: string,
+  args: Record<string, unknown>,
+  signal?: AbortSignal
+): Promise<{ output: string; changedFile?: string; changedFiles?: string[] }> {
+  signal?.throwIfAborted()
   const requireWrite = () => {
     if (permission !== 'read-write') throw new Error('当前会话只有读取权限')
   }
@@ -556,7 +585,7 @@ async function executeTool(request: WorkspaceAgentRequest, root: string, permiss
       method: 'POST',
       headers: { ...(request.provider.apiKey ? { Authorization: `Bearer ${request.provider.apiKey}` } : {}), 'Content-Type': 'application/json' },
       body: JSON.stringify({ model: request.provider.defaultModel, prompt, n: 1, response_format: 'b64_json' }),
-      signal: AbortSignal.timeout(180_000)
+      signal: requestSignal(signal, 180_000)
     })
     if (!response.ok) throw new Error(`图片生成失败：${response.status} ${(await response.text()).slice(0, 240)}`)
     const payload = await response.json() as { data?: Array<{ b64_json?: string; url?: string }> }
@@ -564,7 +593,7 @@ async function executeTool(request: WorkspaceAgentRequest, root: string, permiss
     let buffer: Buffer
     if (item?.b64_json) buffer = Buffer.from(item.b64_json, 'base64')
     else if (item?.url && /^https?:\/\//i.test(item.url)) {
-      const imageResponse = await fetch(item.url, { signal: AbortSignal.timeout(120_000) })
+      const imageResponse = await fetch(item.url, { signal: requestSignal(signal, 120_000) })
       if (!imageResponse.ok) throw new Error(`生成图片下载失败：${imageResponse.status}`)
       buffer = Buffer.from(await imageResponse.arrayBuffer())
     } else throw new Error('图片生成接口没有返回图片数据')
@@ -646,7 +675,12 @@ function fallbackMessages(messages: AgentMessage[]): Array<{ role: 'system' | 'u
   })
 }
 
-async function runWorkspaceAgentUnlocked(request: WorkspaceAgentRequest, onProgress?: (progress: WorkspaceAgentProgress) => void): Promise<WorkspaceAgentResult> {
+async function runWorkspaceAgentUnlocked(
+  request: WorkspaceAgentRequest,
+  onProgress?: (progress: WorkspaceAgentProgress) => void,
+  signal?: AbortSignal
+): Promise<WorkspaceAgentResult> {
+  signal?.throwIfAborted()
   const root = await realpath(request.workspace.rootPath)
   const activities: WorkspaceToolActivity[] = []
   const changedFiles = new Set<string>()
@@ -667,7 +701,7 @@ async function runWorkspaceAgentUnlocked(request: WorkspaceAgentRequest, onProgr
     activities.push(initialActivity)
     onProgress?.({ conversationId: request.conversationId, activity: { ...initialActivity } })
     try {
-      const observation = await executeTool(request, root, request.workspace.permission, 'list_directory', { path: '.' })
+      const observation = await executeTool(request, root, request.workspace.permission, 'list_directory', { path: '.' }, signal)
       initialActivity.status = 'completed'
       initialActivity.detail = observation.output.slice(0, 240)
       workspaceObservation = `当前工作目录清单：\n${observation.output}`
@@ -711,12 +745,19 @@ async function runWorkspaceAgentUnlocked(request: WorkspaceAgentRequest, onProgr
       changedFiles: completedFiles
     }
   }
+  const reasoningModel = request.provider.models.find((model) => model.id === request.provider.defaultModel)
+  const configuredReasoningEffort = supportsReasoningEffort(reasoningModel ?? request.provider.defaultModel) &&
+    request.reasoningEffort && request.reasoningEffort !== 'default'
+    ? request.reasoningEffort
+    : undefined
+  let reasoningEffortSupported = Boolean(configuredReasoningEffort)
 
   for (let turn = 0; turn < 14; turn += 1) {
+    signal?.throwIfAborted()
     let retryActivity: WorkspaceToolActivity | null = null
     const requestModel = async (body: Record<string, unknown>, maxAttempts = 3): Promise<Response> => {
       try {
-        const response = await fetchModelWithRetry(request, body, (info) => {
+        const handleRetry = (info: ModelRetryInfo) => {
           retryActivity ??= {
             id: `model_retry_${randomUUID()}`,
             tool: 'model_request_retry',
@@ -725,7 +766,15 @@ async function runWorkspaceAgentUnlocked(request: WorkspaceAgentRequest, onProgr
           }
           retryActivity.detail = `${info.reason}；正在进行第 ${info.attempt + 1}/${info.maxAttempts} 次请求`
           onProgress?.({ conversationId: request.conversationId, activity: { ...retryActivity } })
-        }, maxAttempts)
+        }
+        let response = await fetchModelWithRetry(request, body, handleRetry, maxAttempts, signal)
+        if (!response.ok && reasoningEffortSupported && 'reasoning_effort' in body && [400, 422].includes(response.status)) {
+          await response.arrayBuffer().catch(() => undefined)
+          reasoningEffortSupported = false
+          const compatibleBody = { ...body }
+          delete compatibleBody.reasoning_effort
+          response = await fetchModelWithRetry(request, compatibleBody, handleRetry, maxAttempts, signal)
+        }
         if (retryActivity) {
           retryActivity.status = response.ok ? 'completed' : 'failed'
           retryActivity.detail = response.ok
@@ -752,6 +801,7 @@ async function runWorkspaceAgentUnlocked(request: WorkspaceAgentRequest, onProgr
         model: request.provider.defaultModel,
         messages: nativeToolMode ? messages : fallbackMessages(messages),
         ...(nativeToolMode ? { tools: toolDefinitions, tool_choice: 'auto' } : {}),
+        ...(reasoningEffortSupported && configuredReasoningEffort ? { reasoning_effort: configuredReasoningEffort } : {}),
         stream: false,
         temperature: request.settings.enableTemperature ? Math.min(request.settings.temperature, 0.4) : 0.2,
         max_tokens: request.settings.enableMaxTokens ? request.settings.maxTokens : 4096
@@ -763,6 +813,7 @@ async function runWorkspaceAgentUnlocked(request: WorkspaceAgentRequest, onProgr
         response = await requestModel({
           model: request.provider.defaultModel,
           messages: fallbackMessages(messages),
+          ...(reasoningEffortSupported && configuredReasoningEffort ? { reasoning_effort: configuredReasoningEffort } : {}),
           stream: false,
           temperature: 0.1,
           max_tokens: request.settings.enableMaxTokens ? request.settings.maxTokens : 4096
@@ -774,6 +825,7 @@ async function runWorkspaceAgentUnlocked(request: WorkspaceAgentRequest, onProgr
       if (!responseMessage) throw new Error('模型没有返回可用响应')
       message = responseMessage
     } catch (error) {
+      signal?.throwIfAborted()
       if (!isArtifactSummaryRequest) throw error
       return completeVerifiedArtifacts(true)
     }
@@ -811,7 +863,7 @@ async function runWorkspaceAgentUnlocked(request: WorkspaceAgentRequest, onProgr
       onProgress?.({ conversationId: request.conversationId, activity: { ...activity } })
       try {
         const args = JSON.parse(call.function.arguments || '{}') as Record<string, unknown>
-        const result = await executeTool(request, root, request.workspace.permission, call.function.name, args)
+        const result = await executeTool(request, root, request.workspace.permission, call.function.name, args, signal)
         if (result.changedFile) {
           changedFiles.add(result.changedFile)
           needsVerification = true
@@ -825,6 +877,7 @@ async function runWorkspaceAgentUnlocked(request: WorkspaceAgentRequest, onProgr
         activity.detail = result.output.slice(0, 240)
         messages.push({ role: 'tool', tool_call_id: call.id, content: result.output })
       } catch (error) {
+        signal?.throwIfAborted()
         activity.status = 'failed'
         activity.detail = error instanceof Error ? error.message : '工具执行失败'
         messages.push({ role: 'tool', tool_call_id: call.id, content: `错误：${activity.detail}` })
@@ -836,7 +889,12 @@ async function runWorkspaceAgentUnlocked(request: WorkspaceAgentRequest, onProgr
   return { conversationId: request.conversationId, content: '已达到本次工作区操作的最大步骤数，请检查当前结果后继续。', activities, changedFiles: Array.from(changedFiles) }
 }
 
-export async function runWorkspaceAgent(request: WorkspaceAgentRequest, onProgress?: (progress: WorkspaceAgentProgress) => void): Promise<WorkspaceAgentResult> {
+export async function runWorkspaceAgent(
+  request: WorkspaceAgentRequest,
+  onProgress?: (progress: WorkspaceAgentProgress) => void,
+  signal?: AbortSignal
+): Promise<WorkspaceAgentResult> {
+  signal?.throwIfAborted()
   const root = await realpath(request.workspace.rootPath)
   const lockKey = process.platform === 'linux' ? root : root.toLocaleLowerCase()
   const owner = workspaceRunLocks.get(lockKey)
@@ -845,7 +903,7 @@ export async function runWorkspaceAgent(request: WorkspaceAgentRequest, onProgre
   }
   workspaceRunLocks.set(lockKey, request.conversationId)
   try {
-    return await runWorkspaceAgentUnlocked(request, onProgress)
+    return await runWorkspaceAgentUnlocked(request, onProgress, signal)
   } finally {
     if (workspaceRunLocks.get(lockKey) === request.conversationId) workspaceRunLocks.delete(lockKey)
   }

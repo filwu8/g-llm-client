@@ -13,7 +13,11 @@ import { fileURLToPath } from 'node:url'
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const outputPath = resolve(projectRoot, 'THIRD_PARTY_NOTICES.md')
 
-const rawInventory = execFileSync('pnpm', ['licenses', 'list', '--prod', '--json'], {
+const pnpmCommand = process.platform === 'win32'
+  ? { executable: process.env.ComSpec || 'cmd.exe', args: ['/d', '/s', '/c', 'pnpm'] }
+  : { executable: 'pnpm', args: [] }
+
+const rawInventory = execFileSync(pnpmCommand.executable, [...pnpmCommand.args, 'licenses', 'list', '--prod', '--json'], {
   cwd: projectRoot,
   encoding: 'utf8',
   maxBuffer: 64 * 1024 * 1024

@@ -44,6 +44,7 @@ import {
   Search,
   Send,
   Settings,
+  Square,
   SlidersHorizontal,
   Sparkles,
   Sun,
@@ -100,8 +101,7 @@ import {
   DEFAULT_PROVIDER_ID,
   PROVIDER_TEMPLATES,
   createProviderFromTemplate,
-  getProviderById,
-  isOfficialGllmApiProvider
+  getProviderById
 } from '@shared/providers'
 import {
   getAttachmentSupportLabel,
@@ -140,6 +140,7 @@ import type {
   ProviderCheckResult,
   ProviderTemplateCategory,
   ProviderTemplateId,
+  ReasoningEffort,
   ToolConfig,
   ToolConfigType,
   ThemeEntitlementResult,
@@ -469,6 +470,7 @@ function createConversation(assistant: Assistant, provider: ApiProvider, project
     messages: [],
     modelProviderId: provider.id,
     modelId: provider.defaultModel,
+    reasoningEffort: 'default',
     totalTokens: 0,
     totalInputTokens: 0,
     totalOutputTokens: 0,
@@ -648,6 +650,8 @@ function getComparableSettings(settings: AppSettings) {
     maxTokens: Number(settings.maxTokens),
     enableMaxTokens: settings.enableMaxTokens,
     messageSendShortcut: settings.messageSendShortcut,
+    floatingMascotSkin: settings.floatingMascotSkin,
+    floatingMascotHints: settings.floatingMascotHints,
     telemetryEnabled: settings.telemetryEnabled,
     setupCompleted: settings.setupCompleted
   }
@@ -788,6 +792,7 @@ export default function App() {
     () => (activeConversation ? getEffectiveProvider(activeConversation, assistantDefaultProvider, providers) : assistantDefaultProvider),
     [activeConversation, assistantDefaultProvider, providers]
   )
+  const activeReasoningEffort = activeConversation?.reasoningEffort ?? 'default'
   const needsApiKey = Boolean(settings && conversationProvider.requiresApiKey && !conversationProvider.apiKey.trim())
   const activeConversationTranslationSignature = activeConversation?.messages
     .map((message) => message.translation?.length ?? 0)
@@ -862,35 +867,11 @@ export default function App() {
     }
   }
 
-  async function checkThemeEntitlement(provider: ApiProvider): Promise<ThemeEntitlementResult> {
-    const result = await window.gllm.checkThemeEntitlement(provider)
-    if (result.ok) {
-      setGoldThemeEntitled(result.eligible)
-      setGoldThemeEntitlementChecked(true)
-    }
-    return result
-  }
-
-  async function verifyGoldThemeEntitlement(providerList: ApiProvider[]): Promise<void> {
-    const candidates = providerList.filter(
-      (provider) => isOfficialGllmApiProvider(provider) && Boolean(provider.apiKey.trim())
-    )
-    if (candidates.length === 0) {
-      setGoldThemeEntitled(false)
-      setGoldThemeEntitlementChecked(true)
-      return
-    }
-
-    for (const provider of candidates) {
-      const result = await window.gllm.checkThemeEntitlement(provider)
-      if (result.ok && result.eligible) {
-        setGoldThemeEntitled(true)
-        setGoldThemeEntitlementChecked(true)
-        return
-      }
-    }
-    setGoldThemeEntitled(false)
+  async function checkThemeEntitlement(): Promise<ThemeEntitlementResult> {
+    const result = await window.gllm.checkThemeEntitlement()
+    setGoldThemeEntitled(result.eligible)
     setGoldThemeEntitlementChecked(true)
+    return result
   }
 
   useEffect(() => {
@@ -903,7 +884,6 @@ export default function App() {
       const nextProviders = state.providers.length > 0 ? state.providers : [DEFAULT_PROVIDER]
       const provider = getProviderById(state.settings.activeProviderId, nextProviders)
       applyAppState(state, { selectFirstConversation: true })
-      void verifyGoldThemeEntitlement(nextProviders)
       if (!state.settings.setupCompleted) {
         setAgreementOpen(true)
       } else if (provider.requiresApiKey && !provider.apiKey.trim()) {
@@ -913,8 +893,8 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    if (settings) applyDocumentTheme(settings.theme, goldThemeEntitled || !goldThemeEntitlementChecked)
-  }, [goldThemeEntitled, goldThemeEntitlementChecked, settings?.theme])
+    if (settings) applyDocumentTheme(settings.theme, true)
+  }, [settings?.theme])
 
   useEffect(() => {
     void window.gllm.setActiveAssistantId(activeAssistantId)
@@ -1491,6 +1471,37 @@ export default function App() {
     showToolNotice(`本会话已切换到 ${conversationProvider.name} · ${nextModelId}`)
   }
 
+  function changeActiveConversationReasoningEffort(reasoningEffort: ReasoningEffort) {
+    if (activeConversation?.reasoningEffort === reasoningEffort) return
+
+    const conversation = activeConversation ?? createConversation(activeAssistant, conversationProvider, activeProjectId)
+    const nextConversation: Conversation = {
+      ...conversation,
+      reasoningEffort,
+      updatedAt: Date.now()
+    }
+
+    saveConversationUpdate(nextConversation)
+    if (!activeConversation) setActiveConversationId(nextConversation.id)
+  }
+
+  function changeActiveConversationModelAndReasoning(modelId: string, reasoningEffort: ReasoningEffort) {
+    const nextModelId = modelId.trim()
+    if (!nextModelId) return
+
+    const conversation = activeConversation ?? createConversation(activeAssistant, conversationProvider, activeProjectId)
+    const nextConversation: Conversation = {
+      ...conversation,
+      modelProviderId: conversationProvider.id,
+      modelId: nextModelId,
+      reasoningEffort,
+      updatedAt: Date.now()
+    }
+
+    saveConversationUpdate(nextConversation)
+    if (!activeConversation) setActiveConversationId(nextConversation.id)
+  }
+
   function getSelectedTextForMessage(messageId: string): string {
     return getMessageSelectionForMessage(messageId)?.text ?? ''
   }
@@ -1676,10 +1687,11 @@ export default function App() {
       const result = await window.gllm.runWorkspaceAgent({
         conversationId: nextConversation.id,
         workspace,
-      provider,
-      messages: nextConversation.messages,
-      settings,
-      projectMemory: nextConversation.projectMemory
+        provider,
+        messages: nextConversation.messages,
+        settings,
+        reasoningEffort: nextConversation.reasoningEffort,
+        projectMemory: nextConversation.projectMemory
       })
       const assistantMessage: ChatMessage = {
         ...createMessage('assistant', result.content),
@@ -1698,7 +1710,12 @@ export default function App() {
       void window.gllm.saveConversation(completedConversation)
       if (result.changedFiles.length > 0) showToolNotice(`已修改 ${result.changedFiles.length} 个工作区文件`)
     } catch (error) {
-      const message = formatWorkspaceError(error instanceof Error ? error.message : '未知错误')
+      const rawMessage = error instanceof Error ? error.message : '未知错误'
+      if (/任务已停止|AbortError|aborted/i.test(rawMessage)) {
+        showToolNotice('已停止生成')
+        return
+      }
+      const message = formatWorkspaceError(rawMessage)
       const currentAttempt: MessageRetryAttempt = {
         attemptedAt: Date.now(),
         error: message,
@@ -1769,6 +1786,7 @@ export default function App() {
       provider: conversationProvider,
       messages: nextConversation.messages,
       settings,
+      reasoningEffort: nextConversation.reasoningEffort,
       webSearchEnabled
     })
   }
@@ -1994,8 +2012,14 @@ export default function App() {
       provider: activeConversation?.assistantId === activeAssistant.id ? conversationProvider : assistantDefaultProvider,
       messages: nextConversation.messages,
       settings,
+      reasoningEffort: nextConversation.reasoningEffort,
       webSearchEnabled
     })
+  }
+
+  function stopGenerating() {
+    if (!isStreaming || !activeConversation) return
+    window.gllm.cancelResponse(activeConversation.id)
   }
 
   async function saveSettings(next: AppSettings) {
@@ -2038,7 +2062,6 @@ export default function App() {
     const saved = await window.gllm.saveProvider(next)
     const nextProviders = [saved, ...providers.filter((provider) => provider.id !== saved.id)]
     setProviders(nextProviders)
-    void verifyGoldThemeEntitlement(nextProviders)
     return saved
   }
 
@@ -2050,7 +2073,6 @@ export default function App() {
     const saved = await window.gllm.refreshProviderModels(next)
     const nextProviders = [saved, ...providers.filter((provider) => provider.id !== saved.id)]
     setProviders(nextProviders)
-    void verifyGoldThemeEntitlement(nextProviders)
     return saved
   }
 
@@ -2058,7 +2080,6 @@ export default function App() {
     await window.gllm.deleteProvider(id)
     const nextProviders = providers.filter((provider) => provider.id !== id)
     setProviders(nextProviders)
-    void verifyGoldThemeEntitlement(nextProviders)
     setSettings((current) => (current?.activeProviderId === id ? { ...current, activeProviderId: DEFAULT_PROVIDER_ID } : current))
   }
 
@@ -2536,14 +2557,6 @@ export default function App() {
                   <Wrench size={16} />
                 </button>
               </div>
-              <ModelPickerMenu
-                className="composer-model-picker"
-                provider={conversationProvider}
-                value={conversationProvider.defaultModel}
-                variant="dropdown"
-                placement="top"
-                onChange={changeActiveConversationModel}
-              />
             </div>
             {currentWorkspace && (
               <WorkspaceBar
@@ -2641,16 +2654,35 @@ export default function App() {
                 placeholder={needsApiKey ? '请先配置 API Key' : `向 ${activeAssistant.name} 发送消息`}
                 rows={1}
               />
-              <button
-                className="send-button"
-                disabled={
-                  (!draft.trim() && pendingAttachments.length === 0 && pendingQuoteRefs.length === 0 && pendingKnowledgeRefs.length === 0) ||
-                  isStreaming
-                }
-                title={`发送（${messageSendShortcutLabel}）`}
-              >
-                <Send size={18} />
-              </button>
+              <div className="composer-input-actions">
+                <ModelPickerMenu
+                  className="composer-model-picker"
+                  provider={conversationProvider}
+                  value={conversationProvider.defaultModel}
+                  variant="dropdown"
+                  placement="top"
+                  showTriggerCapabilities={false}
+                  reasoningEffort={activeReasoningEffort}
+                  onReasoningEffortChange={changeActiveConversationReasoningEffort}
+                  onModelReasoningChange={changeActiveConversationModelAndReasoning}
+                  onChange={changeActiveConversationModel}
+                />
+                <button
+                  className={`send-button${isStreaming ? ' stop' : ''}`}
+                  disabled={
+                    !isStreaming &&
+                    !draft.trim() &&
+                    pendingAttachments.length === 0 &&
+                    pendingQuoteRefs.length === 0 &&
+                    pendingKnowledgeRefs.length === 0
+                  }
+                  onClick={isStreaming ? stopGenerating : undefined}
+                  title={isStreaming ? '停止生成' : `发送（${messageSendShortcutLabel}）`}
+                  type={isStreaming ? 'button' : 'submit'}
+                >
+                  {isStreaming ? <Square size={15} fill="currentColor" /> : <Send size={18} />}
+                </button>
+              </div>
             </div>
           </form>
         </section>
@@ -4585,7 +4617,7 @@ function SettingsPanel({
   onSaveSettings: (settings: AppSettings) => Promise<AppSettings>
   onSaveProvider: (provider: ApiProvider) => Promise<ApiProvider>
   onCheckProvider: (provider: ApiProvider) => Promise<ProviderCheckResult>
-  onCheckThemeEntitlement: (provider: ApiProvider) => Promise<ThemeEntitlementResult>
+  onCheckThemeEntitlement: () => Promise<ThemeEntitlementResult>
   onRefreshProviderModels: (provider: ApiProvider) => Promise<ApiProvider>
   onDeleteProvider: (id: string) => Promise<void>
   onDataLocationChange: (info: DataLocationInfo) => void
@@ -4624,12 +4656,6 @@ function SettingsPanel({
   useEffect(() => {
     if (dataLocation) setDataLocationInfo(dataLocation)
   }, [dataLocation])
-
-  useEffect(() => {
-    if (goldThemeEntitlementChecked && !goldThemeEntitled && settingsDraft.theme === 'gold') {
-      setSettingsDraft((current) => ({ ...current, theme: 'light' }))
-    }
-  }, [goldThemeEntitled, goldThemeEntitlementChecked, settingsDraft.theme])
 
   useEffect(() => {
     if (!dataLocationInfo) {
@@ -4732,13 +4758,25 @@ function SettingsPanel({
         modelsUpdatedAt: Date.now()
       })
     }
-    if (result.ok && providerDraft.templateId === 'gllm') {
-      setIsCheckingThemeEntitlement(true)
-      const entitlement = await onCheckThemeEntitlement(providerDraft)
+    setIsChecking(false)
+  }
+
+  async function selectGoldTheme() {
+    if (isCheckingThemeEntitlement) return
+
+    setIsCheckingThemeEntitlement(true)
+    setThemeEntitlementStatus('')
+    try {
+      const entitlement = await onCheckThemeEntitlement()
       setThemeEntitlementStatus(entitlement.message)
+      if (entitlement.eligible) {
+        setSettingsDraft((current) => ({ ...current, theme: 'gold' }))
+      }
+    } catch (error) {
+      setThemeEntitlementStatus(error instanceof Error ? error.message : '金色主题资格检测失败')
+    } finally {
       setIsCheckingThemeEntitlement(false)
     }
-    setIsChecking(false)
   }
 
   async function refreshModels() {
@@ -5216,26 +5254,35 @@ function SettingsPanel({
                   </span>
                 </label>
 
-                {goldThemeEntitled && (
-                  <label className={`theme-option gold ${settingsDraft.theme === 'gold' ? 'active' : ''}`}>
-                    <input
-                      checked={settingsDraft.theme === 'gold'}
-                      name="app-theme"
-                      type="radio"
-                      value="gold"
-                      onChange={() => setSettingsDraft({ ...settingsDraft, theme: 'gold' })}
-                    />
-                    <span className="theme-preview gold"><Crown size={19} /></span>
-                    <span>
-                      <strong>金色</strong>
-                      <small>专业尊享</small>
-                    </span>
-                  </label>
-                )}
+                <label
+                  aria-disabled={goldThemeEntitlementChecked && !goldThemeEntitled}
+                  className={`theme-option gold ${settingsDraft.theme === 'gold' ? 'active' : ''} ${goldThemeEntitlementChecked && !goldThemeEntitled ? 'disabled' : ''}`}
+                  title={goldThemeEntitlementChecked && !goldThemeEntitled ? themeEntitlementStatus : '选择时检测官方 G-LLM 调用占比'}
+                  onClick={goldThemeEntitlementChecked && !goldThemeEntitled
+                    ? (event) => {
+                        event.preventDefault()
+                        void selectGoldTheme()
+                      }
+                    : undefined}
+                >
+                  <input
+                    checked={settingsDraft.theme === 'gold'}
+                    disabled={isCheckingThemeEntitlement || (goldThemeEntitlementChecked && !goldThemeEntitled)}
+                    name="app-theme"
+                    type="radio"
+                    value="gold"
+                    onChange={() => void selectGoldTheme()}
+                  />
+                  <span className="theme-preview gold"><Crown size={19} /></span>
+                  <span>
+                    <strong>金色</strong>
+                    <small>{goldThemeEntitlementChecked && !goldThemeEntitled ? '官方调用占比需超过 50%' : '专业尊享'}</small>
+                  </span>
+                </label>
               </div>
               {(isCheckingThemeEntitlement || themeEntitlementStatus) && (
                 <small className="theme-entitlement-status">
-                  {isCheckingThemeEntitlement ? '正在验证 G-LLM 主题资格...' : themeEntitlementStatus}
+                  {isCheckingThemeEntitlement ? '正在统计官方 G-LLM 调用占比...' : themeEntitlementStatus}
                 </small>
               )}
             </section>

@@ -6,7 +6,10 @@
 
 export type Role = 'system' | 'user' | 'assistant'
 export type MessageSendShortcut = 'enter' | 'ctrl-enter'
+export type ReasoningEffort = 'default' | 'low' | 'medium' | 'high'
 export type AppTheme = 'light' | 'dark' | 'gold'
+export type FloatingMascotSkin = 'blue' | 'gold'
+export type FloatingMascotAppearance = 'auto' | FloatingMascotSkin
 
 export interface ChatMessage {
   id: string
@@ -169,6 +172,7 @@ export interface Conversation {
   messages: ChatMessage[]
   modelProviderId?: string
   modelId?: string
+  reasoningEffort?: ReasoningEffort
   workspace?: ConversationWorkspace
   projectMemory?: ConversationProjectMemory
   totalTokens?: number
@@ -327,8 +331,16 @@ export interface ProviderCheckResult {
 export interface ThemeEntitlementResult {
   ok: boolean
   eligible: boolean
-  paid: boolean
   message: string
+  totalRequests: number
+  officialRequests: number
+  officialRequestRatio: number
+}
+
+export interface ThemeRequestUsage {
+  totalRequests: number
+  officialRequests: number
+  updatedAt?: number
 }
 
 export interface Project {
@@ -378,6 +390,7 @@ export interface WorkspaceAgentRequest {
   provider: ApiProvider
   messages: ChatMessage[]
   settings: AppSettings
+  reasoningEffort?: ReasoningEffort
   projectMemory?: ConversationProjectMemory
 }
 
@@ -417,6 +430,8 @@ export interface AppSettings {
   maxTokens: number
   enableMaxTokens: boolean
   messageSendShortcut: MessageSendShortcut
+  floatingMascotSkin: FloatingMascotAppearance
+  floatingMascotHints: boolean
   telemetryEnabled: boolean
   setupCompleted: boolean
 }
@@ -456,6 +471,7 @@ export interface ChatRequest {
   provider: ApiProvider
   messages: ChatMessage[]
   settings: AppSettings
+  reasoningEffort?: ReasoningEffort
   webSearchEnabled?: boolean
   purpose?: 'chat' | 'translation'
   targetMessageId?: string
@@ -477,6 +493,18 @@ export interface ChatChunk {
   warning?: string
   finishReason?: string
   isTruncated?: boolean
+}
+
+export interface ChatActivityEvent {
+  conversationId: string
+  active: boolean
+  error?: string
+}
+
+export interface FloatingMascotHintEvent {
+  message: string
+  placement: 'left' | 'right'
+  tone: 'idle' | 'success' | 'error'
 }
 
 export interface ConversationChangeEvent {

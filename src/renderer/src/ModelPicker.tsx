@@ -13,7 +13,15 @@ import {
   MODEL_CAPABILITY_LABELS,
   normalizeModelCapabilities
 } from '@shared/modelCapabilities'
-import type { ApiProvider, ProviderModel } from '@shared/types'
+import { supportsReasoningEffort } from '@shared/featureFlags'
+import type { ApiProvider, ProviderModel, ReasoningEffort } from '@shared/types'
+
+const reasoningEffortOptions: Array<{ value: ReasoningEffort; label: string; title: string }> = [
+  { value: 'default', label: '默认', title: '由模型或上游服务决定，兼容性最好' },
+  { value: 'low', label: '低', title: '响应更快，适合简单问答和改写' },
+  { value: 'medium', label: '中', title: '在速度和推理深度之间平衡' },
+  { value: 'high', label: '高', title: '投入更多推理计算，适合复杂分析和编程' }
+]
 
 const modelNameCollator = new Intl.Collator(['zh-CN', 'en'], {
   numeric: true,
@@ -180,35 +188,74 @@ function ModelPickerList({
   models,
   selectedModelId,
   onSelect,
+  reasoningEffort,
+  onReasoningEffortChange,
+  onModelReasoningChange,
   emptyLabel = '没有找到匹配的模型'
 }: {
   models: ProviderModel[]
   selectedModelId: string
   onSelect: (modelId: string) => void
+  reasoningEffort?: ReasoningEffort
+  onReasoningEffortChange?: (effort: ReasoningEffort) => void
+  onModelReasoningChange?: (modelId: string, effort: ReasoningEffort) => void
   emptyLabel?: string
 }) {
   return (
     <div className="conversation-model-list" role="listbox" aria-label="模型">
       {models.map((model) => {
         const subtitle = getModelSubtitle(model)
+        const selected = model.id === selectedModelId
+        const showReasoningOptions = Boolean(
+          supportsReasoningEffort(model) && (onModelReasoningChange || (selected && onReasoningEffortChange))
+        )
         return (
-          <button
+          <div
             key={model.id}
-            aria-selected={model.id === selectedModelId}
-            className={model.id === selectedModelId ? 'active' : ''}
+            aria-selected={selected}
+            className={`conversation-model-option ${selected ? 'active' : ''} ${showReasoningOptions ? 'has-reasoning-options' : ''}`.trim()}
             onClick={() => onSelect(model.id)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault()
+                onSelect(model.id)
+              }
+            }}
             role="option"
+            tabIndex={0}
             title={getModelDisplayLabel(model)}
-            type="button"
           >
             <span className="conversation-model-info">
               <strong>{getModelTitle(model)}</strong>
               {subtitle && <small>{subtitle}</small>}
             </span>
+            {showReasoningOptions && (
+              <span className="model-inline-reasoning" aria-label="推理强度">
+                {reasoningEffortOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    aria-pressed={(reasoningEffort ?? 'default') === option.value}
+                    className={(reasoningEffort ?? 'default') === option.value ? 'active' : ''}
+                    title={option.title}
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      if (onModelReasoningChange) {
+                        onModelReasoningChange(model.id, option.value)
+                      } else {
+                        onReasoningEffortChange?.(option.value)
+                      }
+                    }}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </span>
+            )}
             <span className="model-capability-list">
               <ModelCapabilityBadges model={model} />
             </span>
-          </button>
+          </div>
         )
       })}
       {models.length === 0 && <div className="conversation-model-empty">{emptyLabel}</div>}
@@ -224,7 +271,10 @@ export function ModelPickerMenu({
   className = '',
   placement = 'bottom',
   disabled = false,
-  showTriggerCapabilities = true
+  showTriggerCapabilities = true,
+  reasoningEffort,
+  onReasoningEffortChange,
+  onModelReasoningChange
 }: {
   provider: ApiProvider
   value: string
@@ -234,6 +284,9 @@ export function ModelPickerMenu({
   placement?: 'bottom' | 'top'
   disabled?: boolean
   showTriggerCapabilities?: boolean
+  reasoningEffort?: ReasoningEffort
+  onReasoningEffortChange?: (effort: ReasoningEffort) => void
+  onModelReasoningChange?: (modelId: string, effort: ReasoningEffort) => void
 }) {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
@@ -244,6 +297,12 @@ export function ModelPickerMenu({
   const visibleModelOptions = normalizedQuery
     ? modelOptions.filter((model) => getModelSearchText(model).includes(normalizedQuery))
     : modelOptions
+  const selectedReasoningEffort = reasoningEffort ?? 'default'
+  const selectedReasoningOption = reasoningEffortOptions.find((option) => option.value === selectedReasoningEffort)
+    ?? reasoningEffortOptions[0]
+  const showReasoningValue = Boolean(
+    (onReasoningEffortChange || onModelReasoningChange) && supportsReasoningEffort(selectedModel)
+  )
 
   useEffect(() => {
     setQuery('')
@@ -298,17 +357,25 @@ export function ModelPickerMenu({
     const subtitle = selectedModel ? getModelSubtitle(selectedModel) : ''
 
     return (
-      <div className={`model-picker-dropdown placement-${placement} ${className}`.trim()} ref={dropdownRef}>
+      <div
+        className={`model-picker-dropdown placement-${placement} ${className}`.trim()}
+        ref={dropdownRef}
+      >
         <button
           aria-expanded={open}
           className="model-dropdown-trigger"
           disabled={disabled}
           onClick={() => setOpen((current) => !current)}
-          title={selectedModel ? getModelDisplayLabel(selectedModel) : '请选择模型'}
+          title={selectedModel
+            ? `${getModelDisplayLabel(selectedModel)}${showReasoningValue ? ` · 推理强度：${selectedReasoningOption.label}` : ''}`
+            : '请选择模型'}
           type="button"
         >
           <span className="model-dropdown-current">
-            <strong>{selectedModel ? getModelTitle(selectedModel) : value || '请选择模型'}</strong>
+            <strong>
+              {selectedModel ? getModelTitle(selectedModel) : value || '请选择模型'}
+              {showReasoningValue && <span className="model-current-reasoning"> {selectedReasoningOption.label}</span>}
+            </strong>
             {subtitle && <small>{subtitle}</small>}
           </span>
           {selectedModel && showTriggerCapabilities && (
@@ -321,7 +388,24 @@ export function ModelPickerMenu({
         {open && !disabled && (
           <div className="model-dropdown-popover">
             {searchField}
-            <ModelPickerList models={visibleModelOptions} selectedModelId={value} onSelect={selectModel} />
+            <ModelPickerList
+              models={visibleModelOptions}
+              selectedModelId={value}
+              reasoningEffort={selectedReasoningEffort}
+              onSelect={selectModel}
+              onReasoningEffortChange={onReasoningEffortChange
+                ? (effort) => {
+                    onReasoningEffortChange(effort)
+                    setOpen(false)
+                  }
+                : undefined}
+              onModelReasoningChange={onModelReasoningChange
+                ? (modelId, effort) => {
+                    onModelReasoningChange(modelId, effort)
+                    setOpen(false)
+                  }
+                : undefined}
+            />
           </div>
         )}
       </div>

@@ -1,0 +1,85 @@
+{
+  "skeleton": {
+    "hash": "",
+    "spine": "4.3.23",
+    "x": -627,
+    "y": -627,
+    "width": 1254,
+    "height": 1254,
+    "images": "C:/Users/filwu/Downloads/G-LLM/g-llm-client/resources/spine/gllm-companion/",
+    "fps": 30
+  },
+  "bones": [
+    {
+      "name": "root"
+    },
+    {
+      "name": "orbit-back",
+      "parent": "root"
+    },
+    {
+      "name": "body",
+      "parent": "root"
+    },
+    {
+      "name": "orbit-front",
+      "parent": "root"
+    },
+    {
+      "name": "spark",
+      "parent": "root"
+    }
+  ],
+  "slots": [
+    {
+      "name": "orbit-back",
+      "bone": "orbit-back",
+      "attachment": "gllm-spine-orbit-ribbon-back-v1"
+    },
+    {
+      "name": "body",
+      "bone": "body",
+      "attachment": "gllm-spine-mascot-body-v1"
+    },
+    {
+      "name": "orbit-front",
+      "bone": "orbit-front",
+      "attachment": "gllm-spine-orbit-ribbon-front-v1"
+    }
+  ],
+  "skins": [
+    {
+      "name": "default",
+      "attachments": {
+        "orbit-back": {
+          "gllm-spine-orbit-ribbon-back-v1": {
+            "path": "gllm-spine-orbit-ribbon-back-v1.png",
+            "x": 0,
+            "y": 0,
+            "width": 1254,
+            "height": 1254
+          }
+        },
+        "body": {
+          "gllm-spine-mascot-body-v1": {
+            "path": "gllm-spine-mascot-body-v1.png",
+            "x": 0,
+            "y": 0,
+            "width": 1254,
+            "height": 1254
+          }
+        },
+        "orbit-front": {
+          "gllm-spine-orbit-ribbon-front-v1": {
+            "path": "gllm-spine-orbit-ribbon-front-v1.png",
+            "x": 0,
+            "y": 0,
+            "width": 1254,
+            "height": 1254
+          }
+        }
+      }
+    }
+  ],
+  "animations": {}
+}

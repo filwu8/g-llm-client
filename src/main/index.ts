@@ -25,14 +25,23 @@ import { appendFileSync, mkdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-import type { AppSettings, ChatRequest, Conversation, LegalDocument } from '../shared/types'
+import type {
+  AppSettings,
+  ChatActivityEvent,
+  ChatRequest,
+  Conversation,
+  FloatingMascotAppearance,
+  FloatingMascotHintEvent,
+  FloatingMascotSkin,
+  LegalDocument
+} from '../shared/types'
+import { isOfficialGllmApiProvider } from '../shared/providers'
 import { checkForAppUpdate, DOWNLOAD_PAGE_URL } from './appUpdate'
 import { pickAttachments, preparePastedAttachments } from './attachments'
 import { captureScreenshot } from './screenshot'
 import { cancelLocalFileTask, executeLocalFileTask, getLocalTaskOutputDirectory, prepareLocalFileTask } from './localFileTasks'
 import { resolveWorkspaceItem, runWorkspaceAgent } from './workspaceAgent'
 import {
-  checkGllmThemeEntitlement,
   checkProviderConnection,
   fetchProviderModels,
   generateAssistantSuggestion,
@@ -58,6 +67,7 @@ import {
   getDataResourceFilePathFromUrl,
   getDataResourceProtocol,
   getDataLocationInfo,
+  getGoldThemeEntitlement,
   getMemories,
   getNotes,
   getProjects,
@@ -67,6 +77,7 @@ import {
   importDataArchive,
   migrateDataRoot,
   resetDataRoot,
+  recordThemeRequestUsage,
   saveAssistant,
   saveConversation,
   saveMemory,
@@ -102,12 +113,43 @@ function getTrayIconPath(): string {
 
 let mainWindow: BrowserWindow | null = null
 let quickWindow: BrowserWindow | null = null
+let quickWindowReady = false
+let quickWindowShowPending = false
 let floatingLogoWindow: BrowserWindow | null = null
+let floatingMascotHintWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let isQuitting = false
 let activeAssistantId = 'general'
 let mainHiddenMode: 'none' | 'tray' | 'floating' = 'none'
 const conversationMemoryUpdates = new Set<string>()
+interface ActiveResponse {
+  conversationId: string
+  controller: AbortController
+}
+
+const activeResponses = new Map<string, ActiveResponse>()
+
+function registerActiveResponse(
+  kind: 'chat' | 'workspace',
+  conversationId: string,
+  requestKey = 'main'
+): { key: string; controller: AbortController } {
+  const key = `${kind}:${conversationId}:${requestKey}`
+  activeResponses.get(key)?.controller.abort()
+  const controller = new AbortController()
+  activeResponses.set(key, { conversationId, controller })
+  return { key, controller }
+}
+
+function releaseActiveResponse(key: string, controller: AbortController): void {
+  if (activeResponses.get(key)?.controller === controller) activeResponses.delete(key)
+}
+
+function cancelActiveResponse(conversationId: string): void {
+  for (const active of activeResponses.values()) {
+    if (active.conversationId === conversationId) active.controller.abort()
+  }
+}
 
 async function maybeUpdateProjectMemory(conversation: Conversation): Promise<void> {
   if (conversationMemoryUpdates.has(conversation.id)) return
@@ -133,12 +175,35 @@ async function maybeUpdateProjectMemory(conversation: Conversation): Promise<voi
 let lastMainWindowBounds: Rectangle | null = null
 let floatingLogoBounds: Rectangle | null = null
 let floatingLogoDragOffset: Point | null = null
+let floatingMascotHintTimer: ReturnType<typeof setTimeout> | null = null
+let floatingMascotHintHideTimer: ReturnType<typeof setTimeout> | null = null
+let currentFloatingMascotHint: FloatingMascotHintEvent | null = null
+let pendingFloatingMascotHint: Omit<FloatingMascotHintEvent, 'placement'> | null = null
+let floatingMascotHintIndex = 0
 
-const FLOATING_LOGO_SIZE = 88
+function broadcastChatActivity(activity: ChatActivityEvent): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) window.webContents.send('chat:activity', activity)
+  }
+  if (!activity.active && activity.error) {
+    pendingFloatingMascotHint = {
+      message: '刚才的请求没有成功，点我可以返回并重试。',
+      tone: 'error'
+    }
+  }
+}
+
+const FLOATING_LOGO_BASE_SIZE = 88
+const FLOATING_LOGO_MIN_SIZE = 72
+const FLOATING_LOGO_MAX_SIZE = 112
 const FLOATING_LOGO_EDGE_GAP = 8
+const FLOATING_HINT_WIDTH = 246
+const FLOATING_HINT_HEIGHT = 78
+const FLOATING_HINT_GAP = 8
 const SCREENSHOT_WINDOW_HIDE_DELAY_MS = 180
 const APP_USER_MODEL_ID = 'com.gllm.wujijie'
 const shouldUseSingleInstanceLock = process.platform === 'win32'
+const supportsFloatingMascot = process.platform === 'win32' || process.platform === 'darwin'
 const gotSingleInstanceLock = !shouldUseSingleInstanceLock || app.requestSingleInstanceLock()
 const legalDocumentPaths = {
   license: { development: 'LICENSE', packaged: 'LICENSE.txt' },
@@ -356,12 +421,13 @@ function getFloatingLogoBounds(): Rectangle {
         ? screen.getDisplayMatching(mainWindow.getBounds())
       : screen.getPrimaryDisplay()
   const workArea = display.workArea
+  const size = getAdaptiveFloatingLogoSize(display)
 
   return {
-    x: workArea.x + workArea.width - FLOATING_LOGO_SIZE - 20,
-    y: workArea.y + workArea.height - FLOATING_LOGO_SIZE - 20,
-    width: FLOATING_LOGO_SIZE,
-    height: FLOATING_LOGO_SIZE
+    x: workArea.x + workArea.width - size - 20,
+    y: workArea.y + workArea.height - size - 20,
+    width: size,
+    height: size
   }
 }
 
@@ -377,17 +443,70 @@ function getFloatingLogoDisplay(bounds: Rectangle): Electron.Display {
   })
 }
 
+function getAdaptiveFloatingLogoSize(display: Electron.Display): number {
+  const physicalWidth = display.workArea.width * display.scaleFactor
+  const physicalHeight = display.workArea.height * display.scaleFactor
+  const resolutionScale = Math.sqrt((physicalWidth * physicalHeight) / (1920 * 1080))
+  return Math.round(clamp(
+    FLOATING_LOGO_BASE_SIZE * resolutionScale,
+    FLOATING_LOGO_MIN_SIZE,
+    FLOATING_LOGO_MAX_SIZE
+  ))
+}
+
 function normalizeFloatingLogoBounds(bounds: Rectangle): Rectangle {
   const display = getFloatingLogoDisplay(bounds)
   const workArea = display.workArea
-  const width = FLOATING_LOGO_SIZE
-  const height = FLOATING_LOGO_SIZE
+  const width = getAdaptiveFloatingLogoSize(display)
+  const height = width
 
   return {
     x: clamp(bounds.x, workArea.x + FLOATING_LOGO_EDGE_GAP, workArea.x + workArea.width - width - FLOATING_LOGO_EDGE_GAP),
     y: clamp(bounds.y, workArea.y + FLOATING_LOGO_EDGE_GAP, workArea.y + workArea.height - height - FLOATING_LOGO_EDGE_GAP),
     width,
     height
+  }
+}
+
+function getFloatingMascotHintBounds(logoBounds: Rectangle): { bounds: Rectangle; placement: 'left' | 'right' } {
+  const display = getFloatingLogoDisplay(logoBounds)
+  const workArea = display.workArea
+  const hasRoomOnLeft = logoBounds.x - FLOATING_HINT_GAP - FLOATING_HINT_WIDTH >= workArea.x + FLOATING_LOGO_EDGE_GAP
+  const placement = hasRoomOnLeft ? 'left' : 'right'
+  const preferredX = placement === 'left'
+    ? logoBounds.x - FLOATING_HINT_GAP - FLOATING_HINT_WIDTH
+    : logoBounds.x + logoBounds.width + FLOATING_HINT_GAP
+  const x = clamp(
+    preferredX,
+    workArea.x + FLOATING_LOGO_EDGE_GAP,
+    workArea.x + workArea.width - FLOATING_HINT_WIDTH - FLOATING_LOGO_EDGE_GAP
+  )
+  const y = clamp(
+    Math.round(logoBounds.y + (logoBounds.height - FLOATING_HINT_HEIGHT) / 2),
+    workArea.y + FLOATING_LOGO_EDGE_GAP,
+    workArea.y + workArea.height - FLOATING_HINT_HEIGHT - FLOATING_LOGO_EDGE_GAP
+  )
+
+  return {
+    bounds: { x, y, width: FLOATING_HINT_WIDTH, height: FLOATING_HINT_HEIGHT },
+    placement
+  }
+}
+
+function sendFloatingMascotHint(): void {
+  if (!currentFloatingMascotHint || !floatingMascotHintWindow || floatingMascotHintWindow.isDestroyed()) return
+  floatingMascotHintWindow.webContents.send('floating-mascot:hint', currentFloatingMascotHint)
+}
+
+function positionFloatingMascotHint(): void {
+  if (!floatingMascotHintWindow || floatingMascotHintWindow.isDestroyed()) return
+  const logoBounds = floatingLogoBounds ?? floatingLogoWindow?.getBounds()
+  if (!logoBounds) return
+  const { bounds, placement } = getFloatingMascotHintBounds(logoBounds)
+  floatingMascotHintWindow.setBounds(bounds, false)
+  if (currentFloatingMascotHint && currentFloatingMascotHint.placement !== placement) {
+    currentFloatingMascotHint = { ...currentFloatingMascotHint, placement }
+    sendFloatingMascotHint()
   }
 }
 
@@ -426,11 +545,13 @@ function setFloatingLogoBounds(bounds: Rectangle): void {
   if (floatingLogoWindow && !floatingLogoWindow.isDestroyed()) {
     floatingLogoWindow.setBounds(floatingLogoBounds, false)
   }
+  if (floatingMascotHintWindow?.isVisible()) positionFloatingMascotHint()
 }
 
 function beginFloatingLogoDrag(): void {
   if (!floatingLogoWindow || floatingLogoWindow.isDestroyed()) return
 
+  hideFloatingMascotHint()
   const cursor = screen.getCursorScreenPoint()
   const bounds = floatingLogoWindow.getBounds()
   floatingLogoDragOffset = {
@@ -446,8 +567,8 @@ function moveFloatingLogoDrag(): void {
   setFloatingLogoBounds({
     x: cursor.x - floatingLogoDragOffset.x,
     y: cursor.y - floatingLogoDragOffset.y,
-    width: FLOATING_LOGO_SIZE,
-    height: FLOATING_LOGO_SIZE
+    width: floatingLogoWindow.getBounds().width,
+    height: floatingLogoWindow.getBounds().height
   })
 }
 
@@ -482,6 +603,9 @@ function createFloatingLogoWindow(): BrowserWindow {
     hasShadow: false,
     paintWhenInitiallyHidden: true,
     transparent: true,
+    type: process.platform === 'darwin' ? 'panel' : undefined,
+    acceptFirstMouse: process.platform === 'darwin',
+    hiddenInMissionControl: process.platform === 'darwin',
     title: 'G-LLM',
     backgroundColor: '#00000000',
     icon: getAppIconPath(),
@@ -510,16 +634,133 @@ function createFloatingLogoWindow(): BrowserWindow {
   return floatingLogoWindow
 }
 
+function createFloatingMascotHintWindow(): BrowserWindow {
+  if (floatingMascotHintWindow && !floatingMascotHintWindow.isDestroyed()) return floatingMascotHintWindow
+
+  const { bounds } = getFloatingMascotHintBounds(getFloatingLogoBounds())
+  floatingMascotHintWindow = new BrowserWindow({
+    ...bounds,
+    show: false,
+    frame: false,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    focusable: false,
+    hasShadow: false,
+    paintWhenInitiallyHidden: true,
+    transparent: true,
+    type: process.platform === 'darwin' ? 'panel' : undefined,
+    acceptFirstMouse: process.platform === 'darwin',
+    hiddenInMissionControl: process.platform === 'darwin',
+    title: 'G-LLM',
+    backgroundColor: '#00000000',
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.mjs'),
+      sandbox: false,
+      contextIsolation: true
+    }
+  })
+
+  floatingMascotHintWindow.setMenu(null)
+  floatingMascotHintWindow.setMenuBarVisibility(false)
+  floatingMascotHintWindow.setAlwaysOnTop(true, 'floating')
+  floatingMascotHintWindow.setIgnoreMouseEvents(true, { forward: true })
+  floatingMascotHintWindow.on('close', (event) => {
+    if (!isQuitting) {
+      event.preventDefault()
+      floatingMascotHintWindow?.hide()
+    }
+  })
+  floatingMascotHintWindow.on('closed', () => {
+    floatingMascotHintWindow = null
+  })
+
+  registerExternalLinkHandler(floatingMascotHintWindow)
+  loadRenderer(floatingMascotHintWindow, 'floating-hint')
+  return floatingMascotHintWindow
+}
+
+function hideFloatingMascotHint(): void {
+  if (floatingMascotHintHideTimer) {
+    clearTimeout(floatingMascotHintHideTimer)
+    floatingMascotHintHideTimer = null
+  }
+  currentFloatingMascotHint = null
+  floatingMascotHintWindow?.hide()
+}
+
+function clearFloatingMascotHintSchedule(): void {
+  if (!floatingMascotHintTimer) return
+  clearTimeout(floatingMascotHintTimer)
+  floatingMascotHintTimer = null
+}
+
+function showFloatingMascotHint(
+  message: string,
+  tone: FloatingMascotHintEvent['tone'] = 'idle',
+  duration = 6500
+): void {
+  if (!getSettings().floatingMascotHints || !floatingLogoWindow?.isVisible()) return
+
+  const hintWindow = createFloatingMascotHintWindow()
+  const { bounds, placement } = getFloatingMascotHintBounds(floatingLogoBounds ?? floatingLogoWindow.getBounds())
+  currentFloatingMascotHint = { message, placement, tone }
+  hintWindow.setBounds(bounds, false)
+  hintWindow.setAlwaysOnTop(true, 'floating')
+  hintWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  hintWindow.showInactive()
+  hintWindow.moveTop()
+  if (hintWindow.webContents.isLoading()) {
+    hintWindow.webContents.once('did-finish-load', sendFloatingMascotHint)
+  } else {
+    sendFloatingMascotHint()
+  }
+
+  if (floatingMascotHintHideTimer) clearTimeout(floatingMascotHintHideTimer)
+  floatingMascotHintHideTimer = setTimeout(hideFloatingMascotHint, duration)
+}
+
+const floatingMascotIdleHints = [
+  '我在这里，点我就能开始对话。',
+  '有新想法吗？我随时可以一起完善。',
+  '需要整理文档、图片或代码，直接交给我。',
+  '卡住的时候点我，我们一起看看。',
+  '工作告一段落了吗？记得活动一下。'
+]
+
+function scheduleFloatingMascotHint(initial = false): void {
+  clearFloatingMascotHintSchedule()
+  if (!getSettings().floatingMascotHints || !floatingLogoWindow?.isVisible()) return
+
+  const delay = initial ? 9000 : 52000 + Math.round(Math.random() * 36000)
+  floatingMascotHintTimer = setTimeout(() => {
+    const message = floatingMascotIdleHints[floatingMascotHintIndex % floatingMascotIdleHints.length]
+    floatingMascotHintIndex += 1
+    showFloatingMascotHint(message)
+    scheduleFloatingMascotHint(false)
+  }, delay)
+}
+
 function revealFloatingLogoWindow(window: BrowserWindow): void {
   window.setBounds(getFloatingLogoBounds(), false)
   window.setAlwaysOnTop(true, 'floating')
   window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
   window.showInactive()
   window.moveTop()
+  scheduleFloatingMascotHint(true)
+  if (pendingFloatingMascotHint) {
+    const hint = pendingFloatingMascotHint
+    pendingFloatingMascotHint = null
+    setTimeout(() => showFloatingMascotHint(hint.message, hint.tone, 7600), 350)
+  }
 }
 
 function showFloatingLogo(): void {
-  if (process.platform !== 'win32' || isQuitting) return
+  if (!supportsFloatingMascot || isQuitting) return
 
   const window = createFloatingLogoWindow()
   if (window.webContents.isLoading()) {
@@ -535,6 +776,8 @@ function showFloatingLogo(): void {
 }
 
 function hideFloatingLogo(): void {
+  clearFloatingMascotHintSchedule()
+  hideFloatingMascotHint()
   if (floatingLogoWindow && !floatingLogoWindow.isDestroyed()) {
     floatingLogoWindow.hide()
   }
@@ -546,7 +789,7 @@ function hideFloatingLogoToTray(): void {
 }
 
 function showFloatingLogoFromTray(): void {
-  if (process.platform !== 'win32') return
+  if (!supportsFloatingMascot) return
 
   if (mainWindow && !mainWindow.isDestroyed()) {
     if (!mainWindow.isMinimized()) lastMainWindowBounds = mainWindow.getNormalBounds()
@@ -585,6 +828,7 @@ function createQuickWindow(anchorBounds?: Rectangle): BrowserWindow {
     return quickWindow
   }
 
+  quickWindowReady = false
   quickWindow = new BrowserWindow({
     ...getQuickWindowBounds(anchorBounds),
     show: false,
@@ -612,6 +856,20 @@ function createQuickWindow(anchorBounds?: Rectangle): BrowserWindow {
   quickWindow.setMenu(null)
   quickWindow.setMenuBarVisibility(false)
   quickWindow.setAlwaysOnTop(true, 'floating')
+  quickWindow.webContents.on('did-start-navigation', () => {
+    quickWindowReady = false
+    if (quickWindow?.isVisible()) {
+      quickWindowShowPending = true
+      quickWindow.hide()
+    }
+  })
+  quickWindow.webContents.on('did-finish-load', () => {
+    quickWindowReady = true
+    if (!quickWindowShowPending || !quickWindow || quickWindow.isDestroyed()) return
+    quickWindowShowPending = false
+    quickWindow.show()
+    quickWindow.focus()
+  })
   quickWindow.on('close', (event) => {
     if (!isQuitting) {
       event.preventDefault()
@@ -620,10 +878,12 @@ function createQuickWindow(anchorBounds?: Rectangle): BrowserWindow {
   })
   quickWindow.on('closed', () => {
     quickWindow = null
+    quickWindowReady = false
+    quickWindowShowPending = false
   })
 
   registerExternalLinkHandler(quickWindow)
-  loadRenderer(quickWindow, 'quick')
+  loadRenderer(quickWindow, `quick?theme=${encodeURIComponent(getSettings().theme)}`)
   return quickWindow
 }
 
@@ -635,11 +895,16 @@ function showQuickWindow(anchorBounds?: Rectangle): void {
 
   const window = createQuickWindow(anchorBounds)
   window.setBounds(getQuickWindowBounds(anchorBounds), false)
-  window.show()
-  window.focus()
+  quickWindowShowPending = true
+  if (quickWindowReady) {
+    quickWindowShowPending = false
+    window.show()
+    window.focus()
+  }
 }
 
 function hideQuickWindow(): void {
+  quickWindowShowPending = false
   quickWindow?.hide()
 
   if (mainHiddenMode === 'floating') {
@@ -647,13 +912,44 @@ function hideQuickWindow(): void {
   }
 }
 
+function resolveFloatingMascotSkin(settings: Pick<AppSettings, 'theme' | 'floatingMascotSkin'>): FloatingMascotSkin {
+  if (settings.floatingMascotSkin === 'blue' || settings.floatingMascotSkin === 'gold') {
+    return settings.floatingMascotSkin
+  }
+  return settings.theme === 'gold' ? 'gold' : 'blue'
+}
+
+function broadcastFloatingMascotSkin(settings: AppSettings): void {
+  if (floatingLogoWindow && !floatingLogoWindow.isDestroyed()) {
+    floatingLogoWindow.webContents.send('floating-mascot:skin-changed', resolveFloatingMascotSkin(settings))
+  }
+}
+
+function setFloatingMascotAppearance(appearance: FloatingMascotAppearance): void {
+  const saved = setSettings({ ...getSettings(), floatingMascotSkin: appearance })
+  broadcastSettingsChange(saved)
+  broadcastFloatingMascotSkin(saved)
+}
+
+function setFloatingMascotHints(enabled: boolean): void {
+  const saved = setSettings({ ...getSettings(), floatingMascotHints: enabled })
+  broadcastSettingsChange(saved)
+  if (enabled) {
+    scheduleFloatingMascotHint(true)
+  } else {
+    clearFloatingMascotHintSchedule()
+    hideFloatingMascotHint()
+  }
+}
+
 function buildAppStatusMenu(anchorBounds?: Rectangle): Menu {
   const floatingLogoVisible = Boolean(floatingLogoWindow && !floatingLogoWindow.isDestroyed() && floatingLogoWindow.isVisible())
+  const settings = getSettings()
 
   return Menu.buildFromTemplate([
     { label: '打开快速对话', click: () => showQuickWindow(anchorBounds) },
     { label: '打开主窗口', click: () => createWindow() },
-    ...(process.platform === 'win32'
+    ...(supportsFloatingMascot
       ? [
           {
             label: floatingLogoVisible ? '隐藏悬浮窗' : '显示悬浮窗',
@@ -664,6 +960,35 @@ function buildAppStatusMenu(anchorBounds?: Rectangle): Menu {
                 showFloatingLogoFromTray()
               }
             }
+          },
+          {
+            label: '悬浮宠物外观',
+            submenu: [
+              {
+                label: '自动（跟随主题）',
+                type: 'radio' as const,
+                checked: settings.floatingMascotSkin === 'auto',
+                click: () => setFloatingMascotAppearance('auto')
+              },
+              {
+                label: '经典蓝',
+                type: 'radio' as const,
+                checked: settings.floatingMascotSkin === 'blue',
+                click: () => setFloatingMascotAppearance('blue')
+              },
+              {
+                label: '鎏金',
+                type: 'radio' as const,
+                checked: settings.floatingMascotSkin === 'gold',
+                click: () => setFloatingMascotAppearance('gold')
+              }
+            ]
+          },
+          {
+            label: '显示宠物提示',
+            type: 'checkbox' as const,
+            checked: settings.floatingMascotHints,
+            click: (menuItem) => setFloatingMascotHints(menuItem.checked)
           }
         ]
       : []),
@@ -682,7 +1007,7 @@ function showFloatingLogoContextMenu(): void {
 }
 
 function toggleQuickWindow(anchorBounds?: Rectangle): void {
-  if (quickWindow?.isVisible()) {
+  if (quickWindow?.isVisible() || quickWindowShowPending) {
     hideQuickWindow()
     return
   }
@@ -932,6 +1257,8 @@ app.whenReady().then(() => {
   ipcMain.handle('app:show-floating-logo-menu', () => {
     showFloatingLogoContextMenu()
   })
+  ipcMain.handle('app:get-floating-mascot-skin', () => resolveFloatingMascotSkin(getSettings()))
+  ipcMain.handle('app:get-floating-mascot-hint', () => currentFloatingMascotHint)
   ipcMain.on('app:floating-logo-drag-start', (event) => {
     if (BrowserWindow.fromWebContents(event.sender) === floatingLogoWindow) beginFloatingLogoDrag()
   })
@@ -975,6 +1302,7 @@ app.whenReady().then(() => {
 
     const saved = setSettings(settings)
     broadcastSettingsChange(saved)
+    broadcastFloatingMascotSkin(saved)
 
     if (!previous.telemetryEnabled && saved.telemetryEnabled) {
       await trackTelemetryEvent('telemetry_enabled')
@@ -990,7 +1318,7 @@ app.whenReady().then(() => {
   })
   ipcMain.handle('provider:delete', (_, id: string) => deleteProvider(id))
   ipcMain.handle('provider:check', (_, provider) => checkProviderConnection(provider))
-  ipcMain.handle('provider:check-theme-entitlement', (_, provider) => checkGllmThemeEntitlement(provider))
+  ipcMain.handle('provider:check-theme-entitlement', () => getGoldThemeEntitlement())
   ipcMain.handle('provider:refresh-models', async (_, provider) => {
     try {
       const models = await fetchProviderModels(provider)
@@ -1053,17 +1381,35 @@ app.whenReady().then(() => {
     const result = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options)
     return result.canceled ? null : result.filePaths[0] ?? null
   })
-  ipcMain.handle('workspace-agent:run', async (event, request) =>
-    runWorkspaceAgent(request, (progress) => event.sender.send('workspace-agent:progress', progress))
-  )
+  ipcMain.handle('workspace-agent:run', async (event, request) => {
+    const active = registerActiveResponse('workspace', request.conversationId)
+    try {
+      return await runWorkspaceAgent(
+        request,
+        (progress) => event.sender.send('workspace-agent:progress', progress),
+        active.controller.signal
+      )
+    } catch (error) {
+      if (active.controller.signal.aborted) throw new Error('任务已停止')
+      throw error
+    } finally {
+      releaseActiveResponse(active.key, active.controller)
+    }
+  })
   ipcMain.handle('workspace:reveal-file', async (_, rootPath: string, relativePath: string) => {
     const filePath = await resolveWorkspaceItem(rootPath, relativePath)
     shell.showItemInFolder(filePath)
   })
   ipcMain.handle('attachment:screenshot', (event) => captureScreenshotForWindow(BrowserWindow.fromWebContents(event.sender)))
   ipcMain.handle('clipboard:copy-image', (_, dataUrl: string) => copyImageDataUrlToClipboard(dataUrl))
+  ipcMain.on('response:cancel', (_, conversationId: string) => cancelActiveResponse(conversationId))
 
   ipcMain.on('chat:stream', async (event, request) => {
+    const active = registerActiveResponse(
+      'chat',
+      request.conversationId,
+      `${request.purpose ?? 'reply'}:${request.targetMessageId ?? 'main'}`
+    )
     const chunkBase = {
       conversationId: request.conversationId,
       purpose: request.purpose,
@@ -1074,10 +1420,12 @@ app.whenReady().then(() => {
     let totalTokens = 0
     let finishReason = ''
     let isTruncated = false
+    recordThemeRequestUsage(isOfficialGllmApiProvider(request.provider))
+    broadcastChatActivity({ conversationId: request.conversationId, active: true })
 
     try {
       void trackTelemetryEvent('chat_started', getChatTelemetryProperties(request))
-      for await (const chunk of streamGllmChat(request)) {
+      for await (const chunk of streamGllmChat(request, active.controller.signal)) {
         if (chunk.usage) {
           inputTokens = chunk.usage.inputTokens
           outputTokens = chunk.usage.outputTokens
@@ -1102,6 +1450,7 @@ app.whenReady().then(() => {
         finish_reason: finishReason || 'unknown',
         truncated: isTruncated
       })
+      broadcastChatActivity({ conversationId: request.conversationId, active: false })
       event.sender.send('chat:chunk', {
         ...chunkBase,
         content: '',
@@ -1111,23 +1460,32 @@ app.whenReady().then(() => {
         warning: isTruncated ? buildTruncationWarning(request, finishReason) : undefined
       })
     } catch (error) {
+      if (active.controller.signal.aborted) {
+        broadcastChatActivity({ conversationId: request.conversationId, active: false })
+        event.sender.send('chat:chunk', { ...chunkBase, content: '', done: true, warning: '已停止生成' })
+        return
+      }
       const message = error instanceof Error ? error.message : String(error)
       void trackTelemetryEvent('chat_failed', {
         ...getChatTelemetryProperties(request),
         error_category: getErrorCategory(error)
       })
+      broadcastChatActivity({ conversationId: request.conversationId, active: false, error: message })
       event.sender.send('chat:chunk', { ...chunkBase, content: '', done: true, error: message })
+    } finally {
+      releaseActiveResponse(active.key, active.controller)
     }
   })
 
   setupTray()
   createWindow()
-  if (process.platform === 'win32') createFloatingLogoWindow()
+  if (supportsFloatingMascot) createFloatingLogoWindow()
   void trackTelemetryEvent('app_started')
 
   screen.on('display-metrics-changed', () => {
     if (floatingLogoWindow?.isVisible()) {
-      floatingLogoWindow.setBounds(getFloatingLogoBounds(), false)
+      setFloatingLogoBounds(getFloatingLogoBounds())
+      positionFloatingMascotHint()
     }
   })
 
@@ -1138,6 +1496,8 @@ app.whenReady().then(() => {
 
 app.on('before-quit', () => {
   isQuitting = true
+  clearFloatingMascotHintSchedule()
+  if (floatingMascotHintHideTimer) clearTimeout(floatingMascotHintHideTimer)
 })
 
 app.on('window-all-closed', () => {

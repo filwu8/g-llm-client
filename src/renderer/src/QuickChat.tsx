@@ -4,7 +4,23 @@
  * Change Date: 2030-07-14
  */
 
-import { ArrowDown, ArrowUp, AtSign, Copy, ExternalLink, MessageSquarePlus, Minus, X } from 'lucide-react'
+import {
+  ArrowDown,
+  ArrowUp,
+  AtSign,
+  BookOpen,
+  Copy,
+  ExternalLink,
+  FolderOpen,
+  Globe2,
+  ImagePlus,
+  MessageSquarePlus,
+  Minus,
+  Paperclip,
+  Square,
+  Wrench,
+  X
+} from 'lucide-react'
 import {
   type KeyboardEvent,
   type MouseEvent as ReactMouseEvent,
@@ -35,16 +51,19 @@ import { MarkdownMessage } from './MarkdownMessage'
 import { getModelOptions, ModelPickerMenu } from './ModelPicker'
 import { applyDocumentTheme } from './theme'
 import { DEFAULT_ASSISTANTS, getAssistantById } from '@shared/assistants'
-import { DEFAULT_PROVIDER, getProviderById, isOfficialGllmApiProvider } from '@shared/providers'
+import { DEFAULT_PROVIDER, getProviderById } from '@shared/providers'
 import type {
   ApiProvider,
   AppSettings,
+  AttachmentKind,
   Assistant,
   AssistantMemory,
   ChatChunk,
   ChatMessage,
   Conversation,
-  KnowledgeReference
+  KnowledgeReference,
+  PreparedAttachment,
+  ReasoningEffort
 } from '@shared/types'
 
 const quickBottomFollowThreshold = 72
@@ -89,7 +108,12 @@ function getQuoteReferenceTitle(content: string): string {
   return `引用内容：${collapsed.length > 22 ? `${collapsed.slice(0, 22)}...` : collapsed}`
 }
 
-function createMessage(role: ChatMessage['role'], content: string, knowledgeRefs: KnowledgeReference[] = []): ChatMessage {
+function createMessage(
+  role: ChatMessage['role'],
+  content: string,
+  attachments: PreparedAttachment[] = [],
+  knowledgeRefs: KnowledgeReference[] = []
+): ChatMessage {
   const contentTokens = estimateTokenCount(content)
   const knowledgeTokens = role === 'assistant' ? 0 : estimateTokenCount(getKnowledgeReferenceText(knowledgeRefs))
   const inputTokens = role === 'assistant' ? 0 : contentTokens + knowledgeTokens
@@ -99,6 +123,7 @@ function createMessage(role: ChatMessage['role'], content: string, knowledgeRefs
     id: createId('message'),
     role,
     content,
+    attachments: attachments.length > 0 ? attachments : undefined,
     knowledgeRefs: knowledgeRefs.length > 0 ? knowledgeRefs : undefined,
     createdAt: Date.now(),
     tokenCount: inputTokens + outputTokens,
@@ -115,6 +140,7 @@ function createQuickConversation(assistant: Assistant, title = '快速对话'): 
     assistantId: assistant.id,
     title,
     messages: [],
+    reasoningEffort: 'default',
     createdAt: now,
     updatedAt: now
   }
@@ -179,8 +205,6 @@ function getQuickModelId(conversation: Conversation | null, assistant: Assistant
 export default function QuickChat() {
   const isWindows = window.gllm.platform === 'win32'
   const [settings, setSettings] = useState<AppSettings | null>(null)
-  const [goldThemeEntitled, setGoldThemeEntitled] = useState(false)
-  const [goldThemeEntitlementChecked, setGoldThemeEntitlementChecked] = useState(false)
   const [providers, setProviders] = useState<ApiProvider[]>([DEFAULT_PROVIDER])
   const [assistants, setAssistants] = useState<Assistant[]>(DEFAULT_ASSISTANTS)
   const [conversations, setConversations] = useState<Conversation[]>([])
@@ -188,11 +212,15 @@ export default function QuickChat() {
   const [activeAssistantId, setActiveAssistantId] = useState(DEFAULT_ASSISTANTS[0].id)
   const [conversation, setConversation] = useState<Conversation | null>(null)
   const [selectedModelId, setSelectedModelId] = useState(DEFAULT_PROVIDER.defaultModel)
+  const [selectedReasoningEffort, setSelectedReasoningEffort] = useState<ReasoningEffort>('default')
   const [draft, setDraft] = useState(() => readComposerDraft(QUICK_COMPOSER_DRAFT_KEY))
   const [isStreaming, setIsStreaming] = useState(false)
   const [status, setStatus] = useState('')
   const [selectionMenu, setSelectionMenu] = useState<SelectionContextMenu | null>(null)
   const [pendingQuoteRefs, setPendingQuoteRefs] = useState<KnowledgeReference[]>([])
+  const [pendingAttachments, setPendingAttachments] = useState<PreparedAttachment[]>([])
+  const [isPickingAttachment, setIsPickingAttachment] = useState(false)
+  const [webSearchEnabled, setWebSearchEnabled] = useState(false)
   const [autoFollowMessages, setAutoFollowMessages] = useState(true)
   const [isNearMessageBottom, setIsNearMessageBottom] = useState(true)
   const messagesRef = useRef<HTMLDivElement>(null)
@@ -226,22 +254,6 @@ export default function QuickChat() {
   const messageSendShortcutLabel = getMessageSendShortcutLabel(messageSendShortcut)
   const messages = conversation?.messages ?? []
 
-  async function verifyGoldThemeEntitlement(providerList: ApiProvider[]) {
-    const candidates = providerList.filter(
-      (candidate) => isOfficialGllmApiProvider(candidate) && Boolean(candidate.apiKey.trim())
-    )
-    for (const candidate of candidates) {
-      const result = await window.gllm.checkThemeEntitlement(candidate)
-      if (result.ok && result.eligible) {
-        setGoldThemeEntitled(true)
-        setGoldThemeEntitlementChecked(true)
-        return
-      }
-    }
-    setGoldThemeEntitled(false)
-    setGoldThemeEntitlementChecked(true)
-  }
-
   useEffect(() => {
     void Promise.all([window.gllm.getState(), window.gllm.getActiveAssistantId()]).then(([state, activeId]) => {
       const loadedProviders = state.providers.length > 0 ? state.providers : [DEFAULT_PROVIDER]
@@ -261,26 +273,26 @@ export default function QuickChat() {
 
       setConversation(latestConversation)
       setSelectedModelId(getQuickModelId(latestConversation, quickAssistant, initialProvider))
-      void verifyGoldThemeEntitlement(loadedProviders)
+      setSelectedReasoningEffort(latestConversation?.reasoningEffort ?? 'default')
     })
   }, [])
 
   useEffect(() => {
-    if (settings) applyDocumentTheme(settings.theme, goldThemeEntitled || !goldThemeEntitlementChecked)
-  }, [goldThemeEntitled, goldThemeEntitlementChecked, settings?.theme])
+    if (settings) applyDocumentTheme(settings.theme, true)
+  }, [settings?.theme])
 
   useEffect(() => {
     return window.gllm.onSettingsChanged((nextSettings) => {
       setSettings(nextSettings)
-      void verifyGoldThemeEntitlement(providers)
     })
-  }, [providers])
+  }, [])
 
   useEffect(() => {
     return window.gllm.onActiveAssistantChanged((id) => {
       setActiveAssistantId(id)
       setDraft('')
       setPendingQuoteRefs([])
+      setPendingAttachments([])
       setStatus('')
     })
   }, [])
@@ -319,6 +331,10 @@ export default function QuickChat() {
   useEffect(() => {
     setSelectedModelId(getQuickModelId(conversation, assistant, provider))
   }, [assistant, conversation?.id, conversation?.modelId, conversation?.modelProviderId, provider])
+
+  useEffect(() => {
+    setSelectedReasoningEffort(conversation?.reasoningEffort ?? 'default')
+  }, [conversation?.id, conversation?.reasoningEffort])
 
   useEffect(() => {
     return window.gllm.onConversationChanged((change) => {
@@ -446,7 +462,110 @@ export default function QuickChat() {
     setConversation(null)
     setDraft('')
     setPendingQuoteRefs([])
+    setPendingAttachments([])
     setStatus('')
+  }
+
+  async function pickQuickAttachments(kind: AttachmentKind) {
+    if (isPickingAttachment) return
+    setIsPickingAttachment(true)
+    try {
+      const picked = await window.gllm.pickAttachments(kind)
+      if (picked.length === 0) return
+      setPendingAttachments((current) => [...current, ...picked].slice(0, 8))
+      setStatus(`已添加 ${picked.length} 个附件`)
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : '选择附件失败')
+    } finally {
+      setIsPickingAttachment(false)
+    }
+  }
+
+  async function captureQuickScreenshot() {
+    if (isPickingAttachment) return
+    setIsPickingAttachment(true)
+    try {
+      setStatus('请选择截图区域')
+      const screenshot = await window.gllm.captureScreenshot()
+      if (!screenshot) {
+        setStatus('未检测到新的截图')
+        return
+      }
+      setPendingAttachments((current) => [...current, screenshot].slice(0, 8))
+      setStatus('截图已添加')
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : '截图失败')
+    } finally {
+      setIsPickingAttachment(false)
+    }
+  }
+
+  function removePendingAttachment(id: string) {
+    setPendingAttachments((current) => current.filter((attachment) => attachment.id !== id))
+  }
+
+  async function handleQuickPaste(event: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const files = Array.from(event.clipboardData.files ?? []).slice(0, 8)
+    if (files.length === 0 || isPickingAttachment) return
+
+    event.preventDefault()
+    setIsPickingAttachment(true)
+    try {
+      const inputs = await Promise.all(files.map(async (file, index) => ({
+        name: file.name || `粘贴附件_${index + 1}`,
+        mimeType: file.type || 'application/octet-stream',
+        size: file.size,
+        kind: file.type.startsWith('image/') ? 'image' as const : 'file' as const,
+        dataUrl: file.size <= 12 * 1024 * 1024
+          ? await new Promise<string>((resolve, reject) => {
+              const reader = new FileReader()
+              reader.onerror = () => reject(reader.error ?? new Error('读取剪贴板附件失败'))
+              reader.onload = () => resolve(String(reader.result ?? ''))
+              reader.readAsDataURL(file)
+            })
+          : undefined
+      })))
+      const prepared = await window.gllm.preparePastedAttachments(inputs)
+      setPendingAttachments((current) => [...current, ...prepared].slice(0, 8))
+      if (prepared.length > 0) setStatus(`已从剪贴板添加 ${prepared.length} 个附件`)
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : '粘贴附件失败')
+    } finally {
+      setIsPickingAttachment(false)
+    }
+  }
+
+  function changeReasoningEffort(reasoningEffort: ReasoningEffort) {
+    setSelectedReasoningEffort(reasoningEffort)
+    if (!conversation || conversation.reasoningEffort === reasoningEffort) return
+
+    const nextConversation: Conversation = {
+      ...conversation,
+      reasoningEffort,
+      updatedAt: Date.now()
+    }
+    setConversation(nextConversation)
+    setConversations((current) => [nextConversation, ...current.filter((item) => item.id !== nextConversation.id)])
+    conversationRef.current = nextConversation
+    void window.gllm.saveConversation(nextConversation)
+  }
+
+  function changeModelAndReasoning(modelId: string, reasoningEffort: ReasoningEffort) {
+    setSelectedModelId(modelId)
+    setSelectedReasoningEffort(reasoningEffort)
+    if (!conversation) return
+
+    const nextConversation: Conversation = {
+      ...conversation,
+      modelProviderId: provider.id,
+      modelId,
+      reasoningEffort,
+      updatedAt: Date.now()
+    }
+    setConversation(nextConversation)
+    setConversations((current) => [nextConversation, ...current.filter((item) => item.id !== nextConversation.id)])
+    conversationRef.current = nextConversation
+    void window.gllm.saveConversation(nextConversation)
   }
 
   function retryMessage(messageId: string) {
@@ -469,6 +588,7 @@ export default function QuickChat() {
       messages,
       modelProviderId: selectedProvider.id,
       modelId: selectedProvider.defaultModel,
+      reasoningEffort: selectedReasoningEffort,
       updatedAt: Date.now()
     }
 
@@ -484,7 +604,9 @@ export default function QuickChat() {
       assistantMemories,
       provider: selectedProvider,
       messages: nextConversation.messages,
-      settings
+      settings,
+      reasoningEffort: nextConversation.reasoningEffort,
+      webSearchEnabled
     })
   }
 
@@ -498,22 +620,28 @@ export default function QuickChat() {
     }
 
     const text = content.trim()
-    if (!text && pendingQuoteRefs.length === 0) return
-    const messageText = text || '请结合我引用的对话内容回答。'
+    if (!text && pendingQuoteRefs.length === 0 && pendingAttachments.length === 0) return
+    const messageText = text || (pendingQuoteRefs.length > 0
+      ? '请结合我引用的对话内容回答。'
+      : pendingAttachments.some((attachment) => attachment.kind === 'image')
+        ? '请分析我上传的图片。'
+        : '请分析我上传的附件。')
 
     const baseConversation = conversation ?? createQuickConversation(assistant, `快速对话：${messageText.slice(0, 18)}`)
-    const userMessage = createMessage('user', messageText, pendingQuoteRefs)
+    const userMessage = createMessage('user', messageText, pendingAttachments, pendingQuoteRefs)
     const nextConversation: Conversation = {
       ...baseConversation,
       title: baseConversation.messages.length === 0 ? `快速对话：${messageText.slice(0, 18)}` : baseConversation.title,
       messages: [...baseConversation.messages, userMessage],
       modelProviderId: selectedProvider.id,
       modelId: selectedProvider.defaultModel,
+      reasoningEffort: selectedReasoningEffort,
       updatedAt: Date.now()
     }
 
     setDraft('')
     setPendingQuoteRefs([])
+    setPendingAttachments([])
     setStatus('')
     setIsStreaming(true)
     setConversation(nextConversation)
@@ -526,8 +654,15 @@ export default function QuickChat() {
       assistantMemories,
       provider: selectedProvider,
       messages: nextConversation.messages,
-      settings
+      settings,
+      reasoningEffort: nextConversation.reasoningEffort,
+      webSearchEnabled
     })
+  }
+
+  function stopGenerating() {
+    if (!isStreaming || !conversation) return
+    window.gllm.cancelResponse(conversation.id)
   }
 
   function handleDraftKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -653,6 +788,22 @@ export default function QuickChat() {
             >
               <div className="quick-message-bubble">
                 <MarkdownMessage content={message.content || (message.role === 'assistant' ? '正在思考...' : '')} />
+                {message.attachments && message.attachments.length > 0 && (
+                  <div className="message-attachments quick-message-attachments">
+                    {message.attachments.map((attachment) => (
+                      <span key={attachment.id} className={`attachment-chip ${attachment.kind === 'image' && attachment.dataUrl ? 'image-chip' : ''}`}>
+                        {attachment.kind === 'image' && attachment.dataUrl ? (
+                          <img alt="" src={attachment.dataUrl} />
+                        ) : attachment.kind === 'image' ? (
+                          <ImagePlus size={14} />
+                        ) : (
+                          <Paperclip size={14} />
+                        )}
+                        <span>{attachment.name}</span>
+                      </span>
+                    ))}
+                  </div>
+                )}
                 {message.error && (
                   <ChatErrorRetry
                     error={message.error}
@@ -735,6 +886,67 @@ export default function QuickChat() {
             ))}
           </div>
         )}
+        {pendingAttachments.length > 0 && (
+          <div className="quick-composer-attachments composer-attachments">
+            {pendingAttachments.map((attachment) => (
+              <span
+                key={attachment.id}
+                className={`attachment-chip ${attachment.kind === 'image' && attachment.dataUrl ? 'image-chip' : ''}`}
+                title={attachment.name}
+              >
+                {attachment.kind === 'image' && attachment.dataUrl ? (
+                  <img alt="" src={attachment.dataUrl} />
+                ) : attachment.kind === 'image' ? (
+                  <ImagePlus size={14} />
+                ) : (
+                  <Paperclip size={14} />
+                )}
+                <span>{attachment.name}</span>
+                <button onClick={() => removePendingAttachment(attachment.id)} title="移除附件" type="button">
+                  <X size={13} />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        <div className="quick-composer-toolbar">
+          <div className="quick-composer-tools">
+            <button
+              className={pendingAttachments.length > 0 ? 'active' : ''}
+              disabled={isPickingAttachment}
+              title="上传附件"
+              type="button"
+              onClick={() => void pickQuickAttachments('file')}
+            >
+              <Paperclip size={16} />
+            </button>
+            <button disabled={isPickingAttachment} title="截图" type="button" onClick={() => void captureQuickScreenshot()}>
+              <ImagePlus size={16} />
+            </button>
+            <button title="工作文件夹（在完整窗口中打开）" type="button" onClick={() => void openMainWindow()}>
+              <FolderOpen size={16} />
+            </button>
+            <button title="知识库（在完整窗口中打开）" type="button" onClick={() => void openMainWindow()}>
+              <BookOpen size={16} />
+            </button>
+            <button
+              className={webSearchEnabled ? 'active' : ''}
+              title={webSearchEnabled ? '关闭联网搜索' : '开启联网搜索'}
+              type="button"
+              onClick={() => {
+                setWebSearchEnabled((enabled) => {
+                  setStatus(enabled ? '已关闭联网搜索' : '已开启联网搜索')
+                  return !enabled
+                })
+              }}
+            >
+              <Globe2 size={16} />
+            </button>
+            <button title="扩展工具（在完整窗口中打开）" type="button" onClick={() => void openMainWindow()}>
+              <Wrench size={16} />
+            </button>
+          </div>
+        </div>
         <textarea
           ref={draftTextareaRef}
           value={draft}
@@ -742,26 +954,33 @@ export default function QuickChat() {
           rows={1}
           placeholder={needsApiKey ? '请先配置 API Key' : '输入消息'}
           onChange={(event) => setDraft(event.target.value)}
+          onPaste={(event) => void handleQuickPaste(event)}
           onKeyDown={handleDraftKeyDown}
         />
-        <ModelPickerMenu
-          className="quick-model-picker"
-          provider={provider}
-          value={activeModelId}
-          variant="dropdown"
-          placement="top"
-          disabled={!settings || isStreaming}
-          showTriggerCapabilities={false}
-          onChange={setSelectedModelId}
-        />
-        <button
-          className="quick-send-button"
-          disabled={(!draft.trim() && pendingQuoteRefs.length === 0) || isStreaming || !settings}
-          title={`发送（${messageSendShortcutLabel}）`}
-          type="submit"
-        >
-          <ArrowUp size={18} />
-        </button>
+        <div className="quick-composer-input-actions">
+          <ModelPickerMenu
+            className="quick-model-picker"
+            provider={provider}
+            value={activeModelId}
+            variant="dropdown"
+            placement="top"
+            disabled={!settings || isStreaming}
+            showTriggerCapabilities={false}
+            reasoningEffort={selectedReasoningEffort}
+            onReasoningEffortChange={changeReasoningEffort}
+            onModelReasoningChange={changeModelAndReasoning}
+            onChange={setSelectedModelId}
+          />
+          <button
+            className={`quick-send-button${isStreaming ? ' stop' : ''}`}
+            disabled={!settings || (!isStreaming && !draft.trim() && pendingQuoteRefs.length === 0 && pendingAttachments.length === 0)}
+            onClick={isStreaming ? stopGenerating : undefined}
+            title={isStreaming ? '停止生成' : `发送（${messageSendShortcutLabel}）`}
+            type={isStreaming ? 'button' : 'submit'}
+          >
+            {isStreaming ? <Square size={14} fill="currentColor" /> : <ArrowUp size={18} />}
+          </button>
+        </div>
       </form>
     </div>
   )

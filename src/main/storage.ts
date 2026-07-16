@@ -35,8 +35,11 @@ import type {
   PreparedAttachment,
   Project,
   ProviderModel,
+  ReasoningEffort,
   ToolConfig,
   ToolConfigType,
+  ThemeEntitlementResult,
+  ThemeRequestUsage,
   WebSearchActivity,
   WebSearchResult
 } from '../shared/types'
@@ -58,6 +61,7 @@ interface StoreSchema {
   memories: AssistantMemory[]
   tools: ToolConfig[]
   installationId: string
+  themeRequestUsage: ThemeRequestUsage
 }
 
 interface DataLocationConfig {
@@ -86,6 +90,11 @@ const assistantIcons: AssistantIcon[] = [
   'briefcase',
   'pen'
 ]
+const reasoningEfforts: ReasoningEffort[] = ['default', 'low', 'medium', 'high']
+
+function sanitizeReasoningEffort(value: unknown): ReasoningEffort {
+  return reasoningEfforts.includes(value as ReasoningEffort) ? value as ReasoningEffort : 'default'
+}
 
 function getPortableDataRoot(): string | null {
   if (process.platform !== 'win32' || !app.isPackaged) return null
@@ -582,6 +591,8 @@ export const defaultSettings: AppSettings = {
   maxTokens: 4096,
   enableMaxTokens: false,
   messageSendShortcut: 'enter',
+  floatingMascotSkin: 'auto',
+  floatingMascotHints: true,
   telemetryEnabled: true,
   setupCompleted: false
 }
@@ -599,7 +610,11 @@ const store = new Store<StoreSchema>({
     notes: [],
     memories: [],
     tools: [],
-    installationId: ''
+    installationId: '',
+    themeRequestUsage: {
+      totalRequests: 0,
+      officialRequests: 0
+    }
   }
 })
 
@@ -958,6 +973,7 @@ function sanitizeConversation(conversation: Conversation, fallbackProjectId = ge
     messages,
     modelProviderId: conversation.modelProviderId?.trim() || undefined,
     modelId: conversation.modelId?.trim() || undefined,
+    reasoningEffort: sanitizeReasoningEffort(conversation.reasoningEffort),
     workspace,
     projectMemory,
     totalTokens,
@@ -1115,6 +1131,12 @@ export function getSettings(): AppSettings {
     maxTokens: Number.isFinite(saved.maxTokens) ? Math.max(1, Math.round(Number(saved.maxTokens))) : defaultSettings.maxTokens,
     enableMaxTokens: Boolean(saved.enableMaxTokens),
     messageSendShortcut: sanitizeMessageSendShortcut(saved.messageSendShortcut),
+    floatingMascotSkin:
+      saved.floatingMascotSkin === 'gold' || saved.floatingMascotSkin === 'blue'
+        ? saved.floatingMascotSkin
+        : 'auto',
+    floatingMascotHints:
+      saved.floatingMascotHints === undefined ? defaultSettings.floatingMascotHints : Boolean(saved.floatingMascotHints),
     telemetryEnabled:
       saved.telemetryEnabled === undefined ? defaultSettings.telemetryEnabled : Boolean(saved.telemetryEnabled),
     setupCompleted: Boolean(saved.setupCompleted)
@@ -1141,6 +1163,14 @@ export function setSettings(settings: AppSettings): AppSettings {
       : defaultSettings.maxTokens,
     enableMaxTokens: Boolean(settings.enableMaxTokens),
     messageSendShortcut: sanitizeMessageSendShortcut(settings.messageSendShortcut),
+    floatingMascotSkin:
+      settings.floatingMascotSkin === 'gold' || settings.floatingMascotSkin === 'blue'
+        ? settings.floatingMascotSkin
+        : 'auto',
+    floatingMascotHints:
+      settings.floatingMascotHints === undefined
+        ? defaultSettings.floatingMascotHints
+        : Boolean(settings.floatingMascotHints),
     telemetryEnabled:
       settings.telemetryEnabled === undefined ? defaultSettings.telemetryEnabled : Boolean(settings.telemetryEnabled),
     setupCompleted: settings.setupCompleted
@@ -1157,6 +1187,53 @@ export function getInstallationId(): string {
   const installationId = randomUUID()
   store.set('installationId', installationId)
   return installationId
+}
+
+function sanitizeThemeRequestCount(value: unknown): number {
+  return Number.isFinite(value) ? Math.max(0, Math.floor(Number(value))) : 0
+}
+
+export function getThemeRequestUsage(): ThemeRequestUsage {
+  const saved = store.get('themeRequestUsage', { totalRequests: 0, officialRequests: 0 })
+  const totalRequests = sanitizeThemeRequestCount(saved.totalRequests)
+  const officialRequests = Math.min(totalRequests, sanitizeThemeRequestCount(saved.officialRequests))
+  return {
+    totalRequests,
+    officialRequests,
+    updatedAt: Number.isFinite(saved.updatedAt) ? Number(saved.updatedAt) : undefined
+  }
+}
+
+export function recordThemeRequestUsage(official: boolean): ThemeRequestUsage {
+  const current = getThemeRequestUsage()
+  const next: ThemeRequestUsage = {
+    totalRequests: current.totalRequests + 1,
+    officialRequests: current.officialRequests + (official ? 1 : 0),
+    updatedAt: Date.now()
+  }
+  store.set('themeRequestUsage', next)
+  return next
+}
+
+export function getGoldThemeEntitlement(): ThemeEntitlementResult {
+  const usage = getThemeRequestUsage()
+  const officialRequestRatio = usage.totalRequests > 0 ? usage.officialRequests / usage.totalRequests : 0
+  const eligible = usage.totalRequests > 0 && officialRequestRatio > 0.5
+  const percentage = (officialRequestRatio * 100).toFixed(1).replace(/\.0$/, '')
+  const summary = `${usage.officialRequests}/${usage.totalRequests} 次（${percentage}%）`
+
+  return {
+    ok: true,
+    eligible,
+    totalRequests: usage.totalRequests,
+    officialRequests: usage.officialRequests,
+    officialRequestRatio,
+    message: eligible
+      ? `已满足金色主题条件：官方 G-LLM 调用 ${summary}`
+      : usage.totalRequests === 0
+        ? '暂时不能使用金色主题：尚无模型调用记录，官方 G-LLM 调用占比需超过 50%'
+        : `暂时不能使用金色主题：官方 G-LLM 调用 ${summary}，占比需超过 50%`
+  }
 }
 
 function getAllCustomAssistants(): Assistant[] {

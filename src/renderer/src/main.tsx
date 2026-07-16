@@ -9,18 +9,30 @@ import ReactDOM from 'react-dom/client'
 
 import App from './App'
 import FloatingLogo from './FloatingLogo'
+import FloatingMascotHint from './FloatingMascotHint'
 import QuickChat from './QuickChat'
+import { applyDocumentTheme } from './theme'
 import './styles.css'
 
-const isQuickWindow = window.location.hash === '#quick'
-const isFloatingLogoWindow = window.location.hash === '#floating-logo'
+const [windowRoute, windowQuery = ''] = window.location.hash.slice(1).split('?')
+const initialTheme = new URLSearchParams(windowQuery).get('theme')
+const isQuickWindow = windowRoute === 'quick'
+const isFloatingLogoWindow = windowRoute === 'floating-logo'
+const isFloatingHintWindow = windowRoute === 'floating-hint'
+
+if (initialTheme === 'light' || initialTheme === 'dark' || initialTheme === 'gold') {
+  applyDocumentTheme(initialTheme, true)
+}
+
 document.documentElement.classList.toggle('quick-window-document', isQuickWindow)
 document.documentElement.classList.toggle('floating-logo-document', isFloatingLogoWindow)
+document.documentElement.classList.toggle('floating-hint-document', isFloatingHintWindow)
 document.body.classList.toggle('quick-window-body', isQuickWindow)
 document.body.classList.toggle('floating-logo-body', isFloatingLogoWindow)
+document.body.classList.toggle('floating-hint-body', isFloatingHintWindow)
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    {isFloatingLogoWindow ? <FloatingLogo /> : isQuickWindow ? <QuickChat /> : <App />}
+    {isFloatingHintWindow ? <FloatingMascotHint /> : isFloatingLogoWindow ? <FloatingLogo /> : isQuickWindow ? <QuickChat /> : <App />}
   </React.StrictMode>
 )
