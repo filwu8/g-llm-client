@@ -250,7 +250,7 @@ This file is generated from the locked production dependency graph by
 | progress@2.0.3 | MIT | [link](https://github.com/visionmedia/node-progress#readme) |
 | property-information@7.2.0 | MIT | [link](https://github.com/wooorm/property-information#readme) |
 | react-dom@19.2.7 | MIT | [link](https://react.dev/) |
-| react-i18next@17.0.10 | MIT | [link](https://github.com/i18next/react-i18next) |
+| react-i18next@17.0.9 | MIT | [link](https://github.com/i18next/react-i18next) |
 | react-markdown@10.1.0 | MIT | [link](https://github.com/remarkjs/react-markdown#readme) |
 | react@19.2.7 | MIT | [link](https://react.dev/) |
 | readable-stream@2.3.8 | MIT | [link](https://github.com/nodejs/readable-stream#readme) |
@@ -4248,7 +4248,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### react-i18next@17.0.10
+### react-i18next@17.0.9
 
 ````text
 The MIT License (MIT)
