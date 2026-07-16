@@ -7,16 +7,16 @@ the license included in that release controls.
 ## Version Boundary
 
 - V1.0.10 and earlier: `AGPL-3.0-only`, as preserved in each Git tag.
-- V1.1.0: `BUSL-1.1`, with the Additional Use Grant and Change Date stated in
+- V1.1.0 and later releases: `BUSL-1.1`, with the Additional Use Grant and Change Date stated in
   [LICENSE](./LICENSE).
 - Later versions: the license and Change Date included in that release.
 
 Changing the license for a later release does not revoke rights already
 granted for an earlier release.
 
-## Free Use of V1.1.0
+## Free Use of V1.1.0 and Later Releases
 
-V1.1.0 may be used without charge by individuals and for an organization's
+V1.1.0 and later BUSL releases may be used without charge by individuals and for an organization's
 own internal business operations. Source inspection, modification, and
 non-production redistribution are allowed under the Business Source License
 1.1.
@@ -55,7 +55,7 @@ models.
 ## 中文说明
 
 - V1.0.10 及以前版本继续适用各自 Git 标签中保留的 AGPL-3.0-only。
-- V1.1.0 采用 BUSL-1.1，个人和企业内部使用免费。
+- V1.1.0 起采用 BUSL-1.1，个人和企业内部使用免费。
 - 白标、OEM、转售、竞品分发和向第三方提供托管或管理服务需要商业授权。
 - V1.1.0 于 2030-07-14 自动转换为 AGPL-3.0-only。
 - 每个后续版本必须在发布时明确自己的许可证和转换日期。

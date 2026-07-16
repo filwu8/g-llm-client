@@ -4,7 +4,7 @@
 
 Current version: [V1.0.10](https://github.com/filwu8/g-llm-client/releases/tag/v1.0.10)
 
-> The `main` branch is developing V1.1.0. Starting with V1.1.0, the source is licensed under BUSL-1.1 for free personal and internal business use and will automatically change to AGPL-3.0-only on 2030-07-14. V1.0.10 and earlier remain under the AGPL-3.0-only license included in their release tags.
+> The `main` branch is developing V1.2.0. Starting with V1.1.0, the source is licensed under BUSL-1.1 for free personal and internal business use; the current V1.2.0 release will automatically change to AGPL-3.0-only on 2030-07-14. V1.0.10 and earlier remain under the AGPL-3.0-only license included in their release tags.
 
 [Download](https://llm.gprophet.com/download) | [Full changelog](https://llm.gprophet.com/download/changelog) | [GitHub Releases](https://github.com/filwu8/g-llm-client/releases)
 
@@ -125,11 +125,11 @@ Before shipping, use [docs/release-qa-checklist.md](./docs/release-qa-checklist.
 
 ## License
 
-G-LLM Desktop Client is published by GPROPHET LIMITED. The current V1.1.0 development version is licensed under the [Business Source License 1.1](./LICENSE) with an Additional Use Grant.
+G-LLM Desktop Client is published by GPROPHET LIMITED. The current V1.2.0 development version is licensed under the [Business Source License 1.1](./LICENSE) with an Additional Use Grant.
 
 Personal use, research, evaluation, and internal business operations are free. Without a written commercial license from GPROPHET LIMITED, you may not white-label or OEM the client, resell or rent it, release or distribute it as a competing product, or provide it to third parties as a hosted, managed, outsourcing, service-bureau, or application service.
 
-V1.1.0 automatically changes to AGPL-3.0-only on 2030-07-14. V1.0.10 and earlier are unaffected and remain under the license included in each release tag.
+V1.2.0 automatically changes to AGPL-3.0-only on 2030-07-14. V1.0.10 and earlier are unaffected and remain under the license included in each release tag.
 
 See [LICENSE](./LICENSE) and [LICENSE_POLICY.md](./LICENSE_POLICY.md) for the controlling scope, [COMMERCIAL_LICENSE.md](./COMMERCIAL_LICENSE.md) for commercial licensing, and [CONTRIBUTING.md](./CONTRIBUTING.md) before contributing code.
 

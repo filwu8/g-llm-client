@@ -4,7 +4,7 @@
 
 当前版本：[V1.0.10](https://github.com/filwu8/g-llm-client/releases/tag/v1.0.10)
 
-> `main` 分支正在开发 V1.1.0。V1.1.0 起采用 BUSL-1.1，允许个人和企业免费内部使用，并于 2030-07-14 自动转换为 AGPL-3.0-only；V1.0.10 及以前版本继续适用其发布标签中的 AGPL-3.0-only。
+> `main` 分支正在开发 V1.2.0。V1.1.0 起采用 BUSL-1.1，允许个人和企业免费内部使用；当前 V1.2.0 将于 2030-07-14 自动转换为 AGPL-3.0-only。V1.0.10 及以前版本继续适用其发布标签中的 AGPL-3.0-only。
 
 [下载客户端](https://llm.gprophet.com/download) | [完整更新日志](https://llm.gprophet.com/download/changelog) | [GitHub Releases](https://github.com/filwu8/g-llm-client/releases)
 
@@ -132,11 +132,11 @@ Authorization: Bearer {apiKey}
 
 ## License
 
-G-LLM Desktop Client 由 GPROPHET LIMITED 发布。当前开发版本 V1.1.0 采用 [Business Source License 1.1](./LICENSE)，并附带额外使用授权。
+G-LLM Desktop Client 由 GPROPHET LIMITED 发布。当前开发版本 V1.2.0 采用 [Business Source License 1.1](./LICENSE)，并附带额外使用授权。
 
 个人使用、学习研究、测试评估和企业内部业务使用免费。未经 GPROPHET LIMITED 书面商业授权，不得白标或 OEM、转售或出租、作为竞品发布或分发，也不得向第三方提供托管、代运营、外包或应用服务。
 
-V1.1.0 将于 2030-07-14 自动转换为 AGPL-3.0-only。V1.0.10 及以前版本不受本次变更影响，继续适用各自发布标签中已经附带的许可证。
+V1.2.0 将于 2030-07-14 自动转换为 AGPL-3.0-only。V1.0.10 及以前版本不受本次变更影响，继续适用各自发布标签中已经附带的许可证。
 
 完整许可边界见 [LICENSE](./LICENSE) 和 [LICENSE_POLICY.md](./LICENSE_POLICY.md)，商业授权说明见 [COMMERCIAL_LICENSE.md](./COMMERCIAL_LICENSE.md)，贡献代码前请阅读 [CONTRIBUTING.md](./CONTRIBUTING.md)。
 

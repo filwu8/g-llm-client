@@ -5485,7 +5485,7 @@ function SettingsPanel({
               <div className="about-legal-summary">
                 <div>
                   <strong>源码与商业使用</strong>
-                  <span>V1.1.0 允许个人和企业免费内部使用，2030-07-14 自动转换为 AGPL-3.0-only。</span>
+                  <span>V1.1.0 起允许个人和企业免费内部使用，当前 V1.2.0 将于 2030-07-14 自动转换为 AGPL-3.0-only。</span>
                 </div>
                 <div className="about-legal-actions">
                   <button className="about-release-link" onClick={() => void openLegalDocument('license')} type="button">
