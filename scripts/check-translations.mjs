@@ -41,7 +41,7 @@ for (const locale of locales.slice(1)) {
 }
 
 const assistantPresetSource = await readFile(resolve(root, 'src/shared/assistantPresets.ts'), 'utf8')
-const assistantPresetIds = [...assistantPresetSource.matchAll(/preset\(\n\s*'([^']+)'/g)].map((match) => match[1])
+const assistantPresetIds = [...assistantPresetSource.matchAll(/preset\(\r?\n\s*'([^']+)'/g)].map((match) => match[1])
 const assistantPresetIdSet = new Set(assistantPresetIds)
 
 for (const file of assistantPresetLocaleFiles) {
