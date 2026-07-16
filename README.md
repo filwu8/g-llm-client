@@ -2,9 +2,11 @@
 
 [简体中文](./README.md) | [English](./README.en-US.md)
 
-当前版本：[V1.0.10](https://github.com/filwu8/g-llm-client/releases/tag/v1.0.10)
+当前代码版本：[V1.2.0](https://github.com/filwu8/g-llm-client/tree/main)
 
-> `main` 分支正在开发 V1.2.0。V1.1.0 起采用 BUSL-1.1，允许个人和企业免费内部使用；当前 V1.2.0 将于 2030-07-14 自动转换为 AGPL-3.0-only。V1.0.10 及以前版本继续适用其发布标签中的 AGPL-3.0-only。
+最近稳定发布：[V1.0.10](https://github.com/filwu8/g-llm-client/releases/tag/v1.0.10)
+
+> V1.1.0 起采用 BUSL-1.1，允许个人和企业免费内部使用；当前 V1.2.0 将于 2030-07-14 自动转换为 AGPL-3.0-only。V1.0.10 及以前版本继续适用其发布标签中的 AGPL-3.0-only。
 
 [下载客户端](https://llm.gprophet.com/download) | [完整更新日志](https://llm.gprophet.com/download/changelog) | [GitHub Releases](https://github.com/filwu8/g-llm-client/releases)
 

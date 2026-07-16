@@ -2,9 +2,11 @@
 
 [简体中文](./README.md) | [English](./README.en-US.md)
 
-Current version: [V1.0.10](https://github.com/filwu8/g-llm-client/releases/tag/v1.0.10)
+Current code version: [V1.2.0](https://github.com/filwu8/g-llm-client/tree/main)
 
-> The `main` branch is developing V1.2.0. Starting with V1.1.0, the source is licensed under BUSL-1.1 for free personal and internal business use; the current V1.2.0 release will automatically change to AGPL-3.0-only on 2030-07-14. V1.0.10 and earlier remain under the AGPL-3.0-only license included in their release tags.
+Latest stable release: [V1.0.10](https://github.com/filwu8/g-llm-client/releases/tag/v1.0.10)
+
+> Starting with V1.1.0, the source is licensed under BUSL-1.1 for free personal and internal business use; the current V1.2.0 release will automatically change to AGPL-3.0-only on 2030-07-14. V1.0.10 and earlier remain under the AGPL-3.0-only license included in their release tags.
 
 [Download](https://llm.gprophet.com/download) | [Full changelog](https://llm.gprophet.com/download/changelog) | [GitHub Releases](https://github.com/filwu8/g-llm-client/releases)
 
