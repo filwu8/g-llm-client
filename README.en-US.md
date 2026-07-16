@@ -4,7 +4,7 @@
 
 Current code version: [V1.2.0](https://github.com/filwu8/g-llm-client/tree/main)
 
-Latest stable release: [V1.0.10](https://github.com/filwu8/g-llm-client/releases/tag/v1.0.10)
+Latest stable release: [V1.2.0](https://github.com/filwu8/g-llm-client/releases/tag/v1.2.0), released on 2026-07-16.
 
 > Starting with V1.1.0, the source is licensed under BUSL-1.1 for free personal and internal business use; the current V1.2.0 release will automatically change to AGPL-3.0-only on 2030-07-14. V1.0.10 and earlier remain under the AGPL-3.0-only license included in their release tags.
 
@@ -24,13 +24,14 @@ Local file tools can generate, modify, and compress files in a conversation. Lig
 | --- | --- |
 | ![PDF compression task in the dark theme](./docs/images/gllm-dark-file-tools.png) | ![PDF compression task in the light theme](./docs/images/gllm-light-file-tools.png) |
 
-## V1.0.10 Highlights
+## V1.2.0 Highlights
 
-- Conversation workspace agent: authorize a local folder for a conversation so the model can inspect, search, create, modify, and organize files within the controlled directory, with visible operation progress and results.
-- Persistent project memory: automatically maintains the project overview, confirmed requirements, decisions, rules, tasks, and risks so long-running work survives model switches and large conversation histories.
-- Local file tasks: compress images and PDFs to upload limits with a plan and risk preview, result verification, and non-destructive output.
-- Long-session continuity and reliability: older messages become a project timeline, while transient rate limits, gateway failures, and service errors are retried automatically.
-- Update checks: check for a newer client from About and open the official download page.
+- A new desktop floating companion on macOS and Windows offers blue and gold appearances, quick-chat access, status feedback, and configurable companion hints.
+- GPT-5.6 models support default, low, medium, and high reasoning effort directly from the model menu in full chat and quick chat.
+- Users can stop generation at any time. Timeouts, rate limits, gateway failures, and temporary network errors now provide clearer messages, immediate retry, and countdown-based automatic recovery.
+- Web search improves entity preservation, news retrieval, relevance ranking, and deduplication to reduce unrelated results.
+- The professional assistant catalog now covers more healthcare, legal, financial, architecture, engineering, content, software, education, and daily-life scenarios with clearer safety boundaries.
+- About links to the source license, third-party notices, commercial licensing, and trademark policy; release packages include the complete legal documents and component inventory.
 
 ## Features
 

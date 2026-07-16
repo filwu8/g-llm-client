@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url'
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const outputPath = resolve(projectRoot, 'THIRD_PARTY_NOTICES.md')
+const projectPackage = JSON.parse(readFileSync(resolve(projectRoot, 'package.json'), 'utf8'))
 
 const pnpmCommand = process.platform === 'win32'
   ? { executable: process.env.ComSpec || 'cmd.exe', args: ['/d', '/s', '/c', 'pnpm'] }
@@ -26,6 +27,15 @@ const rawInventory = execFileSync(pnpmCommand.executable, [...pnpmCommand.args, 
 const groupedInventory = JSON.parse(rawInventory)
 const packages = []
 
+function projectUrl(packageJson, fallback = '') {
+  const repository = typeof packageJson.repository === 'string'
+    ? packageJson.repository
+    : packageJson.repository?.url
+  return String(packageJson.homepage || fallback || repository || '')
+    .replace(/^git\+/, '')
+    .replace(/\.git$/, '')
+}
+
 for (const [licenseGroup, entries] of Object.entries(groupedInventory)) {
   for (const entry of entries) {
     for (let index = 0; index < entry.paths.length; index += 1) {
@@ -39,11 +49,28 @@ for (const [licenseGroup, entries] of Object.entries(groupedInventory)) {
         name: packageJson.name || entry.name,
         version: packageJson.version || entry.versions[index] || entry.versions[0] || 'unknown',
         declaredLicense: packageJson.license || entry.license || licenseGroup,
-        homepage: packageJson.homepage || entry.homepage || packageJson.repository?.url || '',
+        homepage: projectUrl(packageJson, entry.homepage),
         packagePath
       })
     }
   }
+}
+
+// pnpm reports only the current operating system's optional packages. Include
+// every installed direct optional dependency so notices remain complete for
+// macOS, Linux, and Windows artifacts built from the same release source.
+for (const name of Object.keys(projectPackage.optionalDependencies || {})) {
+  const packagePath = resolve(projectRoot, 'node_modules', ...name.split('/'))
+  const packageJsonPath = resolve(packagePath, 'package.json')
+  if (!existsSync(packageJsonPath)) continue
+  const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8'))
+  packages.push({
+    name: packageJson.name || name,
+    version: packageJson.version || projectPackage.optionalDependencies[name] || 'unknown',
+    declaredLicense: packageJson.license || 'Unknown',
+    homepage: projectUrl(packageJson),
+    packagePath
+  })
 }
 
 const uniquePackages = new Map()
