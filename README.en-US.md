@@ -26,12 +26,13 @@ Local file tools can generate, modify, and compress files in a conversation. Lig
 
 ## V1.2.0 Highlights
 
-- A new desktop floating companion on macOS and Windows offers blue and gold appearances, quick-chat access, status feedback, and configurable companion hints.
-- GPT-5.6 models support default, low, medium, and high reasoning effort directly from the model menu in full chat and quick chat.
-- Users can stop generation at any time. Timeouts, rate limits, gateway failures, and temporary network errors now provide clearer messages, immediate retry, and countdown-based automatic recovery.
-- Web search improves entity preservation, news retrieval, relevance ranking, and deduplication to reduce unrelated results.
-- The professional assistant catalog now covers more healthcare, legal, financial, architecture, engineering, content, software, education, and daily-life scenarios with clearer safety boundaries.
-- About links to the source license, third-party notices, commercial licensing, and trademark policy; release packages include the complete legal documents and component inventory.
+- Floating AI companion: macOS and Windows offer blue and gold appearances, automatic theme and resolution adaptation, status animation, companion hints, and one-click access to quick chat.
+- Faster model discovery and switching: the shared model picker provides keyword search, natural sorting, and capability labels across chat, assistants, and provider defaults. GPT-5.6 models expose default, low, medium, and high reasoning effort directly in the menu.
+- Persistent image generation: improved OpenAI-compatible image generation stores completed images in the client data directory and provides clearer messages for channel, permission, and billing failures.
+- More control over responses: users can stop generation while keeping content already received. Timeouts, rate limits, gateway failures, and temporary `fetch failed` errors now provide clearer guidance, manual resend, and automatic recovery.
+- More relevant web research: search planning preserves full entity names, supplements time-sensitive questions with news sources, and ranks, filters, and deduplicates results to reduce unrelated material.
+- Specialist assistants and better quick chat: the catalog expands across network and IT planning, healthcare, legal and financial work, architecture, content, and software. Windows quick chat restores common tools and improves themed startup.
+- Safer data and releases: generated images and application data share the local client data directory. Windows uninstall keeps data by default with an explicit removal option, while release packages include licenses, third-party notices, and trademark policy.
 
 ## Features
 
