@@ -2,11 +2,11 @@
 
 [简体中文](./README.md) | [English](./README.en-US.md)
 
-Current code version: [V1.2.0](https://github.com/filwu8/g-llm-client/tree/main)
+Current code version: [V1.2.1](https://github.com/filwu8/g-llm-client/tree/main)
 
-Latest stable release: [V1.2.0](https://github.com/filwu8/g-llm-client/releases/tag/v1.2.0), released on 2026-07-16.
+Latest stable release: [V1.2.1](https://github.com/filwu8/g-llm-client/releases/tag/v1.2.1), released on 2026-07-16.
 
-> Starting with V1.1.0, the source is licensed under BUSL-1.1 for free personal and internal business use; the current V1.2.0 release will automatically change to AGPL-3.0-only on 2030-07-14. V1.0.10 and earlier remain under the AGPL-3.0-only license included in their release tags.
+> Starting with V1.1.0, the source is licensed under BUSL-1.1 for free personal and internal business use; the current V1.2.1 release will automatically change to AGPL-3.0-only on 2030-07-14. V1.0.10 and earlier remain under the AGPL-3.0-only license included in their release tags.
 
 [Download](https://llm.gprophet.com/download) | [Full changelog](https://llm.gprophet.com/download/changelog) | [GitHub Releases](https://github.com/filwu8/g-llm-client/releases)
 
@@ -24,20 +24,20 @@ Local file tools can generate, modify, and compress files in a conversation. Lig
 | --- | --- |
 | ![PDF compression task in the dark theme](./docs/images/gllm-dark-file-tools.png) | ![PDF compression task in the light theme](./docs/images/gllm-light-file-tools.png) |
 
-## V1.2.0 Highlights
+## V1.2.1 Highlights
 
-- Floating AI companion: macOS and Windows offer blue and gold appearances, automatic theme and resolution adaptation, status animation, companion hints, and one-click access to quick chat.
-- Faster model discovery and switching: the shared model picker provides keyword search, natural sorting, and capability labels across chat, assistants, and provider defaults. GPT-5.6 models expose default, low, medium, and high reasoning effort directly in the menu.
-- Persistent image generation: improved OpenAI-compatible image generation stores completed images in the client data directory and provides clearer messages for channel, permission, and billing failures.
-- More control over responses: users can stop generation while keeping content already received. Timeouts, rate limits, gateway failures, and temporary `fetch failed` errors now provide clearer guidance, manual resend, and automatic recovery.
-- More relevant web research: search planning preserves full entity names, supplements time-sensitive questions with news sources, and ranks, filters, and deduplicates results to reduce unrelated material.
-- Specialist assistants and better quick chat: the catalog expands across network and IT planning, healthcare, legal and financial work, architecture, content, and software. Windows quick chat restores common tools and improves themed startup.
-- Safer data and releases: generated images and application data share the local client data directory. Windows uninstall keeps data by default with an explicit removal option, while release packages include licenses, third-party notices, and trademark policy.
+- Complete Chinese and English UI: the main window, Quick Chat, tray/menu bar, settings, file tasks, native file dialogs, and errors can follow the system language or a manual selection.
+- More flexible assistant management: every assistant can be hidden or deleted from its context menu. Built-in and custom assistants follow the same rules, with a clear warning before conversations and related data are permanently removed.
+- Recoverable hidden assistants: a dedicated manager restores or permanently deletes hidden assistants, which are excluded from assistant and conversation-history search while hidden.
+- Better English update experience: the About tab no longer clips, update checks show English release notes in the English UI, and the public download page supports bilingual release content.
+- Cleaner sidebar and settings layout: fixes remove horizontal assistant-list scrolling, long-name overflow, and clipped English labels while keeping provider and default-model details in the main settings content.
+- Safer localization releases: automated translation completeness checks keep Chinese and English menus, buttons, and messages aligned as features evolve.
 
 ## Features
 
 - Cross-platform desktop client built with Electron, React, and TypeScript, with Windows, macOS, and Linux packaging.
-- Assistant workflow with built-in assistants for general chat, documents, contracts, code, business analysis, and learning, plus custom assistant creation and editing.
+- Assistant workflow with built-in assistants for general chat, documents, contracts, code, business analysis, and learning, plus assistant creation, editing, hiding, restoring, and deletion.
+- Chinese and English UI with system-language detection or manual selection across the main window, Quick Chat, and native menus.
 - Multi-provider and multi-model setup with the default G-LLM gateway and OpenAI-compatible provider templates.
 - Model management with connection tests, `/models` fetching, capability detection, and default model selection.
 - Unified model selection across chat, global defaults, assistant settings, and quick chat, with capability labels and natural name sorting.
@@ -129,11 +129,11 @@ Before shipping, use [docs/release-qa-checklist.md](./docs/release-qa-checklist.
 
 ## License
 
-G-LLM Desktop Client is published by GPROPHET LIMITED. The current V1.2.0 development version is licensed under the [Business Source License 1.1](./LICENSE) with an Additional Use Grant.
+G-LLM Desktop Client is published by GPROPHET LIMITED. The current V1.2.1 development version is licensed under the [Business Source License 1.1](./LICENSE) with an Additional Use Grant.
 
 Personal use, research, evaluation, and internal business operations are free. Without a written commercial license from GPROPHET LIMITED, you may not white-label or OEM the client, resell or rent it, release or distribute it as a competing product, or provide it to third parties as a hosted, managed, outsourcing, service-bureau, or application service.
 
-V1.2.0 automatically changes to AGPL-3.0-only on 2030-07-14. V1.0.10 and earlier are unaffected and remain under the license included in each release tag.
+V1.2.1 automatically changes to AGPL-3.0-only on 2030-07-14. V1.0.10 and earlier are unaffected and remain under the license included in each release tag.
 
 See [LICENSE](./LICENSE) and [LICENSE_POLICY.md](./LICENSE_POLICY.md) for the controlling scope, [COMMERCIAL_LICENSE.md](./COMMERCIAL_LICENSE.md) for commercial licensing, and [CONTRIBUTING.md](./CONTRIBUTING.md) before contributing code.
 

@@ -10,6 +10,7 @@ import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, extname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
+import type { AppLanguage } from '../shared/i18n'
 import type {
   LocalTaskArtifact,
   LocalTaskFilePlan,
@@ -18,6 +19,7 @@ import type {
   LocalTaskResult
 } from '../shared/types'
 import { getSelectedAttachmentPath } from './attachments'
+import { mainT } from './i18n'
 
 const defaultTargetBytes = 2 * 1024 * 1024
 const maxTargetBytes = 100 * 1024 * 1024
@@ -60,14 +62,14 @@ function formatBytes(bytes: number): string {
   return `${bytes} B`
 }
 
-function uniqueOutputName(name: string, index: number, action: LocalTaskFilePlan['action']): string {
+function uniqueOutputName(name: string, index: number, action: LocalTaskFilePlan['action'], language: AppLanguage): string {
   const extension = extname(name)
   const stem = basename(name, extension)
   const outputExtension = action === 'compress-image' ? '.jpg' : action === 'compress-pdf' ? '.pdf' : extension || '.bin'
-  return `${stem}_处理后${index > 0 ? `_${index + 1}` : ''}${outputExtension}`
+  return `${stem}_${mainT('main.localTask.processedSuffix', language)}${index > 0 ? `_${index + 1}` : ''}${outputExtension}`
 }
 
-async function allocateOutputPath(directory: string, preferredName: string): Promise<{ outputName: string; outputPath: string }> {
+async function allocateOutputPath(directory: string, preferredName: string, language: AppLanguage): Promise<{ outputName: string; outputPath: string }> {
   const extension = extname(preferredName)
   const stem = basename(preferredName, extension)
   for (let suffix = 0; suffix < 1000; suffix += 1) {
@@ -79,17 +81,25 @@ async function allocateOutputPath(directory: string, preferredName: string): Pro
       return { outputName, outputPath }
     }
   }
-  throw new Error('输出目录中同名文件过多，请先整理后重试')
+  throw new Error(mainT('main.localTask.tooManyDuplicates', language))
 }
 
-export async function prepareLocalFileTask(request: string, attachmentIds: string[]): Promise<LocalTaskPlan> {
+export async function prepareLocalFileTask(request: string, attachmentIds: string[], language: AppLanguage = 'system'): Promise<LocalTaskPlan> {
   const targetBytes = parseTargetBytes(request)
   const files: LocalTaskFilePlan[] = []
 
   for (const attachmentId of attachmentIds.slice(0, 20)) {
     const filePath = getSelectedAttachmentPath(attachmentId)
     if (!filePath) {
-      files.push({ attachmentId, name: '未知附件', mimeType: 'application/octet-stream', originalSize: 0, supported: false, action: 'unsupported', warning: '该附件不是从本机文件选择器添加，无法执行本地处理。' })
+      files.push({
+        attachmentId,
+        name: mainT('main.localTask.unknownAttachment', language),
+        mimeType: 'application/octet-stream',
+        originalSize: 0,
+        supported: false,
+        action: 'unsupported',
+        warning: mainT('main.localTask.notLocalAttachment', language)
+      })
       continue
     }
     const info = await stat(filePath)
@@ -105,29 +115,29 @@ export async function prepareLocalFileTask(request: string, attachmentIds: strin
       action: info.size <= targetBytes ? 'copy' : isImage ? 'compress-image' : isPdf ? 'compress-pdf' : 'unsupported',
       warning:
         info.size > targetBytes && isPdf
-          ? 'PDF 将通过页面图像重建来压缩，文本搜索、链接、表单或数字签名可能丢失；原文件不会修改。'
+          ? mainT('main.localTask.pdfRebuildWarning', language)
           : info.size > targetBytes && !isImage
-            ? '当前版本暂不能安全压缩这种文件；不会修改或伪造处理结果。'
+            ? mainT('main.localTask.unsupportedWarning', language)
             : undefined
     })
   }
 
-  if (files.length === 0) throw new Error('请先选择至少一个本地文件')
+  if (files.length === 0) throw new Error(mainT('main.localTask.selectFile', language))
   const plan: LocalTaskPlan = {
     id: `task_${randomUUID()}`,
     request: request.trim(),
     targetBytes,
-    targetLabel: `${targetBytes.toLocaleString()} 字节（${formatBytes(targetBytes)}）`,
+    targetLabel: mainT('main.localTask.targetLabel', language, { bytes: targetBytes.toLocaleString(), size: formatBytes(targetBytes) }),
     status: 'awaiting-approval',
     files,
-    outputDirectoryName: '处理后附件',
+    outputDirectoryName: mainT('main.localTask.outputDirectory', language),
     createdAt: Date.now()
   }
   plans.set(plan.id, plan)
   return plan
 }
 
-export async function compressImageToTarget(sourcePath: string, targetBytes: number): Promise<Buffer> {
+export async function compressImageToTarget(sourcePath: string, targetBytes: number, language: AppLanguage = 'system'): Promise<Buffer> {
   const source = await readFile(sourcePath)
   const image = await loadImage(source)
   const sourceMaxSide = Math.max(image.width, image.height)
@@ -160,10 +170,16 @@ export async function compressImageToTarget(sourcePath: string, targetBytes: num
     if (bestWithinTarget) return bestWithinTarget
     maxSide = Math.max(640, Math.floor(maxSide * 0.78))
   }
-  throw new Error('在最低安全质量范围内仍无法压缩到目标大小')
+  throw new Error(mainT('main.localTask.imageTargetFailed', language))
 }
 
-export async function renderPdfToTarget(sourcePath: string, targetBytes: number, planId?: string, minimumBytes = 0): Promise<Buffer> {
+export async function renderPdfToTarget(
+  sourcePath: string,
+  targetBytes: number,
+  planId?: string,
+  minimumBytes = 0,
+  language: AppLanguage = 'system'
+): Promise<Buffer> {
   const source = await readFile(sourcePath)
   const widths = [3600, 3200, 2800, 2400, 2100, 1800, 1500, 1250, 1050, 900, 760, 640]
   const minimumQuality = 0.5
@@ -188,7 +204,7 @@ export async function renderPdfToTarget(sourcePath: string, targetBytes: number,
   }
 
   for (let attempt = 0; attempt < widths.length; attempt += 1) {
-    if (planId && cancelledPlans.has(planId)) throw new Error('任务已取消')
+    if (planId && cancelledPlans.has(planId)) throw new Error(mainT('main.localTask.cancelled', language))
     const { PDFParse } = await loadPdfParse()
     const parser = new PDFParse({ data: source })
     try {
@@ -197,7 +213,7 @@ export async function renderPdfToTarget(sourcePath: string, targetBytes: number,
         imageBuffer: true,
         imageDataUrl: false
       })
-      if (screenshots.total > 100) throw new Error('PDF 超过 100 页，当前版本为避免内存占用不自动压缩')
+      if (screenshots.total > 100) throw new Error(mainT('main.localTask.pdfTooLong', language))
 
       let candidateQuality = 0
       let candidateOutput: Buffer | undefined
@@ -247,7 +263,7 @@ export async function renderPdfToTarget(sourcePath: string, targetBytes: number,
     }
   }
   if (best) return best.output
-  throw new Error('在可接受的页面清晰度下仍无法压缩到目标大小，建议拆分 PDF 后分别上传')
+  throw new Error(mainT('main.localTask.pdfTargetFailed', language))
 }
 
 async function validateOutputBuffer(output: Buffer, action: LocalTaskFilePlan['action']): Promise<boolean> {
@@ -264,14 +280,15 @@ async function validateOutputBuffer(output: Buffer, action: LocalTaskFilePlan['a
 
 export async function executeLocalFileTask(
   planId: string,
-  onProgress?: (progress: LocalTaskProgress) => void
+  onProgress?: (progress: LocalTaskProgress) => void,
+  language: AppLanguage = 'system'
 ): Promise<LocalTaskResult> {
   const plan = plans.get(planId)
-  if (!plan) throw new Error('任务计划已失效，请重新生成计划')
+  if (!plan) throw new Error(mainT('main.localTask.planExpired', language))
   plan.status = 'running'
 
   const firstPath = plan.files.map((file) => getSelectedAttachmentPath(file.attachmentId)).find(Boolean)
-  if (!firstPath) throw new Error('找不到可处理的本地文件')
+  if (!firstPath) throw new Error(mainT('main.localTask.noProcessableFile', language))
   const outputDirectory = join(dirname(firstPath), plan.outputDirectoryName)
   await mkdir(outputDirectory, { recursive: true })
   taskOutputDirectories.set(plan.id, outputDirectory)
@@ -280,10 +297,10 @@ export async function executeLocalFileTask(
   for (let index = 0; index < plan.files.length; index += 1) {
     if (cancelledPlans.has(planId)) break
     const file = plan.files[index]
-    onProgress?.({ planId, current: index + 1, total: plan.files.length, message: `正在处理 ${file.name}` })
+    onProgress?.({ planId, current: index + 1, total: plan.files.length, message: mainT('main.localTask.processingFile', language, { file: file.name }) })
     const sourcePath = getSelectedAttachmentPath(file.attachmentId)
     if (!sourcePath || file.action === 'unsupported') {
-      artifacts.push({ attachmentId: file.attachmentId, sourceName: file.name, originalSize: file.originalSize, success: false, verified: false, message: file.warning ?? '无法处理该文件' })
+      artifacts.push({ attachmentId: file.attachmentId, sourceName: file.name, originalSize: file.originalSize, success: false, verified: false, message: file.warning ?? mainT('main.localTask.cannotProcess', language) })
       continue
     }
 
@@ -292,10 +309,10 @@ export async function executeLocalFileTask(
         file.action === 'copy'
           ? await readFile(sourcePath)
           : file.action === 'compress-pdf'
-            ? await renderPdfToTarget(sourcePath, plan.targetBytes, planId)
-            : await compressImageToTarget(sourcePath, plan.targetBytes)
-      const preferredName = uniqueOutputName(file.name, index, file.action)
-      const { outputName, outputPath } = await allocateOutputPath(outputDirectory, preferredName)
+            ? await renderPdfToTarget(sourcePath, plan.targetBytes, planId, 0, language)
+            : await compressImageToTarget(sourcePath, plan.targetBytes, language)
+      const preferredName = uniqueOutputName(file.name, index, file.action, language)
+      const { outputName, outputPath } = await allocateOutputPath(outputDirectory, preferredName, language)
       await writeFile(outputPath, output)
       const outputInfo = await stat(outputPath)
       const readable = await validateOutputBuffer(output, file.action)
@@ -309,10 +326,12 @@ export async function executeLocalFileTask(
         outputPath,
         success: verified,
         verified,
-        message: verified ? `已验证小于 ${plan.targetBytes.toLocaleString()} 字节` : '输出文件仍超过限制'
+        message: verified
+          ? mainT('main.localTask.verified', language, { bytes: plan.targetBytes.toLocaleString() })
+          : mainT('main.localTask.outputTooLarge', language)
       })
     } catch (error) {
-      artifacts.push({ attachmentId: file.attachmentId, sourceName: file.name, originalSize: file.originalSize, success: false, verified: false, message: error instanceof Error ? error.message : '处理失败' })
+      artifacts.push({ attachmentId: file.attachmentId, sourceName: file.name, originalSize: file.originalSize, success: false, verified: false, message: error instanceof Error ? error.message : mainT('main.localTask.failed', language) })
     }
   }
 

@@ -6,6 +6,9 @@
 
 import { ChevronDown, Search } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+
+import { rendererI18n } from './i18n'
 
 import {
   inferModelCapabilities,
@@ -16,11 +19,11 @@ import {
 import { supportsReasoningEffort } from '@shared/featureFlags'
 import type { ApiProvider, ProviderModel, ReasoningEffort } from '@shared/types'
 
-const reasoningEffortOptions: Array<{ value: ReasoningEffort; label: string; title: string }> = [
-  { value: 'default', label: '默认', title: '由模型或上游服务决定，兼容性最好' },
-  { value: 'low', label: '低', title: '响应更快，适合简单问答和改写' },
-  { value: 'medium', label: '中', title: '在速度和推理深度之间平衡' },
-  { value: 'high', label: '高', title: '投入更多推理计算，适合复杂分析和编程' }
+const reasoningEffortOptions: Array<{ value: ReasoningEffort; labelKey: string; titleKey: string }> = [
+  { value: 'default', labelKey: 'modelPicker.reasoning.default', titleKey: 'modelPicker.reasoning.defaultTitle' },
+  { value: 'low', labelKey: 'modelPicker.reasoning.low', titleKey: 'modelPicker.reasoning.lowTitle' },
+  { value: 'medium', labelKey: 'modelPicker.reasoning.medium', titleKey: 'modelPicker.reasoning.mediumTitle' },
+  { value: 'high', labelKey: 'modelPicker.reasoning.high', titleKey: 'modelPicker.reasoning.highTitle' }
 ]
 
 const modelNameCollator = new Intl.Collator(['zh-CN', 'en'], {
@@ -157,6 +160,7 @@ function getModelSearchText(model: ProviderModel): string {
     model.name,
     model.ownedBy,
     model.type,
+    ...normalizeModelCapabilities(model),
     ...normalizeModelCapabilities(model).map((capability) => MODEL_CAPABILITY_LABELS[capability])
   ]
     .filter(Boolean)
@@ -167,7 +171,7 @@ function getModelSearchText(model: ProviderModel): string {
 export function getModelDisplayLabel(model: ProviderModel): string {
   const name = model.name && model.name !== model.id ? `${model.name} (${model.id})` : model.id
   const capabilities = normalizeModelCapabilities(model)
-    .map((capability) => MODEL_CAPABILITY_LABELS[capability])
+    .map((capability) => rendererI18n.t(`modelPicker.capability.${capability}`))
     .join(' / ')
   return `${name} · ${capabilities}`
 }
@@ -177,7 +181,7 @@ export function ModelCapabilityBadges({ model }: { model: ProviderModel }) {
     <>
       {normalizeModelCapabilities(model).map((capability) => (
         <span key={capability} className={`model-capability-badge type-${capability}`}>
-          {MODEL_CAPABILITY_LABELS[capability]}
+          {rendererI18n.t(`modelPicker.capability.${capability}`)}
         </span>
       ))}
     </>
@@ -191,7 +195,7 @@ function ModelPickerList({
   reasoningEffort,
   onReasoningEffortChange,
   onModelReasoningChange,
-  emptyLabel = '没有找到匹配的模型'
+  emptyLabel
 }: {
   models: ProviderModel[]
   selectedModelId: string
@@ -201,8 +205,9 @@ function ModelPickerList({
   onModelReasoningChange?: (modelId: string, effort: ReasoningEffort) => void
   emptyLabel?: string
 }) {
+  const { t } = useTranslation()
   return (
-    <div className="conversation-model-list" role="listbox" aria-label="模型">
+    <div className="conversation-model-list" role="listbox" aria-label={t('modelPicker.model')}>
       {models.map((model) => {
         const subtitle = getModelSubtitle(model)
         const selected = model.id === selectedModelId
@@ -230,13 +235,13 @@ function ModelPickerList({
               {subtitle && <small>{subtitle}</small>}
             </span>
             {showReasoningOptions && (
-              <span className="model-inline-reasoning" aria-label="推理强度">
+              <span className="model-inline-reasoning" aria-label={t('modelPicker.reasoningEffort')}>
                 {reasoningEffortOptions.map((option) => (
                   <button
                     key={option.value}
                     aria-pressed={(reasoningEffort ?? 'default') === option.value}
                     className={(reasoningEffort ?? 'default') === option.value ? 'active' : ''}
-                    title={option.title}
+                    title={t(option.titleKey)}
                     type="button"
                     onClick={(event) => {
                       event.stopPropagation()
@@ -247,7 +252,7 @@ function ModelPickerList({
                       }
                     }}
                   >
-                    {option.label}
+                    {t(option.labelKey)}
                   </button>
                 ))}
               </span>
@@ -258,7 +263,7 @@ function ModelPickerList({
           </div>
         )
       })}
-      {models.length === 0 && <div className="conversation-model-empty">{emptyLabel}</div>}
+      {models.length === 0 && <div className="conversation-model-empty">{emptyLabel ?? t('modelPicker.empty')}</div>}
     </div>
   )
 }
@@ -288,6 +293,7 @@ export function ModelPickerMenu({
   onReasoningEffortChange?: (effort: ReasoningEffort) => void
   onModelReasoningChange?: (modelId: string, effort: ReasoningEffort) => void
 }) {
+  const { t } = useTranslation()
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
@@ -342,8 +348,8 @@ export function ModelPickerMenu({
     <label className="model-search-field">
       <Search size={16} />
       <input
-        aria-label="搜索模型"
-        placeholder="搜索模型名称、ID、供应商或能力标签"
+        aria-label={t('modelPicker.searchLabel')}
+        placeholder={t('modelPicker.searchPlaceholder')}
         value={query}
         onChange={(event) => setQuery(event.target.value)}
         onKeyDown={(event) => {
@@ -367,14 +373,14 @@ export function ModelPickerMenu({
           disabled={disabled}
           onClick={() => setOpen((current) => !current)}
           title={selectedModel
-            ? `${getModelDisplayLabel(selectedModel)}${showReasoningValue ? ` · 推理强度：${selectedReasoningOption.label}` : ''}`
-            : '请选择模型'}
+            ? `${getModelDisplayLabel(selectedModel)}${showReasoningValue ? ` · ${t('modelPicker.reasoningEffort')}: ${t(selectedReasoningOption.labelKey)}` : ''}`
+            : t('modelPicker.select')}
           type="button"
         >
           <span className="model-dropdown-current">
             <strong>
-              {selectedModel ? getModelTitle(selectedModel) : value || '请选择模型'}
-              {showReasoningValue && <span className="model-current-reasoning"> {selectedReasoningOption.label}</span>}
+              {selectedModel ? getModelTitle(selectedModel) : value || t('modelPicker.select')}
+              {showReasoningValue && <span className="model-current-reasoning"> {t(selectedReasoningOption.labelKey)}</span>}
             </strong>
             {subtitle && <small>{subtitle}</small>}
           </span>
@@ -415,9 +421,9 @@ export function ModelPickerMenu({
   return (
     <div className="conversation-model-picker">
       <div className="conversation-model-picker-head">
-        <span>模型</span>
+        <span>{t('modelPicker.model')}</span>
         <small>
-          {selectedModel ? `当前：${getModelTitle(selectedModel)}` : '请选择模型'} · {visibleModelOptions.length}/{modelOptions.length}
+          {selectedModel ? t('modelPicker.currentModel', { model: getModelTitle(selectedModel) }) : t('modelPicker.select')} · {visibleModelOptions.length}/{modelOptions.length}
         </small>
       </div>
       {searchField}

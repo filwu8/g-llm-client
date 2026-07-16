@@ -2,11 +2,11 @@
 
 [简体中文](./README.md) | [English](./README.en-US.md)
 
-当前代码版本：[V1.2.0](https://github.com/filwu8/g-llm-client/tree/main)
+当前代码版本：[V1.2.1](https://github.com/filwu8/g-llm-client/tree/main)
 
-最近稳定发布：[V1.2.0](https://github.com/filwu8/g-llm-client/releases/tag/v1.2.0)，发布于 2026-07-16。
+最近稳定发布：[V1.2.1](https://github.com/filwu8/g-llm-client/releases/tag/v1.2.1)，发布于 2026-07-16。
 
-> V1.1.0 起采用 BUSL-1.1，允许个人和企业免费内部使用；当前 V1.2.0 将于 2030-07-14 自动转换为 AGPL-3.0-only。V1.0.10 及以前版本继续适用其发布标签中的 AGPL-3.0-only。
+> V1.1.0 起采用 BUSL-1.1，允许个人和企业免费内部使用；当前 V1.2.1 将于 2030-07-14 自动转换为 AGPL-3.0-only。V1.0.10 及以前版本继续适用其发布标签中的 AGPL-3.0-only。
 
 [下载客户端](https://llm.gprophet.com/download) | [完整更新日志](https://llm.gprophet.com/download/changelog) | [GitHub Releases](https://github.com/filwu8/g-llm-client/releases)
 
@@ -24,20 +24,20 @@ G-LLM Client 是 GPROPHET LIMITED 自研的跨平台桌面 AI 客户端，支持
 | --- | --- |
 | ![暗色主题中的 PDF 压缩任务](./docs/images/gllm-dark-file-tools.png) | ![亮色主题中的 PDF 压缩任务](./docs/images/gllm-light-file-tools.png) |
 
-## V1.2.0 重点更新
+## V1.2.1 重点更新
 
-- 桌面悬浮 AI 伙伴：macOS 与 Windows 提供蓝色和金色外观、主题与分辨率自适应、状态动画和陪伴提示，点击即可进入快速对话。
-- 模型查找与切换：模型选择器支持关键词搜索、自然排序和能力标签，并在聊天、助手与供应商默认模型之间保持一致；GPT-5.6 系列可直接选择默认、低、中、高推理强度。
-- 图片生成与本地保存：完善 OpenAI-compatible 图片生成请求，生成结果持久化到客户端数据目录，并提供更清晰的渠道、权限和付费错误提示。
-- 对话过程更可控：模型回复时可随时停止并保留已返回内容；超时、限流、网关波动和 `fetch failed` 等临时故障支持清晰提示、手动重发与自动恢复。
-- 联网搜索更相关：搜索规划保留完整实体名称，时效性问题补充新闻来源，并对结果进行相关性排序、过滤和去重，减少偏离问题的无效资料。
-- 专业助手与快速对话：扩充网络规划、IT 规划、医疗健康、法律财税、建筑工程、内容创作和软件开发等助手；Windows 快速对话恢复常用工具并优化主题加载。
-- 数据与发布更安心：生成图片和应用数据统一保存在本机数据目录，Windows 卸载默认保留数据并允许主动删除；发布包同步携带许可证、第三方声明和商标政策。
+- 完整中英文界面：主窗口、快速对话、系统托盘/菜单栏、设置、文件任务、原生文件选择器和错误提示均可跟随系统或手动切换语言。
+- 助手管理更灵活：左侧助手支持右键隐藏或删除，预置助手与自定义助手遵循一致规则；删除前明确提示并同步清理该助手的会话及关联资料。
+- 隐藏助手可恢复：隐藏的助手集中收纳在管理入口中，可随时恢复或永久删除，并自动从助手搜索和历史会话检索中排除。
+- 英文更新体验完善：“关于”页面标签不再被挤压，英文界面检查更新时显示英文版本说明，官网下载页也支持双语发布内容。
+- 侧栏与设置布局优化：修复助手栏横向滚动、长名称溢出和英文标签裁切，供应商与默认模型信息回归正文，紧凑布局更易浏览。
+- 国际化可靠性提升：新增翻译完整性检查，确保新功能发布时中英文菜单、按钮和提示保持同步。
 
 ## 当前能力
 
 - 跨平台桌面客户端：Electron + React + TypeScript，支持 Windows、macOS、Linux 打包。
-- 助手工作流：内置通用、文档、合同、代码、经营分析、学习导师等助手，支持新建、编辑和删除自定义助手。
+- 助手工作流：内置通用、文档、合同、代码、经营分析、学习导师等助手，支持新建、编辑、隐藏、恢复和删除助手。
+- 中英文界面：支持跟随系统或手动选择简体中文、English，并同步切换主窗口、快速对话和系统菜单。
 - 多供应商与多模型：默认 G-LLM 网关，也支持 OpenAI-compatible、OpenAI、DeepSeek、本地兼容服务等供应商模板。
 - 模型管理：支持测试供应商连接、拉取 `/models`、能力识别和默认模型选择。
 - 统一模型选择：聊天、全局默认模型、助手设置和快速对话共享模型列表，支持能力标签与自然名称排序。
@@ -136,11 +136,11 @@ Authorization: Bearer {apiKey}
 
 ## License
 
-G-LLM Desktop Client 由 GPROPHET LIMITED 发布。当前开发版本 V1.2.0 采用 [Business Source License 1.1](./LICENSE)，并附带额外使用授权。
+G-LLM Desktop Client 由 GPROPHET LIMITED 发布。当前开发版本 V1.2.1 采用 [Business Source License 1.1](./LICENSE)，并附带额外使用授权。
 
 个人使用、学习研究、测试评估和企业内部业务使用免费。未经 GPROPHET LIMITED 书面商业授权，不得白标或 OEM、转售或出租、作为竞品发布或分发，也不得向第三方提供托管、代运营、外包或应用服务。
 
-V1.2.0 将于 2030-07-14 自动转换为 AGPL-3.0-only。V1.0.10 及以前版本不受本次变更影响，继续适用各自发布标签中已经附带的许可证。
+V1.2.1 将于 2030-07-14 自动转换为 AGPL-3.0-only。V1.0.10 及以前版本不受本次变更影响，继续适用各自发布标签中已经附带的许可证。
 
 完整许可边界见 [LICENSE](./LICENSE) 和 [LICENSE_POLICY.md](./LICENSE_POLICY.md)，商业授权说明见 [COMMERCIAL_LICENSE.md](./COMMERCIAL_LICENSE.md)，贡献代码前请阅读 [CONTRIBUTING.md](./CONTRIBUTING.md)。
 

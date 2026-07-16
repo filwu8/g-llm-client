@@ -39,6 +39,7 @@ import { isOfficialGllmApiProvider } from '../shared/providers'
 import { checkForAppUpdate, DOWNLOAD_PAGE_URL } from './appUpdate'
 import { pickAttachments, preparePastedAttachments } from './attachments'
 import { captureScreenshot } from './screenshot'
+import { mainT } from './i18n'
 import { cancelLocalFileTask, executeLocalFileTask, getLocalTaskOutputDirectory, prepareLocalFileTask } from './localFileTasks'
 import { resolveWorkspaceItem, runWorkspaceAgent } from './workspaceAgent'
 import {
@@ -187,7 +188,7 @@ function broadcastChatActivity(activity: ChatActivityEvent): void {
   }
   if (!activity.active && activity.error) {
     pendingFloatingMascotHint = {
-      message: '刚才的请求没有成功，点我可以返回并重试。',
+      message: mainT('main.floating.requestFailed', getSettings().language),
       tone: 'error'
     }
   }
@@ -281,11 +282,11 @@ function writeMainLog(message: string, error?: unknown): void {
 }
 
 function buildTruncationWarning(request: ChatRequest, finishReason: string): string {
-  const reason = finishReason ? `（finish_reason=${finishReason}）` : ''
+  const reason = finishReason ? ` (finish_reason=${finishReason})` : ''
   const tokenAdvice = request.settings.enableMaxTokens
-    ? `当前最大输出 Token 为 ${request.settings.maxTokens.toLocaleString()}，可尝试调大。`
-    : '当前客户端未设置最大输出 Token，可在设置中开启并调大。'
-  return `模型输出已达到上游长度限制${reason}，回复可能不完整。${tokenAdvice}`
+    ? mainT('main.chat.maxTokensAdvice', request.settings.language, { tokens: request.settings.maxTokens.toLocaleString() })
+    : mainT('main.chat.noMaxTokensAdvice', request.settings.language)
+  return mainT('main.chat.truncated', request.settings.language, { reason, advice: tokenAdvice })
 }
 
 function canOpenExternalUrl(url: string): boolean {
@@ -355,7 +356,7 @@ function createWindow(): BrowserWindow {
     height: 820,
     minWidth: 1100,
     minHeight: 680,
-    title: '无极界',
+    title: mainT('about.productName', getSettings().language),
     backgroundColor:
       getSettings().theme === 'dark' ? '#0f172a' : getSettings().theme === 'gold' ? '#1c1008' : '#f4f7f6',
     autoHideMenuBar: true,
@@ -724,12 +725,12 @@ function showFloatingMascotHint(
   floatingMascotHintHideTimer = setTimeout(hideFloatingMascotHint, duration)
 }
 
-const floatingMascotIdleHints = [
-  '我在这里，点我就能开始对话。',
-  '有新想法吗？我随时可以一起完善。',
-  '需要整理文档、图片或代码，直接交给我。',
-  '卡住的时候点我，我们一起看看。',
-  '工作告一段落了吗？记得活动一下。'
+const floatingMascotIdleHintKeys = [
+  'main.floating.idle1',
+  'main.floating.idle2',
+  'main.floating.idle3',
+  'main.floating.idle4',
+  'main.floating.idle5'
 ]
 
 function scheduleFloatingMascotHint(initial = false): void {
@@ -738,7 +739,8 @@ function scheduleFloatingMascotHint(initial = false): void {
 
   const delay = initial ? 9000 : 52000 + Math.round(Math.random() * 36000)
   floatingMascotHintTimer = setTimeout(() => {
-    const message = floatingMascotIdleHints[floatingMascotHintIndex % floatingMascotIdleHints.length]
+    const key = floatingMascotIdleHintKeys[floatingMascotHintIndex % floatingMascotIdleHintKeys.length]
+    const message = mainT(key, getSettings().language)
     floatingMascotHintIndex += 1
     showFloatingMascotHint(message)
     scheduleFloatingMascotHint(false)
@@ -842,7 +844,7 @@ function createQuickWindow(anchorBounds?: Rectangle): BrowserWindow {
     alwaysOnTop: true,
     hasShadow: process.platform !== 'win32',
     transparent: true,
-    title: 'G-LLM 快速对话',
+    title: mainT('quickChat.title', getSettings().language),
     backgroundColor: '#00000000',
     icon: getAppIconPath(),
     vibrancy: process.platform === 'darwin' ? 'under-window' : undefined,
@@ -942,17 +944,46 @@ function setFloatingMascotHints(enabled: boolean): void {
   }
 }
 
+function setAppLanguage(language: AppSettings['language']): void {
+  const saved = setSettings({ ...getSettings(), language })
+  broadcastSettingsChange(saved)
+}
+
 function buildAppStatusMenu(anchorBounds?: Rectangle): Menu {
   const floatingLogoVisible = Boolean(floatingLogoWindow && !floatingLogoWindow.isDestroyed() && floatingLogoWindow.isVisible())
   const settings = getSettings()
+  const t = (key: string) => mainT(key, settings.language)
 
   return Menu.buildFromTemplate([
-    { label: '打开快速对话', click: () => showQuickWindow(anchorBounds) },
-    { label: '打开主窗口', click: () => createWindow() },
+    { label: t('native.openQuickChat'), click: () => showQuickWindow(anchorBounds) },
+    { label: t('native.openMainWindow'), click: () => createWindow() },
+    {
+      label: t('native.language'),
+      submenu: [
+        {
+          label: t('language.system'),
+          type: 'radio' as const,
+          checked: settings.language === 'system',
+          click: () => setAppLanguage('system')
+        },
+        {
+          label: t('language.zhCN'),
+          type: 'radio' as const,
+          checked: settings.language === 'zh-CN',
+          click: () => setAppLanguage('zh-CN')
+        },
+        {
+          label: t('language.enUS'),
+          type: 'radio' as const,
+          checked: settings.language === 'en-US',
+          click: () => setAppLanguage('en-US')
+        }
+      ]
+    },
     ...(supportsFloatingMascot
       ? [
           {
-            label: floatingLogoVisible ? '隐藏悬浮窗' : '显示悬浮窗',
+            label: t(floatingLogoVisible ? 'native.hideFloating' : 'native.showFloating'),
             click: () => {
               if (floatingLogoVisible) {
                 hideFloatingLogoToTray()
@@ -962,22 +993,22 @@ function buildAppStatusMenu(anchorBounds?: Rectangle): Menu {
             }
           },
           {
-            label: '悬浮宠物外观',
+            label: t('native.mascotAppearance'),
             submenu: [
               {
-                label: '自动（跟随主题）',
+                label: t('native.appearanceAuto'),
                 type: 'radio' as const,
                 checked: settings.floatingMascotSkin === 'auto',
                 click: () => setFloatingMascotAppearance('auto')
               },
               {
-                label: '经典蓝',
+                label: t('native.appearanceBlue'),
                 type: 'radio' as const,
                 checked: settings.floatingMascotSkin === 'blue',
                 click: () => setFloatingMascotAppearance('blue')
               },
               {
-                label: '鎏金',
+                label: t('native.appearanceGold'),
                 type: 'radio' as const,
                 checked: settings.floatingMascotSkin === 'gold',
                 click: () => setFloatingMascotAppearance('gold')
@@ -985,7 +1016,7 @@ function buildAppStatusMenu(anchorBounds?: Rectangle): Menu {
             ]
           },
           {
-            label: '显示宠物提示',
+            label: t('native.showMascotHints'),
             type: 'checkbox' as const,
             checked: settings.floatingMascotHints,
             click: (menuItem) => setFloatingMascotHints(menuItem.checked)
@@ -994,7 +1025,7 @@ function buildAppStatusMenu(anchorBounds?: Rectangle): Menu {
       : []),
     { type: 'separator' },
     {
-      label: '退出 G-LLM',
+      label: t('native.quit'),
       click: () => quitApp()
     }
   ])
@@ -1033,7 +1064,7 @@ function setupTray(): void {
   )
   if (process.platform === 'darwin') icon.setTemplateImage(true)
   tray = new Tray(icon)
-  tray.setToolTip('G-LLM 快速对话')
+  tray.setToolTip(mainT('quickChat.title', getSettings().language))
   tray.on('click', (_, bounds) => handleTrayClick(bounds))
   tray.on('right-click', () => {
     tray?.popUpContextMenu(buildAppStatusMenu(tray.getBounds()))
@@ -1058,6 +1089,12 @@ function broadcastActiveAssistantChange(): void {
 function broadcastSettingsChange(settings: AppSettings): void {
   for (const window of BrowserWindow.getAllWindows()) {
     if (!window.isDestroyed()) window.webContents.send('settings:changed', settings)
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setTitle(mainT('about.productName', settings.language))
+  if (quickWindow && !quickWindow.isDestroyed()) quickWindow.setTitle(mainT('quickChat.title', settings.language))
+  if (tray) {
+    tray.setToolTip(mainT('quickChat.title', settings.language))
+    tray.setContextMenu(buildAppStatusMenu(tray.getBounds()))
   }
 }
 
@@ -1152,7 +1189,7 @@ app.whenReady().then(() => {
   })
 
   ipcMain.handle('app:get-state', () => getAppStateSnapshot())
-  ipcMain.handle('app:check-for-updates', () => checkForAppUpdate(app.getVersion()))
+  ipcMain.handle('app:check-for-updates', () => checkForAppUpdate(app.getVersion(), getSettings().language))
   ipcMain.handle('app:open-download-page', async () => {
     await shell.openExternal(DOWNLOAD_PAGE_URL)
   })
@@ -1169,15 +1206,16 @@ app.whenReady().then(() => {
   })
   ipcMain.handle('storage:choose-data-directory', async (event) => {
     const owner = BrowserWindow.fromWebContents(event.sender)
+    const language = getSettings().language
     const result = owner
       ? await dialog.showOpenDialog(owner, {
-          title: '选择 G-LLM 数据存储目录',
-          buttonLabel: '选择目录',
+          title: mainT('native.chooseDataDirectory', language),
+          buttonLabel: mainT('native.chooseDirectory', language),
           properties: ['openDirectory', 'createDirectory']
         })
       : await dialog.showOpenDialog({
-          title: '选择 G-LLM 数据存储目录',
-          buttonLabel: '选择目录',
+          title: mainT('native.chooseDataDirectory', language),
+          buttonLabel: mainT('native.chooseDirectory', language),
           properties: ['openDirectory', 'createDirectory']
         })
 
@@ -1186,15 +1224,16 @@ app.whenReady().then(() => {
   })
   ipcMain.handle('storage:choose-existing-data-directory', async (event) => {
     const owner = BrowserWindow.fromWebContents(event.sender)
+    const language = getSettings().language
     const result = owner
       ? await dialog.showOpenDialog(owner, {
-          title: '选择已有的 G-LLM 数据目录',
-          buttonLabel: '使用此目录',
+          title: mainT('native.chooseExistingDataDirectory', language),
+          buttonLabel: mainT('native.useDirectory', language),
           properties: ['openDirectory']
         })
       : await dialog.showOpenDialog({
-          title: '选择已有的 G-LLM 数据目录',
-          buttonLabel: '使用此目录',
+          title: mainT('native.chooseExistingDataDirectory', language),
+          buttonLabel: mainT('native.useDirectory', language),
           properties: ['openDirectory']
         })
 
@@ -1204,16 +1243,17 @@ app.whenReady().then(() => {
   ipcMain.handle('storage:reset-data-directory', () => resetDataRoot())
   ipcMain.handle('storage:export-data-archive', async (event) => {
     const owner = BrowserWindow.fromWebContents(event.sender)
+    const language = getSettings().language
     const result = owner
       ? await dialog.showSaveDialog(owner, {
-          title: '导出 G-LLM 数据',
+          title: mainT('native.exportData', language),
           defaultPath: `G-LLM-Data-${formatBuildCode(new Date())}.zip`,
-          filters: [{ name: 'ZIP 压缩包', extensions: ['zip'] }]
+          filters: [{ name: mainT('native.zipArchive', language), extensions: ['zip'] }]
         })
       : await dialog.showSaveDialog({
-          title: '导出 G-LLM 数据',
+          title: mainT('native.exportData', language),
           defaultPath: `G-LLM-Data-${formatBuildCode(new Date())}.zip`,
-          filters: [{ name: 'ZIP 压缩包', extensions: ['zip'] }]
+          filters: [{ name: mainT('native.zipArchive', language), extensions: ['zip'] }]
         })
 
     if (result.canceled || !result.filePath) return null
@@ -1221,17 +1261,18 @@ app.whenReady().then(() => {
   })
   ipcMain.handle('storage:import-data-archive', async (event) => {
     const owner = BrowserWindow.fromWebContents(event.sender)
+    const language = getSettings().language
     const result = owner
       ? await dialog.showOpenDialog(owner, {
-          title: '导入 G-LLM 数据',
-          buttonLabel: '导入数据',
-          filters: [{ name: 'ZIP 压缩包', extensions: ['zip'] }],
+          title: mainT('native.importData', language),
+          buttonLabel: mainT('native.importDataButton', language),
+          filters: [{ name: mainT('native.zipArchive', language), extensions: ['zip'] }],
           properties: ['openFile']
         })
       : await dialog.showOpenDialog({
-          title: '导入 G-LLM 数据',
-          buttonLabel: '导入数据',
-          filters: [{ name: 'ZIP 压缩包', extensions: ['zip'] }],
+          title: mainT('native.importData', language),
+          buttonLabel: mainT('native.importDataButton', language),
+          filters: [{ name: mainT('native.zipArchive', language), extensions: ['zip'] }],
           properties: ['openFile']
         })
 
@@ -1317,11 +1358,11 @@ app.whenReady().then(() => {
     return saved
   })
   ipcMain.handle('provider:delete', (_, id: string) => deleteProvider(id))
-  ipcMain.handle('provider:check', (_, provider) => checkProviderConnection(provider))
+  ipcMain.handle('provider:check', (_, provider) => checkProviderConnection(provider, getSettings().language))
   ipcMain.handle('provider:check-theme-entitlement', () => getGoldThemeEntitlement())
   ipcMain.handle('provider:refresh-models', async (_, provider) => {
     try {
-      const models = await fetchProviderModels(provider)
+      const models = await fetchProviderModels(provider, getSettings().language)
       const refreshed = {
         ...provider,
         models,
@@ -1339,7 +1380,18 @@ app.whenReady().then(() => {
     }
   })
   ipcMain.handle('assistant:save', (_, assistant) => saveAssistant(assistant))
-  ipcMain.handle('assistant:delete', (_, id: string) => deleteAssistant(id))
+  ipcMain.handle('assistant:delete', (_, id: string) => {
+    const assistant = getAssistants().find((item) => item.id === id)
+    if (!assistant) return getAppStateSnapshot()
+    const deletedConversationIds = getConversations()
+      .filter((conversation) => conversation.assistantId === id)
+      .map((conversation) => conversation.id)
+    deleteAssistant(id)
+    for (const conversationId of deletedConversationIds) {
+      broadcastConversationChange(conversationId, 'deleted')
+    }
+    return getAppStateSnapshot()
+  })
   ipcMain.handle('assistant:suggest', (_, request) => generateAssistantSuggestion(request))
   ipcMain.handle('conversation:search', (_, request) =>
     searchConversations(request, getConversationSearchSources())
@@ -1360,24 +1412,33 @@ app.whenReady().then(() => {
   ipcMain.handle('memory:delete', (_, id: string) => deleteMemory(id))
   ipcMain.handle('tool:save', (_, tool) => saveTool(tool))
   ipcMain.handle('tool:delete', (_, id: string) => deleteTool(id))
-  ipcMain.handle('attachment:pick', (event, kind) => pickAttachments(BrowserWindow.fromWebContents(event.sender), kind))
+  ipcMain.handle('attachment:pick', (event, kind) =>
+    pickAttachments(BrowserWindow.fromWebContents(event.sender), kind, getSettings().language)
+  )
   ipcMain.handle('attachment:prepare-pasted', (_, inputs) => preparePastedAttachments(inputs))
   ipcMain.handle('local-task:prepare', (_, request: string, attachmentIds: string[]) =>
-    prepareLocalFileTask(request, attachmentIds)
+    prepareLocalFileTask(request, attachmentIds, getSettings().language)
   )
   ipcMain.handle('local-task:execute', async (event, planId: string) =>
-    executeLocalFileTask(planId, (progress) => event.sender.send('local-task:progress', progress))
+    executeLocalFileTask(
+      planId,
+      (progress) => event.sender.send('local-task:progress', progress),
+      getSettings().language
+    )
   )
   ipcMain.handle('local-task:cancel', (_, planId: string) => cancelLocalFileTask(planId))
   ipcMain.handle('local-task:open-output', async (_, planId: string) => {
     const outputPath = getLocalTaskOutputDirectory(planId)
-    if (!outputPath) throw new Error('任务输出目录已失效')
+    if (!outputPath) throw new Error(mainT('main.localTask.outputExpired', getSettings().language))
     const error = await shell.openPath(outputPath)
     if (error) throw new Error(error)
   })
   ipcMain.handle('project:choose-workspace', async (event) => {
     const owner = BrowserWindow.fromWebContents(event.sender)
-    const options: Electron.OpenDialogOptions = { title: '选择空间工作目录', properties: ['openDirectory', 'createDirectory'] }
+    const options: Electron.OpenDialogOptions = {
+      title: mainT('native.chooseWorkspace', getSettings().language),
+      properties: ['openDirectory', 'createDirectory']
+    }
     const result = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options)
     return result.canceled ? null : result.filePaths[0] ?? null
   })
@@ -1462,7 +1523,12 @@ app.whenReady().then(() => {
     } catch (error) {
       if (active.controller.signal.aborted) {
         broadcastChatActivity({ conversationId: request.conversationId, active: false })
-        event.sender.send('chat:chunk', { ...chunkBase, content: '', done: true, warning: '已停止生成' })
+        event.sender.send('chat:chunk', {
+          ...chunkBase,
+          content: '',
+          done: true,
+          warning: mainT('workspace.generationStopped', request.settings.language)
+        })
         return
       }
       const message = error instanceof Error ? error.message : String(error)

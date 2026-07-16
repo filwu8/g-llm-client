@@ -6,7 +6,9 @@
 
 import { net } from 'electron'
 
+import type { AppLanguage } from '../shared/i18n'
 import type { AppUpdateInfo } from '../shared/types'
+import { mainT } from './i18n'
 
 const DOWNLOAD_PAGE_URL = 'https://llm.gprophet.com/download'
 const UPDATE_ENDPOINTS = [
@@ -19,6 +21,7 @@ const UPDATE_ENDPOINTS = [
 interface DownloadConfig {
   version: string
   releaseNotes?: string
+  releaseNotesEn?: string
   updatedAt?: string
 }
 
@@ -67,11 +70,16 @@ function parseConfig(value: unknown, depth = 0): DownloadConfig | null {
   const hasClientFields =
     'windows_url' in record || 'macos_url' in record || 'release_notes' in record || 'latestVersion' in record
   if (version && hasClientFields) {
+    const localizedReleaseNotes = asRecord(record.release_notes_i18n ?? record.releaseNotesI18n)
     return {
       version,
       releaseNotes:
         typeof (record.release_notes ?? record.releaseNotes) === 'string'
           ? String(record.release_notes ?? record.releaseNotes).trim()
+          : undefined,
+      releaseNotesEn:
+        typeof (record.release_notes_en ?? record.releaseNotesEn ?? localizedReleaseNotes?.['en-US'] ?? localizedReleaseNotes?.en) === 'string'
+          ? String(record.release_notes_en ?? record.releaseNotesEn ?? localizedReleaseNotes?.['en-US'] ?? localizedReleaseNotes?.en).trim()
           : undefined,
       updatedAt:
         typeof (record.updated_at ?? record.updatedAt) === 'string'
@@ -141,7 +149,8 @@ async function readDownloadPageConfig(): Promise<DownloadConfig | null> {
     if (metaVersion) {
       return {
         version: normalizeVersion(metaVersion[1]),
-        releaseNotes: html.match(/<meta[^>]+name=["']gllm-release-notes["'][^>]+content=["']([^"']*)["']/i)?.[1]
+        releaseNotes: html.match(/<meta[^>]+name=["']gllm-release-notes["'][^>]+content=["']([^"']*)["']/i)?.[1],
+        releaseNotesEn: html.match(/<meta[^>]+name=["']gllm-release-notes-en["'][^>]+content=["']([^"']*)["']/i)?.[1]
       }
     }
     const installerVersion = html.match(/G-LLM[^"'<>\s]*?(\d+\.\d+\.\d+)[^"'<>\s]*?\.exe/i)
@@ -151,7 +160,15 @@ async function readDownloadPageConfig(): Promise<DownloadConfig | null> {
   }
 }
 
-export async function checkForAppUpdate(currentVersion: string): Promise<AppUpdateInfo> {
+function getLocalizedReleaseNotes(config: DownloadConfig, language: AppLanguage): string | undefined {
+  const releaseNotes = config.releaseNotes?.trim()
+  if (mainT('main.locale', language) !== 'en-US') return releaseNotes || undefined
+  if (config.releaseNotesEn?.trim()) return config.releaseNotesEn.trim()
+  if (releaseNotes && !/[\u3400-\u9fff]/u.test(releaseNotes)) return releaseNotes
+  return releaseNotes ? mainT('main.update.localizedNotesUnavailable', language) : undefined
+}
+
+export async function checkForAppUpdate(currentVersion: string, language: AppLanguage = 'system'): Promise<AppUpdateInfo> {
   let config: DownloadConfig | null = null
   for (const endpoint of UPDATE_ENDPOINTS) {
     config = await readEndpointConfig(endpoint)
@@ -165,7 +182,7 @@ export async function checkForAppUpdate(currentVersion: string): Promise<AppUpda
       updateAvailable: false,
       status: 'unavailable',
       downloadPageUrl: DOWNLOAD_PAGE_URL,
-      message: '暂时无法读取官网版本信息，可前往下载页手动查看。'
+      message: mainT('main.update.unavailable', language)
     }
   }
 
@@ -176,9 +193,11 @@ export async function checkForAppUpdate(currentVersion: string): Promise<AppUpda
     updateAvailable,
     status: updateAvailable ? 'available' : 'latest',
     downloadPageUrl: DOWNLOAD_PAGE_URL,
-    releaseNotes: config.releaseNotes,
+    releaseNotes: getLocalizedReleaseNotes(config, language),
     updatedAt: config.updatedAt,
-    message: updateAvailable ? `发现新版本 V${config.version}` : `当前已是最新版本 V${currentVersion}`
+    message: updateAvailable
+      ? mainT('main.update.available', language, { version: config.version })
+      : mainT('main.update.latest', language, { version: currentVersion })
   }
 }
 

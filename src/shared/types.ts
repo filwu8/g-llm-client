@@ -160,6 +160,7 @@ export interface Assistant {
   modelProviderId?: string
   modelId?: string
   builtIn?: boolean
+  hidden?: boolean
   createdAt?: number
   updatedAt?: number
 }
@@ -424,6 +425,7 @@ export interface AssistantSuggestionRequest {
 
 export interface AppSettings {
   activeProviderId: string
+  language: import('./i18n').AppLanguage
   theme: AppTheme
   temperature: number
   enableTemperature: boolean

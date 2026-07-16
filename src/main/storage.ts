@@ -6,6 +6,7 @@
 
 import { app } from 'electron'
 import Store from 'electron-store'
+import type { TOptions } from 'i18next'
 import JSZip from 'jszip'
 import { randomUUID } from 'node:crypto'
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
@@ -43,6 +44,8 @@ import type {
   WebSearchActivity,
   WebSearchResult
 } from '../shared/types'
+import { sanitizeAppLanguage } from '../shared/i18n'
+import { mainT } from './i18n'
 
 type LegacySettings = Partial<AppSettings> & {
   apiBaseUrl?: string
@@ -56,6 +59,7 @@ interface StoreSchema {
   projects: Project[]
   providers: ApiProvider[]
   assistants: Assistant[]
+  deletedBuiltInAssistants: string[]
   conversations: Conversation[]
   notes: KnowledgeNote[]
   memories: AssistantMemory[]
@@ -218,16 +222,16 @@ function assertSafeCustomDataRoot(targetRoot: string, activeRoot: string, defaul
   if (isSamePath(targetRoot, activeRoot) || isSamePath(targetRoot, defaultRoot)) return
 
   if (isPathInside(targetRoot, activeRoot) || isPathInside(activeRoot, targetRoot)) {
-    throw new Error('数据目录不能选择当前数据目录的上级或子级，请选择一个独立文件夹。')
+    throw new Error(storageT('main.storage.pathOverlap'))
   }
 
   const appRoot = app.isPackaged ? dirname(process.execPath) : process.cwd()
   if (isSamePath(targetRoot, appRoot) || isPathInside(targetRoot, appRoot)) {
-    throw new Error('数据目录不能放在程序安装目录内，请选择一个独立且可写的文件夹。')
+    throw new Error(storageT('main.storage.insideApp'))
   }
 
   if (isInWindowsProgramFiles(targetRoot)) {
-    throw new Error('数据目录不能放在 Program Files 内，否则普通用户运行时可能无法写入。')
+    throw new Error(storageT('main.storage.programFiles'))
   }
 }
 
@@ -343,7 +347,7 @@ export function saveGeneratedImageResource(buffer: Buffer, extension = 'png'): S
     join(generatedImagesDirectoryName, getCurrentYearMonth(), `${randomUUID()}.${safeExtension}`)
   )
   const target = getSafeDataResourcePath(relativePath)
-  if (!target) throw new Error('生成图片保存路径无效')
+  if (!target) throw new Error(storageT('main.storage.generatedImagePathInvalid'))
 
   mkdirSync(dirname(target.absolutePath), { recursive: true })
   writeFileSync(target.absolutePath, buffer)
@@ -371,7 +375,7 @@ export function migrateDataRoot(targetRoot: string): DataLocationChangeResult {
       info: getDataLocationInfo(),
       changed: false,
       restartRequired: false,
-      message: '当前已经在使用这个数据目录。'
+      message: storageT('main.storage.alreadyUsingDirectory')
     }
   }
 
@@ -382,7 +386,7 @@ export function migrateDataRoot(targetRoot: string): DataLocationChangeResult {
     info: getDataLocationInfo(),
     changed: true,
     restartRequired: true,
-    message: '已复制当前数据并设置新的数据目录，重启软件后生效。'
+    message: storageT('main.storage.directoryChanged')
   }
 }
 
@@ -394,7 +398,7 @@ export function adoptExistingDataRoot(targetRoot: string): DataLocationChangeRes
   assertWritableDirectory(targetPath)
 
   if (!existsSync(join(targetPath, storeFileName))) {
-    throw new Error('未在该目录中发现 G-LLM 数据文件，请确认选择的是以前备份或迁移的数据目录。')
+    throw new Error(storageT('main.storage.noExistingData'))
   }
 
   if (isSamePath(targetPath, activeDataRoot)) {
@@ -402,7 +406,7 @@ export function adoptExistingDataRoot(targetRoot: string): DataLocationChangeRes
       info: getDataLocationInfo(),
       changed: false,
       restartRequired: false,
-      message: '当前已经在使用这个数据目录。'
+      message: storageT('main.storage.alreadyUsingDirectory')
     }
   }
 
@@ -416,7 +420,7 @@ export function adoptExistingDataRoot(targetRoot: string): DataLocationChangeRes
     info: getDataLocationInfo(),
     changed: true,
     restartRequired: true,
-    message: '已设置为使用已有数据目录，重启软件后生效。'
+    message: storageT('main.storage.existingDirectoryAdopted')
   }
 }
 
@@ -434,8 +438,8 @@ export function resetDataRoot(): DataLocationChangeResult {
     changed: !isSamePath(activeDataRoot, defaultRoot),
     restartRequired: !isSamePath(activeDataRoot, defaultRoot),
     message: isSamePath(activeDataRoot, defaultRoot)
-      ? '当前已经在使用默认数据目录。'
-      : '已复制当前数据并恢复默认目录，重启软件后生效。'
+      ? storageT('main.storage.alreadyUsingDefault')
+      : storageT('main.storage.defaultRestored')
   }
 }
 
@@ -463,12 +467,12 @@ function getSafeArchiveTargetPath(entryName: string): string | null {
 
   const segments = normalized.split('/')
   if (segments.some((segment) => segment === '..' || segment.includes(':') || segment.includes('\0'))) {
-    throw new Error(`压缩包中包含不安全路径：${entryName}`)
+    throw new Error(storageT('main.storage.unsafeArchivePath', { path: entryName }))
   }
 
   const targetPath = resolve(activeDataRoot, ...segments)
   if (!isSamePath(targetPath, activeDataRoot) && !isPathInside(targetPath, activeDataRoot)) {
-    throw new Error(`压缩包中包含越界路径：${entryName}`)
+    throw new Error(storageT('main.storage.archivePathOutside', { path: entryName }))
   }
 
   return targetPath
@@ -550,7 +554,7 @@ export async function exportDataArchive(outputPath: string): Promise<DataArchive
     path: targetPath,
     fileCount,
     byteSize: content.byteLength,
-    message: `已导出 ${fileCount} 个数据文件。`
+    message: storageT('main.storage.exported', { count: fileCount })
   }
 }
 
@@ -563,7 +567,7 @@ export async function importDataArchive(archivePath: string): Promise<DataArchiv
     .filter((item): item is { entry: JSZip.JSZipObject; targetPath: string } => Boolean(item.targetPath))
 
   if (filesToExtract.length === 0) {
-    throw new Error('压缩包中没有可导入的 G-LLM 数据文件。')
+    throw new Error(storageT('main.storage.emptyArchive'))
   }
 
   assertWritableDirectory(activeDataRoot)
@@ -579,12 +583,13 @@ export async function importDataArchive(archivePath: string): Promise<DataArchiv
     backupPath,
     fileCount: filesToExtract.length,
     restartRequired: true,
-    message: `已导入 ${filesToExtract.length} 个数据文件，重启软件后生效。`
+    message: storageT('main.storage.imported', { count: filesToExtract.length })
   }
 }
 
 export const defaultSettings: AppSettings = {
   activeProviderId: DEFAULT_PROVIDER_ID,
+  language: 'system',
   theme: 'light',
   temperature: 1,
   enableTemperature: false,
@@ -606,6 +611,7 @@ const store = new Store<StoreSchema>({
     projects: [],
     providers: [],
     assistants: [],
+    deletedBuiltInAssistants: [],
     conversations: [],
     notes: [],
     memories: [],
@@ -617,6 +623,11 @@ const store = new Store<StoreSchema>({
     }
   }
 })
+
+function storageT(key: string, options?: TOptions): string {
+  const settings = store.get('settings', defaultSettings)
+  return mainT(key, sanitizeAppLanguage(settings.language), options)
+}
 
 const defaultProjectName = '无极界'
 const defaultProjectDescription = '默认空间，用于保存你的通用助手、历史会话和全局资料'
@@ -1096,6 +1107,7 @@ function sanitizeAssistant(assistant: Assistant, fallbackProjectId = getActivePr
     ...assistant,
     projectId: sanitizeProjectId(assistant.projectId, fallbackProjectId),
     builtIn: Boolean(assistant.builtIn),
+    hidden: Boolean(assistant.hidden),
     name: assistant.name.trim() || '未命名助手',
     title: assistant.title.trim() || '自定义助手',
     tone: assistant.tone.trim() || '专属助手',
@@ -1123,6 +1135,7 @@ export function getSettings(): AppSettings {
   return {
     ...defaultSettings,
     activeProviderId,
+    language: sanitizeAppLanguage(saved.language),
     theme: sanitizeAppTheme(saved.theme),
     temperature: Number.isFinite(saved.temperature)
       ? Math.min(2, Math.max(0, Number(saved.temperature)))
@@ -1153,6 +1166,7 @@ export function setSettings(settings: AppSettings): AppSettings {
     ...defaultSettings,
     ...settings,
     activeProviderId,
+    language: sanitizeAppLanguage(settings.language),
     theme: sanitizeAppTheme(settings.theme),
     temperature: Number.isFinite(settings.temperature)
       ? Math.min(2, Math.max(0, Number(settings.temperature)))
@@ -1220,7 +1234,11 @@ export function getGoldThemeEntitlement(): ThemeEntitlementResult {
   const officialRequestRatio = usage.totalRequests > 0 ? usage.officialRequests / usage.totalRequests : 0
   const eligible = usage.totalRequests > 0 && officialRequestRatio > 0.5
   const percentage = (officialRequestRatio * 100).toFixed(1).replace(/\.0$/, '')
-  const summary = `${usage.officialRequests}/${usage.totalRequests} 次（${percentage}%）`
+  const summary = storageT('main.theme.requestSummary', {
+    official: usage.officialRequests,
+    total: usage.totalRequests,
+    percentage
+  })
 
   return {
     ok: true,
@@ -1229,15 +1247,23 @@ export function getGoldThemeEntitlement(): ThemeEntitlementResult {
     officialRequests: usage.officialRequests,
     officialRequestRatio,
     message: eligible
-      ? `已满足金色主题条件：官方 G-LLM 调用 ${summary}`
+      ? storageT('main.theme.eligible', { summary })
       : usage.totalRequests === 0
-        ? '暂时不能使用金色主题：尚无模型调用记录，官方 G-LLM 调用占比需超过 50%'
-        : `暂时不能使用金色主题：官方 G-LLM 调用 ${summary}，占比需超过 50%`
+        ? storageT('main.theme.noUsage')
+        : storageT('main.theme.notEligible', { summary })
   }
 }
 
 function getAllCustomAssistants(): Assistant[] {
   return store.get('assistants', []).map((assistant) => sanitizeAssistant(assistant, defaultProjectId))
+}
+
+function getDeletedBuiltInAssistantKey(projectId: string, assistantId: string): string {
+  return `${projectId}:${assistantId}`
+}
+
+function getDeletedBuiltInAssistantKeys(): string[] {
+  return store.get('deletedBuiltInAssistants', []).filter((value): value is string => typeof value === 'string')
 }
 
 export function getCustomAssistants(projectId = getActiveProjectId()): Assistant[] {
@@ -1250,10 +1276,17 @@ export function getAssistants(projectId = getActiveProjectId()): Assistant[] {
   const savedAssistants = getCustomAssistants(normalizedProjectId)
   const defaultIds = new Set(DEFAULT_ASSISTANTS.map((assistant) => assistant.id))
   const savedById = new Map(savedAssistants.map((assistant) => [assistant.id, assistant]))
-  const defaults = DEFAULT_ASSISTANTS.map((assistant) => {
-    const saved = savedById.get(assistant.id)
-    return saved ? { ...assistant, ...saved, builtIn: true, projectId: normalizedProjectId } : { ...assistant, projectId: normalizedProjectId }
-  })
+  const deletedBuiltInAssistantKeys = new Set(getDeletedBuiltInAssistantKeys())
+  const defaults = DEFAULT_ASSISTANTS
+    .filter(
+      (assistant) => !deletedBuiltInAssistantKeys.has(getDeletedBuiltInAssistantKey(normalizedProjectId, assistant.id))
+    )
+    .map((assistant) => {
+      const saved = savedById.get(assistant.id)
+      return saved
+        ? { ...assistant, ...saved, builtIn: true, projectId: normalizedProjectId }
+        : { ...assistant, projectId: normalizedProjectId }
+    })
   const custom = savedAssistants.filter((assistant) => !defaultIds.has(assistant.id))
 
   return [...defaults, ...custom]
@@ -1271,12 +1304,28 @@ export function saveAssistant(assistant: Assistant, projectId = getActiveProject
 }
 
 export function deleteAssistant(id: string, projectId = getActiveProjectId()): void {
-  if (DEFAULT_ASSISTANTS.some((assistant) => assistant.id === id)) return
-
   const normalizedProjectId = sanitizeProjectId(projectId)
+  if (DEFAULT_ASSISTANTS.some((assistant) => assistant.id === id)) {
+    const deletedKey = getDeletedBuiltInAssistantKey(normalizedProjectId, id)
+    store.set('deletedBuiltInAssistants', [...new Set([...getDeletedBuiltInAssistantKeys(), deletedKey])])
+  }
   store.set(
     'assistants',
     getAllCustomAssistants().filter((assistant) => !(assistant.id === id && assistant.projectId === normalizedProjectId))
+  )
+  store.set(
+    'conversations',
+    getAllConversations().filter(
+      (conversation) => !(conversation.assistantId === id && conversation.projectId === normalizedProjectId)
+    )
+  )
+  store.set(
+    'notes',
+    getAllNotes().filter((note) => !(note.assistantId === id && note.projectId === normalizedProjectId))
+  )
+  store.set(
+    'memories',
+    getAllMemories().filter((memory) => !(memory.assistantId === id && memory.projectId === normalizedProjectId))
   )
 }
 
@@ -1287,6 +1336,12 @@ function getAllConversations(): Conversation[] {
 export function getConversationSearchSources(): ConversationSearchSource[] {
   const projects = getProjects()
   const projectNames = new Map(projects.map((project) => [project.id, project.name]))
+  const hiddenAssistantIdsByProject = new Map(
+    projects.map((project) => [
+      project.id,
+      new Set(getAssistants(project.id).filter((assistant) => assistant.hidden).map((assistant) => assistant.id))
+    ])
+  )
   const assistantNamesByProject = new Map(
     projects.map((project) => [
       project.id,
@@ -1294,7 +1349,14 @@ export function getConversationSearchSources(): ConversationSearchSource[] {
     ])
   )
 
-  return getAllConversations().map((conversation) => ({
+  return getAllConversations()
+    .filter(
+      (conversation) =>
+        !hiddenAssistantIdsByProject
+          .get(conversation.projectId ?? defaultProjectId)
+          ?.has(conversation.assistantId)
+    )
+    .map((conversation) => ({
     conversationId: conversation.id,
     projectId: conversation.projectId ?? defaultProjectId,
     projectName: projectNames.get(conversation.projectId ?? defaultProjectId) ?? '未命名空间',
@@ -1304,8 +1366,8 @@ export function getConversationSearchSources(): ConversationSearchSource[] {
     title: conversation.title,
     messages: conversation.messages.map((message) => ({ role: message.role, content: message.content })),
     createdAt: conversation.createdAt,
-    updatedAt: conversation.updatedAt
-  }))
+      updatedAt: conversation.updatedAt
+    }))
 }
 
 export function getConversations(projectId = getActiveProjectId()): Conversation[] {

@@ -4,6 +4,8 @@
  * Change Date: 2030-07-14
  */
 
+import { rendererI18n } from './i18n'
+
 const automaticallyRetryableStatuses = new Set([
   408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 527
 ])
@@ -28,15 +30,15 @@ export function getChatErrorPresentation(value: string): ChatErrorPresentation {
 
   let userMessage: string
   if (status === 524) {
-    userMessage = '暂时无法连接大模型，服务响应超时。'
+    userMessage = rendererI18n.t('errors.modelTimeout')
   } else if (status === 429) {
-    userMessage = '大模型服务当前请求较多，请稍后再试。'
+    userMessage = rendererI18n.t('errors.modelBusy')
   } else if (automaticallyRetryable) {
-    userMessage = '暂时无法连接大模型。'
+    userMessage = rendererI18n.t('errors.modelUnavailable')
   } else if (isHtml) {
-    userMessage = '大模型服务返回异常，请稍后再试。'
+    userMessage = rendererI18n.t('errors.modelAbnormal')
   } else {
-    userMessage = raw || '请求失败，请稍后再试。'
+    userMessage = raw || rendererI18n.t('errors.requestFailed')
   }
 
   return {

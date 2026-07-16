@@ -5,6 +5,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import blueBodyClosed from '../../../resources/spine/gllm-companion/pet/blue/body-closed.png'
 import blueBodyHalf from '../../../resources/spine/gllm-companion/pet/blue/body-half.png'
@@ -17,6 +18,7 @@ import goldBodyOpen from '../../../resources/spine/gllm-companion/pet/gold/body-
 import goldOrbitBack from '../../../resources/spine/gllm-companion/pet/gold/orbit-back.png'
 import goldOrbitFront from '../../../resources/spine/gllm-companion/pet/gold/orbit-front.png'
 import type { FloatingMascotSkin } from '../../shared/types'
+import { applyRendererLanguage } from './i18n'
 
 type DragState = {
   pointerId: number
@@ -104,6 +106,7 @@ function getBlinkFrame(elapsed: number): BodyFrame {
 }
 
 export default function FloatingLogo() {
+  const { t } = useTranslation()
   const dragState = useRef<DragState | null>(null)
   const activityResetTimer = useRef<number | null>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -116,6 +119,11 @@ export default function FloatingLogo() {
     const handleResize = () => setCanvasSize(Math.max(1, Math.min(window.innerWidth, window.innerHeight)))
     window.addEventListener('resize', handleResize)
     return () => window.removeEventListener('resize', handleResize)
+  }, [])
+
+  useEffect(() => {
+    void window.gllm.getState().then((state) => applyRendererLanguage(state.settings.language))
+    return window.gllm.onSettingsChanged((settings) => applyRendererLanguage(settings.language))
   }, [])
 
   useEffect(() => {
@@ -258,9 +266,9 @@ export default function FloatingLogo() {
 
   return (
     <button
-      aria-label="打开 G-LLM 快速对话"
+      aria-label={t('native.openQuickChat')}
       className={`floating-logo-button ${activity} ${isDragging ? 'dragging' : ''}`}
-      title="打开 G-LLM 快速对话"
+      title={t('native.openQuickChat')}
       type="button"
       onContextMenu={(event) => {
         event.preventDefault()

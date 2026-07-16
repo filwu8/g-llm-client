@@ -69,7 +69,7 @@ const api = {
     ipcRenderer.invoke('workspace:reveal-file', rootPath, relativePath),
   deleteProject: (id: string): Promise<AppStateSnapshot> => ipcRenderer.invoke('project:delete', id),
   saveAssistant: (assistant: Assistant): Promise<Assistant> => ipcRenderer.invoke('assistant:save', assistant),
-  deleteAssistant: (id: string): Promise<void> => ipcRenderer.invoke('assistant:delete', id),
+  deleteAssistant: (id: string): Promise<AppStateSnapshot> => ipcRenderer.invoke('assistant:delete', id),
   suggestAssistant: (request: AssistantSuggestionRequest): Promise<AssistantSuggestion> =>
     ipcRenderer.invoke('assistant:suggest', request),
   saveConversation: (conversation: Conversation): Promise<Conversation> =>

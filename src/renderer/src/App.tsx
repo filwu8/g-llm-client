@@ -67,6 +67,7 @@ import {
   useRef,
   useState
 } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import logo from './assets/gllm-logo.png'
 import { ChatErrorRetry } from './ChatErrorRetry'
@@ -84,15 +85,20 @@ import {
   resizeComposerTextarea
 } from './composerInput'
 import { getMessageSendShortcutLabel, shouldSendMessageFromKeyboard } from './keyboard'
+import { applyRendererLanguage, rendererI18n } from './i18n'
 import { MarkdownMessage } from './MarkdownMessage'
 import { LocalTaskPanel } from './LocalTaskPanel'
+import {
+  findLocalizedAssistantPreset,
+  localizeAssistant,
+  localizeAssistantPresetCategory,
+  searchLocalizedAssistantPresets
+} from './localizedContent'
 import { WorkspaceActivityLog, WorkspaceBar } from './WorkspaceBar'
 import { getModelDisplayLabel, getModelOptions, ModelPickerMenu } from './ModelPicker'
 import { applyDocumentTheme } from './theme'
 import {
   ASSISTANT_PRESET_CATEGORIES,
-  findAssistantPreset,
-  searchAssistantPresets,
   type AssistantPreset
 } from '@shared/assistantPresets'
 import { DEFAULT_ASSISTANTS, getAssistantById } from '@shared/assistants'
@@ -104,11 +110,9 @@ import {
   getProviderById
 } from '@shared/providers'
 import {
-  getAttachmentSupportLabel,
   getModelCapabilities,
   inferModelCapabilities,
   inferModelType,
-  MODEL_CAPABILITY_LABELS,
   normalizeModelCapabilities
 } from '@shared/modelCapabilities'
 import type {
@@ -166,14 +170,6 @@ const maxPastedAttachmentBytes = 12 * 1024 * 1024
 const quoteReferencePrefix = 'quote_'
 const defaultSpaceId = 'project_default'
 const providerTemplateCategoryOrder: ProviderTemplateCategory[] = ['default', 'global', 'china', 'aggregator', 'local']
-const providerTemplateCategoryLabels: Record<ProviderTemplateCategory, string> = {
-  default: '默认与自定义',
-  global: '国际厂商',
-  china: '国内厂商',
-  aggregator: '聚合平台',
-  local: '本地模型'
-}
-
 interface TokenUsage {
   total: number
   input: number
@@ -199,6 +195,12 @@ interface ImageAttachmentContextMenu {
   attachment: PreparedAttachment
 }
 
+interface AssistantContextMenu {
+  x: number
+  y: number
+  assistantId: string
+}
+
 type SettingsTab = 'providers' | 'personalization' | 'storage' | 'about'
 
 interface SpaceFormPayload {
@@ -215,12 +217,7 @@ interface WorkspaceArtifactContextMenu {
   relativePath: string
 }
 
-const settingsTabs: Array<{ id: SettingsTab; label: string }> = [
-  { id: 'providers', label: '模型供应商设置' },
-  { id: 'personalization', label: '个性设置' },
-  { id: 'storage', label: '数据存储设置' },
-  { id: 'about', label: '关于本系统' }
-]
+const settingsTabs: SettingsTab[] = ['providers', 'personalization', 'storage', 'about']
 
 function ModalBackdrop({
   className = 'assistant-modal-backdrop',
@@ -286,15 +283,21 @@ function formatTokenUnit(value: number): string {
 }
 
 function getSpaceName(project: Project | null): string {
-  if (!project) return '无极界'
-  if (project.id === defaultSpaceId && (!project.name || project.name === '默认项目')) return '无极界'
-  return project.name || '未命名空间'
+  if (!project) return rendererI18n.t('app.defaultSpaceName')
+  if (project.id === defaultSpaceId && (!project.name || project.name === '默认项目' || project.name === '无极界')) {
+    return rendererI18n.t('app.defaultSpaceName')
+  }
+  return project.name || rendererI18n.t('app.unnamedSpace')
 }
 
 function getSpaceDescription(project: Project | null): string {
-  if (!project) return '默认空间'
-  if (project.id === defaultSpaceId) return project.description || '默认空间'
-  return project.description || '独立空间'
+  if (!project) return rendererI18n.t('app.defaultSpace')
+  if (project.id === defaultSpaceId) {
+    return !project.description || project.description === '默认空间' || project.description === '默认空间，用于保存你的通用助手、历史会话和全局资料'
+      ? rendererI18n.t('app.defaultSpaceDescription')
+      : project.description
+  }
+  return project.description || rendererI18n.t('app.independentSpace')
 }
 
 function SpaceLogo({ className = '', project }: { className?: string; project: Project | null }) {
@@ -334,7 +337,7 @@ function getFileExtensionFromMime(mimeType: string): string {
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
-    reader.onerror = () => reject(reader.error ?? new Error('读取剪贴板文件失败'))
+    reader.onerror = () => reject(reader.error ?? new Error(rendererI18n.t('notices.clipboardReadFailed')))
     reader.onload = () => resolve(String(reader.result ?? ''))
     reader.readAsDataURL(file)
   })
@@ -346,14 +349,14 @@ function cropImageToSquareDataUrl(source: string, zoom = 1): Promise<string> {
 
   return new Promise((resolve, reject) => {
     const image = new Image()
-    image.onerror = () => reject(new Error('头像图片读取失败'))
+    image.onerror = () => reject(new Error(rendererI18n.t('assistantSettings.errors.imageRead')))
     image.onload = () => {
       const canvas = document.createElement('canvas')
       canvas.width = size
       canvas.height = size
       const context = canvas.getContext('2d')
       if (!context) {
-        reject(new Error('当前环境无法裁剪头像'))
+        reject(new Error(rendererI18n.t('assistantSettings.errors.cropUnavailable')))
         return
       }
 
@@ -492,9 +495,9 @@ function getQuoteReferenceTitle(content: string): string {
     content
       .split('\n')
       .map((line) => line.trim())
-      .find(Boolean) ?? '引用内容'
+      .find(Boolean) ?? rendererI18n.t('notices.quoteContent')
   const collapsed = firstLine.replace(/\s+/g, ' ')
-  return `引用内容：${collapsed.length > 22 ? `${collapsed.slice(0, 22)}...` : collapsed}`
+  return rendererI18n.t('notices.quoteTitle', { text: collapsed.length > 22 ? `${collapsed.slice(0, 22)}...` : collapsed })
 }
 
 function createMessage(
@@ -526,14 +529,14 @@ function formatWorkspaceError(value: string): string {
     .trim()
   const status = normalized.match(/(?:请求失败：|HTTP\s*)(429|500|502|503|504|524)\b/i)?.[1]
   if (/<!doctype\s+html|<html[\s>]/i.test(normalized)) {
-    if (status === '429') return '模型服务当前请求较多（429），自动重试后仍未恢复。'
-    if (status === '502') return '模型网关暂时无法连接上游服务（502），自动重试后仍未恢复。'
-    if (status === '503') return '模型服务暂时不可用（503），自动重试后仍未恢复。'
-    if (status === '504') return '模型服务响应超时（504），自动重试后仍未恢复。'
-    if (status === '524') return '模型服务响应超时（524），自动重试后仍未恢复。'
-    return '模型服务返回了异常网页响应，请稍后重试。'
+    if (status === '429') return rendererI18n.t('workspaceErrors.status429')
+    if (status === '502') return rendererI18n.t('workspaceErrors.status502')
+    if (status === '503') return rendererI18n.t('workspaceErrors.status503')
+    if (status === '504') return rendererI18n.t('workspaceErrors.status504')
+    if (status === '524') return rendererI18n.t('workspaceErrors.status524')
+    return rendererI18n.t('workspaceErrors.htmlResponse')
   }
-  return normalized || '工作区任务发生未知错误'
+  return normalized || rendererI18n.t('workspaceErrors.unknown')
 }
 
 function applyChatChunkToConversation(conversation: Conversation, chunk: ChatChunk): Conversation {
@@ -543,7 +546,7 @@ function applyChatChunkToConversation(conversation: Conversation, chunk: ChatChu
   if (chunk.targetMessageId && chunk.purpose === 'translation') {
     messages = messages.map((message) => {
       if (message.id !== chunk.targetMessageId) return message
-      if (chunk.error) return withTokenCount({ ...message, translation: `翻译失败：${chunk.error}` })
+      if (chunk.error) return withTokenCount({ ...message, translation: rendererI18n.t('notices.translationFailed', { error: chunk.error }) })
       if (chunk.usage) return withApiTokenUsage(message, chunk.usage)
       if (!chunk.content) return message
       return withTokenCount({ ...message, translation: `${message.translation ?? ''}${chunk.content}` })
@@ -581,16 +584,17 @@ function getUrlHost(url: string): string {
 }
 
 function WebSearchActivityCard({ activity }: { activity: WebSearchActivity }) {
+  const { t } = useTranslation()
   const isPlanning = activity.status === 'planning'
   const isSearching = activity.status === 'searching'
   const isFailed = activity.status === 'failed'
   const title = isPlanning
-    ? '正在理解搜索意图'
+    ? t('webActivity.planning')
     : isSearching
-      ? '正在搜索网页'
+      ? t('webActivity.searching')
       : isFailed
-        ? '联网搜索失败'
-        : `已搜索网页 · 查看 ${activity.results.length} 个来源`
+        ? t('webActivity.failed')
+        : t('webActivity.complete', { count: activity.results.length })
 
   return (
     <div className={`web-search-card ${activity.status}`}>
@@ -644,6 +648,7 @@ function AssistantAvatar({ assistant, className = '' }: { assistant: Assistant; 
 function getComparableSettings(settings: AppSettings) {
   return {
     activeProviderId: settings.activeProviderId,
+    language: settings.language,
     theme: settings.theme,
     temperature: Number(settings.temperature),
     enableTemperature: settings.enableTemperature,
@@ -697,6 +702,7 @@ function getEffectiveProvider(
 }
 
 export default function App() {
+  const { t, i18n } = useTranslation()
   const isMac = window.gllm.platform === 'darwin'
   const isWindows = window.gllm.platform === 'win32'
   const [settings, setSettings] = useState<AppSettings | null>(null)
@@ -751,6 +757,8 @@ export default function App() {
   const [selectionMenu, setSelectionMenu] = useState<SelectionContextMenu | null>(null)
   const [imageAttachmentMenu, setImageAttachmentMenu] = useState<ImageAttachmentContextMenu | null>(null)
   const [workspaceArtifactMenu, setWorkspaceArtifactMenu] = useState<WorkspaceArtifactContextMenu | null>(null)
+  const [assistantContextMenu, setAssistantContextMenu] = useState<AssistantContextMenu | null>(null)
+  const [hiddenAssistantsOpen, setHiddenAssistantsOpen] = useState(false)
   const [pendingAttachments, setPendingAttachments] = useState<PreparedAttachment[]>([])
   const [pendingQuoteRefs, setPendingQuoteRefs] = useState<KnowledgeReference[]>([])
   const [pendingKnowledgeRefs, setPendingKnowledgeRefs] = useState<KnowledgeReference[]>([])
@@ -771,8 +779,14 @@ export default function App() {
     [activeProjectId, projects]
   )
   const activeSpaceName = getSpaceName(activeSpace)
-  const activeSpaceSubtitle = activeSpace?.id === defaultSpaceId ? 'G-LLM · 默认空间' : `G-LLM · ${activeSpaceName}`
+  const activeSpaceSubtitle = t('app.spaceSubtitle', {
+    space: activeSpace?.id === defaultSpaceId ? t('app.defaultSpace') : activeSpaceName
+  })
   const activeAssistant = useMemo(() => getAssistantById(activeAssistantId, assistants), [activeAssistantId, assistants])
+  const activeAssistantDisplay = useMemo(
+    () => localizeAssistant(activeAssistant),
+    [activeAssistant, i18n.resolvedLanguage]
+  )
   const activeProvider = useMemo(
     () => getProviderById(settings?.activeProviderId ?? DEFAULT_PROVIDER_ID, providers),
     [providers, settings?.activeProviderId]
@@ -798,13 +812,27 @@ export default function App() {
     .map((message) => message.translation?.length ?? 0)
     .join('|')
   const activeConversationTokenUsage = getConversationTokenUsage(activeConversation)
-  const topbarConversationTitle = activeConversation?.title || '新会话'
-  const activeConversationTokenSummary = `当前会话总词元数：${formatTokenUnit(activeConversationTokenUsage.total)}  ↑${formatTokenUnit(activeConversationTokenUsage.input)}  ↓${formatTokenUnit(activeConversationTokenUsage.output)}`
-  const activeConversationTokenDetail = `当前会话总词元数：${formatTokenUnit(activeConversationTokenUsage.total)}，发送 ${formatTokenUnit(activeConversationTokenUsage.input)}，接收 ${formatTokenUnit(activeConversationTokenUsage.output)}`
+  const topbarConversationTitle = activeConversation?.title || t('app.newConversation')
+  const activeConversationTokenSummary = t('app.tokenSummary', {
+    total: formatTokenUnit(activeConversationTokenUsage.total),
+    input: formatTokenUnit(activeConversationTokenUsage.input),
+    output: formatTokenUnit(activeConversationTokenUsage.output)
+  })
+  const activeConversationTokenDetail = t('app.tokenDetail', {
+    total: formatTokenUnit(activeConversationTokenUsage.total),
+    input: formatTokenUnit(activeConversationTokenUsage.input),
+    output: formatTokenUnit(activeConversationTokenUsage.output)
+  })
   const projectMemorySummary = activeConversation?.projectMemory
     ? [
         activeConversation.projectMemory.overview,
-        `需求 ${activeConversation.projectMemory.requirements.length} · 决策 ${activeConversation.projectMemory.decisions.length} · 规则 ${activeConversation.projectMemory.businessRules.length} · 待办 ${activeConversation.projectMemory.openItems.length} · 风险 ${activeConversation.projectMemory.risks.length}`
+        t('workspace.projectMemoryCounts', {
+          requirements: activeConversation.projectMemory.requirements.length,
+          decisions: activeConversation.projectMemory.decisions.length,
+          rules: activeConversation.projectMemory.businessRules.length,
+          openItems: activeConversation.projectMemory.openItems.length,
+          risks: activeConversation.projectMemory.risks.length
+        })
       ].filter(Boolean).join('\n')
     : ''
   const showScrollToLatest = Boolean(activeConversation?.messages.length && !isNearMessageBottom)
@@ -824,29 +852,37 @@ export default function App() {
     () => activeAssistantMemories.filter((memory) => memory.enabled),
     [activeAssistantMemories]
   )
+  const visibleAssistants = useMemo(() => assistants.filter((assistant) => !assistant.hidden), [assistants])
+  const hiddenAssistants = useMemo(() => assistants.filter((assistant) => assistant.hidden), [assistants])
   const filteredAssistants = useMemo(() => {
     const keyword = assistantSearchQuery.trim().toLocaleLowerCase()
-    if (!keyword) return assistants
+    if (!keyword) return visibleAssistants
 
-    return assistants.filter((assistant) => {
+    return visibleAssistants.filter((assistant) => {
+      const displayAssistant = localizeAssistant(assistant)
       const searchable = [
         assistant.name,
         assistant.title,
+        displayAssistant.name,
+        displayAssistant.title,
         assistant.tone,
         assistant.systemPrompt,
-        ...assistant.starterPrompts
+        ...assistant.starterPrompts,
+        ...displayAssistant.starterPrompts
       ]
         .join(' ')
         .toLocaleLowerCase()
 
       return searchable.includes(keyword)
     })
-  }, [assistantSearchQuery, assistants])
+  }, [assistantSearchQuery, visibleAssistants, i18n.resolvedLanguage])
 
   function applyAppState(state: AppStateSnapshot, options: { selectFirstConversation?: boolean } = {}) {
     const nextProviders = state.providers.length > 0 ? state.providers : [DEFAULT_PROVIDER]
     const nextAssistants = state.assistants.length > 0 ? state.assistants : DEFAULT_ASSISTANTS
-    const firstConversation = state.conversations[0] ?? null
+    const nextVisibleAssistants = nextAssistants.filter((assistant) => !assistant.hidden)
+    const visibleAssistantIds = new Set(nextVisibleAssistants.map((assistant) => assistant.id))
+    const firstConversation = state.conversations.find((conversation) => visibleAssistantIds.has(conversation.assistantId)) ?? null
 
     setAppVersion(state.appVersion || '1.0.0')
     setAppBuildCode(state.appBuildCode || '')
@@ -863,7 +899,7 @@ export default function App() {
 
     if (options.selectFirstConversation) {
       setActiveConversationId(firstConversation?.id ?? null)
-      setActiveAssistantId(firstConversation?.assistantId ?? nextAssistants[0]?.id ?? DEFAULT_ASSISTANTS[0].id)
+      setActiveAssistantId(firstConversation?.assistantId ?? nextVisibleAssistants[0]?.id ?? DEFAULT_ASSISTANTS[0].id)
     }
   }
 
@@ -876,8 +912,8 @@ export default function App() {
 
   useEffect(() => {
     if (!isWindows) return
-    document.title = `${activeSpaceName} - ${activeAssistant.name} - ${activeAssistant.title} | G-LLM`
-  }, [activeAssistant.name, activeAssistant.title, activeSpaceName, isWindows])
+    document.title = `${activeSpaceName} - ${activeAssistantDisplay.name} - ${activeAssistantDisplay.title} | G-LLM`
+  }, [activeAssistantDisplay.name, activeAssistantDisplay.title, activeSpaceName, isWindows])
 
   useEffect(() => {
     void window.gllm.getState().then((state) => {
@@ -895,6 +931,10 @@ export default function App() {
   useEffect(() => {
     if (settings) applyDocumentTheme(settings.theme, true)
   }, [settings?.theme])
+
+  useEffect(() => {
+    if (settings) applyRendererLanguage(settings.language)
+  }, [settings?.language])
 
   useEffect(() => {
     void window.gllm.setActiveAssistantId(activeAssistantId)
@@ -973,12 +1013,13 @@ export default function App() {
   }, [activeAssistantId])
 
   useEffect(() => {
-    if (!selectionMenu && !imageAttachmentMenu && !workspaceArtifactMenu) return
+    if (!selectionMenu && !imageAttachmentMenu && !workspaceArtifactMenu && !assistantContextMenu) return
 
     const closeMenu = () => {
       setSelectionMenu(null)
       setImageAttachmentMenu(null)
       setWorkspaceArtifactMenu(null)
+      setAssistantContextMenu(null)
     }
     const closeMenuOnPointerDown = (event: PointerEvent) => {
       const target = event.target
@@ -997,7 +1038,7 @@ export default function App() {
       window.removeEventListener('resize', closeMenu)
       window.removeEventListener('keydown', closeMenuOnEscape)
     }
-  }, [selectionMenu, imageAttachmentMenu, workspaceArtifactMenu])
+  }, [selectionMenu, imageAttachmentMenu, workspaceArtifactMenu, assistantContextMenu])
 
   useEffect(() => window.gllm.onLocalTaskProgress(setLocalTaskProgress), [])
 
@@ -1075,7 +1116,7 @@ export default function App() {
   function openToolNoticeConversation(conversationId: string) {
     const conversation = conversations.find((item) => item.id === conversationId)
     if (!conversation) {
-      showToolNotice('对应会话已不存在', 3200, { emphasis: true })
+      showToolNotice(t('notices.conversationMissing'), 3200, { emphasis: true })
       return
     }
     setDraftWorkspace(undefined)
@@ -1103,7 +1144,7 @@ export default function App() {
     const state = await window.gllm.setActiveProjectId(spaceId)
     applyAppState(state, { selectFirstConversation: true })
     clearSpaceTransientState()
-    showToolNotice(`已切换到空间「${getSpaceName(state.projects.find((project) => project.id === state.activeProjectId) ?? null)}」`)
+    showToolNotice(t('notices.spaceSwitched', { space: getSpaceName(state.projects.find((project) => project.id === state.activeProjectId) ?? null) }))
   }
 
   async function runConversationSearch(query = conversationSearchQuery) {
@@ -1126,7 +1167,7 @@ export default function App() {
       setConversationSearchResponse(response)
     } catch (error) {
       if (conversationSearchRequestRef.current !== requestId) return
-      setConversationSearchError(error instanceof Error ? error.message : '历史会话搜索失败')
+      setConversationSearchError(error instanceof Error ? error.message : t('notices.conversationSearchFailed'))
     } finally {
       if (conversationSearchRequestRef.current === requestId) setConversationSearchLoading(false)
     }
@@ -1143,9 +1184,9 @@ export default function App() {
       setActiveConversationId(result.conversationId)
       setAssistantSearchQuery('')
       setConversationSearchOpen(false)
-      showToolNotice(`已打开「${result.title}」`)
+      showToolNotice(t('notices.conversationOpened', { title: result.title }))
     } catch (error) {
-      setConversationSearchError(error instanceof Error ? error.message : '无法打开该会话')
+      setConversationSearchError(error instanceof Error ? error.message : t('notices.conversationOpenFailed'))
     }
   }
 
@@ -1167,7 +1208,7 @@ export default function App() {
     const nextState = await window.gllm.setActiveProjectId(saved.id)
     applyAppState(nextState, { selectFirstConversation: true })
     clearSpaceTransientState()
-    showToolNotice(`已创建并切换到空间「${saved.name}」`)
+    showToolNotice(t('notices.spaceCreated', { space: saved.name }))
   }
 
   async function renameSpace(spaceId: string, payload: SpaceFormPayload) {
@@ -1185,7 +1226,7 @@ export default function App() {
       updatedAt: Date.now()
     })
     applyAppState(state)
-    showToolNotice(`空间已重命名为「${saved.name}」`)
+    showToolNotice(t('notices.spaceRenamed', { space: saved.name }))
   }
 
   function getDistanceToMessageBottom() {
@@ -1254,14 +1295,14 @@ export default function App() {
       const imageWithoutDataCount = picked.filter((attachment) => attachment.kind === 'image' && !attachment.dataUrl).length
 
       if (imageWithoutDataCount) {
-        showToolNotice('已添加附件；部分图片过大或读取失败，无法直接识别')
+        showToolNotice(t('notices.attachmentsImageUnreadable'))
       } else if (unreadableCount) {
-        showToolNotice('已添加附件；部分文件暂不能解析正文')
+        showToolNotice(t('notices.attachmentsTextUnreadable'))
       } else {
-        showToolNotice(`已添加 ${picked.length} 个附件`)
+        showToolNotice(t('notices.attachmentsAdded', { count: picked.length }))
       }
     } catch (error) {
-      showToolNotice(error instanceof Error ? error.message : '选择附件失败')
+      showToolNotice(error instanceof Error ? error.message : t('notices.attachmentPickFailed'))
     } finally {
       setIsPickingAttachment(false)
     }
@@ -1289,9 +1330,9 @@ export default function App() {
 
     try {
       await window.gllm.copyImageToClipboard(imageAttachmentMenu.attachment.dataUrl)
-      showToolNotice('已复制图片到剪贴板')
+      showToolNotice(t('notices.imageCopied'))
     } catch {
-      showToolNotice('复制图片失败，请重新截图或保存后复制')
+      showToolNotice(t('notices.imageCopyFailed'))
     } finally {
       setImageAttachmentMenu(null)
     }
@@ -1310,7 +1351,7 @@ export default function App() {
         files.map(async (file, index) => {
           const mimeType = file.type || 'application/octet-stream'
           const extension = getFileExtensionFromMime(mimeType)
-          const name = file.name || (mimeType.startsWith('image/') ? `粘贴图片_${index + 1}.${extension}` : `粘贴附件_${index + 1}.${extension}`)
+          const name = file.name || `${t(mimeType.startsWith('image/') ? 'notices.pastedImageName' : 'notices.pastedAttachmentName', { index: index + 1 })}.${extension}`
           const canReadContent = file.size <= maxPastedAttachmentBytes
 
           return {
@@ -1331,16 +1372,16 @@ export default function App() {
       const imageWithoutDataCount = pasted.filter((attachment) => attachment.kind === 'image' && !attachment.dataUrl).length
 
       if (imageWithoutDataCount > 0) {
-        showToolNotice('已从剪贴板添加附件；部分图片过大或读取失败，无法直接识别')
+        showToolNotice(t('notices.clipboardImageUnreadable'))
       } else if (unreadableCount > 0) {
-        showToolNotice('已从剪贴板添加附件；部分文件暂不能解析正文')
+        showToolNotice(t('notices.clipboardTextUnreadable'))
       } else if (imageCount > 0) {
-        showToolNotice(`已从剪贴板添加 ${pasted.length} 个附件，图片会作为视觉输入发送`)
+        showToolNotice(t('notices.clipboardAttachmentsWithImages', { count: pasted.length }))
       } else {
-        showToolNotice(`已从剪贴板添加 ${pasted.length} 个附件`)
+        showToolNotice(t('notices.clipboardAttachmentsAdded', { count: pasted.length }))
       }
     } catch (error) {
-      showToolNotice(error instanceof Error ? error.message : '粘贴附件失败')
+      showToolNotice(error instanceof Error ? error.message : t('notices.clipboardAttachmentFailed'))
     } finally {
       setIsPickingAttachment(false)
     }
@@ -1357,7 +1398,7 @@ export default function App() {
       if (current.some((item) => item.id === reference.id)) return current
       return [...current, reference].slice(0, 8)
     })
-    showToolNotice(`已引用「${note.title}」，发送时会作为上下文`)
+    showToolNotice(t('notices.knowledgeReferenced', { title: note.title }))
   }
 
   function removePendingKnowledgeRef(id: string) {
@@ -1391,17 +1432,17 @@ export default function App() {
 
     setIsPickingAttachment(true)
     try {
-      showToolNotice('已打开系统截图，选择区域后会自动添加')
+      showToolNotice(t('notices.screenshotOpened'))
       const screenshot = await window.gllm.captureScreenshot()
       if (!screenshot) {
-        showToolNotice('未检测到新的截图')
+        showToolNotice(t('notices.noScreenshot'))
         return
       }
 
       setPendingAttachments((current) => [...current, screenshot].slice(0, 8))
-      showToolNotice(screenshot.dataUrl ? '已添加截图，发送时会作为视觉输入' : '已添加截图，但图片数据读取失败，无法直接识别')
+      showToolNotice(screenshot.dataUrl ? t('notices.screenshotAdded') : t('notices.screenshotUnreadable'))
     } catch (error) {
-      showToolNotice(error instanceof Error ? error.message : '截图失败')
+      showToolNotice(error instanceof Error ? error.message : t('notices.screenshotFailed'))
     } finally {
       setIsPickingAttachment(false)
     }
@@ -1414,6 +1455,65 @@ export default function App() {
     setPendingKnowledgeRefs([])
     const existing = conversations.find((conversation) => conversation.assistantId === assistant.id)
     setActiveConversationId(existing?.id ?? null)
+  }
+
+  function openAssistantContextMenu(event: ReactMouseEvent, assistant: Assistant) {
+    event.preventDefault()
+    event.stopPropagation()
+    const menuHeight = 88
+    setAssistantContextMenu({
+      x: Math.min(event.clientX, window.innerWidth - 190),
+      y: Math.min(event.clientY, window.innerHeight - menuHeight - 8),
+      assistantId: assistant.id
+    })
+  }
+
+  async function setAssistantHidden(assistant: Assistant, hidden: boolean) {
+    setAssistantContextMenu(null)
+    if (hidden && visibleAssistants.length <= 1) {
+      window.alert(t('assistantActions.keepOneVisible'))
+      return
+    }
+
+    const saved = await window.gllm.saveAssistant({ ...assistant, hidden })
+    const nextAssistants = assistants.map((item) => (item.id === saved.id ? saved : item))
+    setAssistants(nextAssistants)
+    if (!hidden && nextAssistants.every((item) => !item.hidden)) setHiddenAssistantsOpen(false)
+
+    if (hidden && activeAssistantId === saved.id) {
+      const replacement = nextAssistants.find((item) => !item.hidden)
+      if (replacement) openAssistant(replacement)
+    }
+  }
+
+  async function deleteAssistantWithConfirmation(assistant: Assistant) {
+    setAssistantContextMenu(null)
+    if (!assistant.hidden && visibleAssistants.length <= 1) {
+      window.alert(t('assistantActions.keepOneVisible'))
+      return
+    }
+
+    const conversationCount = conversations.filter((conversation) => conversation.assistantId === assistant.id).length
+    const displayAssistant = localizeAssistant(assistant)
+    const confirmed = window.confirm(
+      t('assistantActions.deleteConfirm', { name: displayAssistant.name, count: conversationCount })
+    )
+    if (!confirmed) return
+
+    const wasActive = activeAssistantId === assistant.id
+    const state = await window.gllm.deleteAssistant(assistant.id)
+    applyAppState(state)
+
+    if (wasActive) {
+      const replacement = state.assistants.find((item) => !item.hidden)
+      if (replacement) {
+        setActiveAssistantId(replacement.id)
+        const nextConversation = state.conversations.find((conversation) => conversation.assistantId === replacement.id)
+        setActiveConversationId(nextConversation?.id ?? null)
+      }
+    }
+
+    if (state.assistants.every((item) => !item.hidden)) setHiddenAssistantsOpen(false)
   }
 
   function startNewChat() {
@@ -1468,7 +1568,7 @@ export default function App() {
 
     saveConversationUpdate(nextConversation)
     if (!activeConversation) setActiveConversationId(nextConversation.id)
-    showToolNotice(`本会话已切换到 ${conversationProvider.name} · ${nextModelId}`)
+    showToolNotice(t('notices.modelSwitched', { provider: conversationProvider.name, model: nextModelId }))
   }
 
   function changeActiveConversationReasoningEffort(reasoningEffort: ReasoningEffort) {
@@ -1513,16 +1613,16 @@ export default function App() {
   async function copyMessage(content: string) {
     try {
       await writePlainTextToClipboard(content)
-      showToolNotice('已复制 Markdown 到剪贴板')
+      showToolNotice(t('notices.markdownCopied'))
     } catch {
-      showToolNotice('复制失败，请手动选择文本复制')
+      showToolNotice(t('notices.copyFailed'))
     }
   }
 
   function quoteMessage(message: ChatMessage) {
     const selectedText = getSelectedTextForMessage(message.id)
     addQuoteReference(selectedText || message.content)
-    showToolNotice(selectedText ? '已添加选中引用，发送时会作为上下文' : '已添加消息引用，发送时会作为上下文')
+    showToolNotice(selectedText ? t('notices.selectionQuoted') : t('notices.messageQuoted'))
   }
 
   function openSelectionContextMenu(event: ReactMouseEvent, message: ChatMessage) {
@@ -1546,9 +1646,9 @@ export default function App() {
 
     try {
       await writeRichTextToClipboard(selectionMenu)
-      showToolNotice('已复制选中富文本')
+      showToolNotice(t('notices.richTextCopied'))
     } catch {
-      showToolNotice('复制失败，请手动选择文本复制')
+      showToolNotice(t('notices.copyFailed'))
     } finally {
       setSelectionMenu(null)
     }
@@ -1558,18 +1658,18 @@ export default function App() {
     if (!selectionMenu) return
     addQuoteReference(selectionMenu.text)
     setSelectionMenu(null)
-    showToolNotice('已添加选中引用，发送时会作为上下文')
+    showToolNotice(t('notices.selectionQuoted'))
   }
 
   async function saveMessageToNote(message: ChatMessage) {
     if (!activeConversation) return
 
-    const content = [message.content, message.translation ? `译文：\n${message.translation}` : ''].filter(Boolean).join('\n\n')
+    const content = [message.content, message.translation ? `${t('notices.translationLabel')}:\n${message.translation}` : ''].filter(Boolean).join('\n\n')
     const title = content
       .split('\n')
       .find((line) => line.trim())
       ?.trim()
-      .slice(0, 36) || '聊天笔记'
+      .slice(0, 36) || t('notices.chatNote')
     const now = Date.now()
     const saved = await window.gllm.saveNote({
       id: createId('note'),
@@ -1584,7 +1684,7 @@ export default function App() {
     })
 
     setNotes((current) => [saved, ...current.filter((note) => note.id !== saved.id)])
-    showToolNotice('已保存到本地知识库')
+    showToolNotice(t('notices.savedToKnowledge'))
   }
 
   async function deleteNote(id: string) {
@@ -1617,7 +1717,7 @@ export default function App() {
   function translateMessage(message: ChatMessage) {
     if (!settings || !activeConversation) return
     if (isStreaming) {
-      showToolNotice('当前回答生成中，稍后再翻译')
+      showToolNotice(t('notices.translateAfterResponse'))
       return
     }
     if (translatingMessageIds.includes(message.id)) return
@@ -1671,7 +1771,7 @@ export default function App() {
     }
 
     saveConversationUpdate(nextConversation)
-    showToolNotice('消息已删除')
+    showToolNotice(t('notices.messageDeleted'))
   }
 
   async function executeWorkspaceConversation(
@@ -1708,11 +1808,11 @@ export default function App() {
       })
       setConversations((current) => [completedConversation, ...current.filter((item) => item.id !== completedConversation.id)])
       void window.gllm.saveConversation(completedConversation)
-      if (result.changedFiles.length > 0) showToolNotice(`已修改 ${result.changedFiles.length} 个工作区文件`)
+      if (result.changedFiles.length > 0) showToolNotice(t('workspace.filesChanged', { count: result.changedFiles.length }))
     } catch (error) {
-      const rawMessage = error instanceof Error ? error.message : '未知错误'
+      const rawMessage = error instanceof Error ? error.message : t('workspaceErrors.unknown')
       if (/任务已停止|AbortError|aborted/i.test(rawMessage)) {
-        showToolNotice('已停止生成')
+        showToolNotice(t('workspace.generationStopped'))
         return
       }
       const message = formatWorkspaceError(rawMessage)
@@ -1725,7 +1825,7 @@ export default function App() {
         ...nextConversation,
         workspace,
         messages: [...nextConversation.messages, {
-          ...createMessage('assistant', `工作区任务失败：${message}`),
+          ...createMessage('assistant', t('workspace.taskFailed', { message })),
           error: message,
           workspaceActivities: workspaceActivitiesRef.current,
           workspaceArtifactRoot: workspace.rootPath,
@@ -1749,14 +1849,14 @@ export default function App() {
 
     const messageIndex = activeConversation.messages.findIndex((message) => message.id === messageId)
     if (messageIndex <= 0) {
-      showToolNotice('这条消息前没有可重新生成的上下文')
+      showToolNotice(t('notices.noRegenerateContext'))
       return
     }
 
     const message = activeConversation.messages[messageIndex]
     const messages = activeConversation.messages.slice(0, messageIndex)
     if (!messages.some((message) => message.role === 'user')) {
-      showToolNotice('这条消息前没有用户问题')
+      showToolNotice(t('notices.noUserQuestion'))
       return
     }
 
@@ -1793,7 +1893,7 @@ export default function App() {
 
   function shouldPrepareLocalTask(text: string): boolean {
     return pendingAttachments.some((attachment) => attachment.localExecutable) &&
-      /压缩|文件太大|附件太大|超出.{0,6}(限制|大小)|上传.{0,6}限制|不超过\s*\d+|最多\s*\d+|2097152|帮我弄一下/.test(text)
+      /压缩|文件太大|附件太大|超出.{0,6}(限制|大小)|上传.{0,6}限制|不超过\s*\d+|最多\s*\d+|2097152|帮我弄一下|compress|too\s+large|size\s+limit|under\s+\d+|no\s+more\s+than\s+\d+/i.test(text)
   }
 
   function openWorkspaceArtifactMenu(event: ReactMouseEvent, rootPath: string, relativePath: string) {
@@ -1813,7 +1913,7 @@ export default function App() {
     try {
       await window.gllm.revealWorkspaceFile(rootPath, relativePath)
     } catch (error) {
-      showToolNotice(error instanceof Error ? error.message : '无法定位该文件')
+      showToolNotice(error instanceof Error ? error.message : t('workspace.fileRevealFailed'))
     }
   }
 
@@ -1833,7 +1933,7 @@ export default function App() {
       setLocalTaskProgress(null)
       setLocalTaskResult(null)
     } catch (error) {
-      showToolNotice(error instanceof Error ? error.message : '无法建立本地文件任务')
+      showToolNotice(error instanceof Error ? error.message : t('localTask.prepareFailed'))
     }
   }
 
@@ -1854,11 +1954,21 @@ export default function App() {
         const sizeChange = artifact.outputSize === undefined
           ? formatAttachmentSize(artifact.originalSize)
           : `${formatAttachmentSize(artifact.originalSize)} → ${formatAttachmentSize(artifact.outputSize)}`
-        return `${artifact.success ? '✓' : '⚠'} ${artifact.outputName ?? artifact.sourceName}：${sizeChange}；${artifact.message}`
+        return t('localTask.resultLine', {
+          icon: artifact.success ? '✓' : '⚠',
+          name: artifact.outputName ?? artifact.sourceName,
+          size: sizeChange,
+          message: artifact.message
+        })
       })
       const assistantMessage = createMessage(
         'assistant',
-        `本地文件任务${result.status === 'completed' ? '已完成' : result.status === 'partial' ? '部分完成' : '未完成'}：${successCount}/${result.artifacts.length} 个文件已验证达标。\n\n${resultLines.join('\n')}\n\n原始文件未被修改。`
+        t('localTask.conversationSummary', {
+          status: t(`localTask.status.${result.status}`),
+          success: successCount,
+          total: result.artifacts.length,
+          results: resultLines.join('\n')
+        })
       )
       const nextConversation = withConversationTokens({
         ...baseConversation,
@@ -1873,7 +1983,7 @@ export default function App() {
       setPendingAttachments([])
       setDraft('')
     } catch (error) {
-      showToolNotice(error instanceof Error ? error.message : '本地文件任务执行失败')
+      showToolNotice(error instanceof Error ? error.message : t('localTask.executeFailed'))
     } finally {
       setLocalTaskRunning(false)
     }
@@ -1901,13 +2011,13 @@ export default function App() {
       )
       if (conflictingConversation) {
         showToolNotice(
-          `该目录已授权给会话「${conflictingConversation.title}」，请先在原会话解除授权`,
+          t('workspace.folderConflict', { conversation: conflictingConversation.title }),
           0,
           { emphasis: true, requiresConfirmation: true, conversationId: conflictingConversation.id }
         )
         return
       }
-      const displayName = rootPath.split(/[\\/]/).filter(Boolean).at(-1) || '工作区'
+      const displayName = rootPath.split(/[\\/]/).filter(Boolean).at(-1) || t('workspace.defaultName')
       const workspace: ConversationWorkspace = {
         rootPath,
         displayName,
@@ -1925,7 +2035,7 @@ export default function App() {
       const saved = await window.gllm.saveConversation(nextConversation)
       setConversations((current) => [saved, ...current.filter((item) => item.id !== saved.id)])
     } catch (error) {
-      showToolNotice(error instanceof Error ? error.message : '工作目录授权失败')
+      showToolNotice(error instanceof Error ? error.message : t('workspace.bindFailed'))
     }
   }
 
@@ -1941,7 +2051,7 @@ export default function App() {
       const saved = await window.gllm.saveConversation(nextConversation)
       setConversations((current) => [saved, ...current.filter((item) => item.id !== saved.id)])
     } catch (error) {
-      showToolNotice(error instanceof Error ? error.message : '解除工作目录授权失败')
+      showToolNotice(error instanceof Error ? error.message : t('workspace.unbindFailed'))
     }
   }
 
@@ -1963,12 +2073,12 @@ export default function App() {
     const messageText =
       text ||
       (pendingQuoteRefs.length > 0
-        ? '请结合我引用的对话内容回答。'
+        ? t('notices.answerWithQuote')
         : pendingKnowledgeRefs.length > 0
-          ? '请结合我引用的本地知识库内容回答。'
+          ? t('notices.answerWithKnowledge')
         : pendingAttachments.some((attachment) => attachment.kind === 'image')
-          ? '请分析我上传的图片。'
-          : '请分析我上传的附件。')
+          ? t('notices.analyzeImage')
+          : t('notices.analyzeAttachment'))
 
     const baseConversation =
       activeConversation?.assistantId === activeAssistant.id
@@ -2049,7 +2159,7 @@ export default function App() {
       if (!result) return
 
       setDataLocation(result.info)
-      const shouldRestart = window.confirm(`${result.message}\n\n现在重启 G-LLM 并载入该数据目录吗？`)
+      const shouldRestart = window.confirm(t('storage.confirmRecoverRestart', { message: result.message }))
       if (shouldRestart) {
         await window.gllm.relaunchApp()
       }
@@ -2099,7 +2209,7 @@ export default function App() {
   }
 
   async function suggestAssistant(keyword: string, provider: ApiProvider): Promise<AssistantSuggestion> {
-    if (!settings) throw new Error('设置尚未加载')
+    if (!settings) throw new Error(t('notices.settingsNotLoaded'))
     return window.gllm.suggestAssistant({
       keyword,
       provider,
@@ -2122,23 +2232,23 @@ export default function App() {
       {!railCollapsed && (
         <aside className="rail">
           <div className="brand">
-            <button className="brand-space-button" onClick={() => setSpaceCenterOpen(true)} title="打开空间中心" type="button">
+            <button className="brand-space-button" onClick={() => setSpaceCenterOpen(true)} title={t('app.openSpaceCenter')} type="button">
               <SpaceLogo project={activeSpace} />
               <span>
                 <strong>{activeSpaceName}</strong>
                 <small>{activeSpaceSubtitle}</small>
               </span>
             </button>
-            <button className="icon-button compact" onClick={() => setRailCollapsed(true)} title="折叠助手栏" type="button">
+            <button className="icon-button compact" onClick={() => setRailCollapsed(true)} title={t('app.collapseAssistantRail')} type="button">
               <PanelLeftClose size={16} />
             </button>
           </div>
 
-          <label className="assistant-search" title="搜索助手或历史会话">
+          <label className="assistant-search" title={t('app.searchTitle')}>
             <Search size={15} />
             <input
               value={assistantSearchQuery}
-              placeholder="搜索助手或历史会话"
+              placeholder={t('app.searchPlaceholder')}
               onChange={(event) => setAssistantSearchQuery(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key !== 'Enter') return
@@ -2147,14 +2257,14 @@ export default function App() {
               }}
             />
             {assistantSearchQuery && (
-              <button onClick={() => setAssistantSearchQuery('')} title="清空搜索" type="button">
+              <button onClick={() => setAssistantSearchQuery('')} title={t('app.clearSearch')} type="button">
                 <X size={14} />
               </button>
             )}
             <button
               className="assistant-smart-search-button"
               onClick={() => void runConversationSearch(assistantSearchQuery)}
-              title={assistantSearchQuery.trim() ? '智能搜索历史会话' : '查看最近会话'}
+              title={assistantSearchQuery.trim() ? t('app.smartSearchHistory') : t('app.recentConversations')}
               type="button"
             >
               <Sparkles size={14} />
@@ -2164,17 +2274,20 @@ export default function App() {
           <div className="assistant-list">
             {filteredAssistants.map((assistant) => {
               const active = assistant.id === activeAssistantId
+              const displayAssistant = localizeAssistant(assistant)
               return (
                 <button
                   key={assistant.id}
                   className={`assistant-card ${assistant.color} ${active ? 'active' : ''}`}
                   onClick={() => openAssistant(assistant)}
-                  title={assistant.name}
+                  onContextMenu={(event) => openAssistantContextMenu(event, assistant)}
+                  title={displayAssistant.name}
+                  type="button"
                 >
                   <AssistantAvatar assistant={assistant} />
                   <span>
-                    <strong>{assistant.name}</strong>
-                    <small>{assistant.title}</small>
+                    <strong>{displayAssistant.name}</strong>
+                    <small>{displayAssistant.title}</small>
                   </span>
                 </button>
               )
@@ -2182,35 +2295,68 @@ export default function App() {
             {filteredAssistants.length === 0 && (
               <div className="assistant-empty">
                 <Search size={18} />
-                <span>没有找到相关助手</span>
+                <span>{t('app.noAssistants')}</span>
               </div>
             )}
           </div>
 
           <div className="rail-actions">
-            <button className="icon-button" onClick={() => setAssistantCenterOpen(true)} title="新增助手">
+            <button className="icon-button" onClick={() => setAssistantCenterOpen(true)} title={t('app.addAssistant')}>
               <Plus size={18} />
             </button>
-            <button className="icon-button" onClick={() => setSettingsOpen(true)} title="供应商设置">
+            {hiddenAssistants.length > 0 && (
+              <button
+                className="icon-button rail-hidden-assistants"
+                onClick={() => setHiddenAssistantsOpen(true)}
+                title={t('assistantActions.manageHidden', { count: hiddenAssistants.length })}
+                type="button"
+              >
+                <EyeOff size={18} />
+                <span>{hiddenAssistants.length}</span>
+              </button>
+            )}
+            <button className="icon-button" onClick={() => setSettingsOpen(true)} title={t('app.providerSettings')}>
               <Settings size={18} />
             </button>
           </div>
         </aside>
       )}
 
+      {assistantContextMenu && (() => {
+        const assistant = assistants.find((item) => item.id === assistantContextMenu.assistantId)
+        if (!assistant) return null
+        return (
+          <div
+            className="selection-context-menu assistant-context-menu"
+            style={{ left: assistantContextMenu.x, top: assistantContextMenu.y }}
+            onClick={(event) => event.stopPropagation()}
+            onMouseDown={(event) => event.preventDefault()}
+          >
+            <button type="button" onClick={() => void setAssistantHidden(assistant, true)}>
+              <EyeOff size={15} />
+              {t('assistantActions.hide')}
+            </button>
+            <button className="danger" type="button" onClick={() => void deleteAssistantWithConfirmation(assistant)}>
+              <Trash2 size={15} />
+              {t('assistantActions.delete')}
+            </button>
+          </div>
+        )
+      })()}
+
       <main className="workspace">
         <header className="topbar">
           <div className="topbar-left">
             {railCollapsed && (
-              <button className="icon-button compact" onClick={() => setRailCollapsed(false)} title="展开助手栏" type="button">
+              <button className="icon-button compact" onClick={() => setRailCollapsed(false)} title={t('app.expandAssistantRail')} type="button">
                 <PanelLeftOpen size={16} />
               </button>
             )}
             <div className="topbar-title">
               <div className="topbar-heading">
-                <h1 title={activeAssistant.name}>{activeAssistant.name}</h1>
-                <span className="topbar-assistant-description" title={activeAssistant.title}>
-                  {activeAssistant.title}
+                <h1 title={activeAssistantDisplay.name}>{activeAssistantDisplay.name}</h1>
+                <span className="topbar-assistant-description" title={activeAssistantDisplay.title}>
+                  {activeAssistantDisplay.title}
                 </span>
               </div>
               <div className="topbar-session-row">
@@ -2227,21 +2373,21 @@ export default function App() {
             {activeConversation?.projectMemory && (
               <button
                 className="icon-button compact project-memory-button"
-                onClick={() => showToolNotice(`项目长期记忆：${projectMemorySummary.slice(0, 700)}`, 9000)}
-                title={`项目长期记忆\n${projectMemorySummary}`}
+                onClick={() => showToolNotice(t('workspace.projectMemoryNotice', { summary: projectMemorySummary.slice(0, 700) }), 9000)}
+                title={`${t('app.projectMemory')}\n${projectMemorySummary}`}
                 type="button"
               >
                 <Brain size={16} />
               </button>
             )}
-            <button className="icon-button compact" onClick={() => setAssistantSettingsOpen(true)} title="助手设置" type="button">
+            <button className="icon-button compact" onClick={() => setAssistantSettingsOpen(true)} title={t('app.assistantSettings')} type="button">
               <Pencil size={16} />
             </button>
-            <button className="icon-button compact" onClick={openConversationModelSettings} title="会话模型">
+            <button className="icon-button compact" onClick={openConversationModelSettings} title={t('app.conversationModel')}>
               <SlidersHorizontal size={16} />
             </button>
             {historyCollapsed && (
-              <button className="icon-button compact" onClick={() => setHistoryCollapsed(false)} title="展开会话栏" type="button">
+              <button className="icon-button compact" onClick={() => setHistoryCollapsed(false)} title={t('app.expandConversationRail')} type="button">
                 <PanelRightOpen size={16} />
               </button>
             )}
@@ -2253,13 +2399,13 @@ export default function App() {
             {needsApiKey && (
               <div className="setup-banner">
                 <KeyRound size={18} />
-                <span>首次使用需要为 {conversationProvider.name} 填写 API Key。</span>
-                <button onClick={() => setSettingsOpen(true)}>配置</button>
+                <span>{t('app.apiKeyRequired', { provider: conversationProvider.name })}</span>
+                <button onClick={() => setSettingsOpen(true)}>{t('app.configure')}</button>
               </div>
             )}
             {!activeConversation || activeConversation.messages.length === 0 ? (
               <div className="starter-grid">
-                {activeAssistant.starterPrompts.map((prompt) => (
+                {activeAssistantDisplay.starterPrompts.map((prompt) => (
                   <button key={prompt} onClick={() => sendMessage(prompt)}>
                     {prompt}
                   </button>
@@ -2305,7 +2451,7 @@ export default function App() {
                         )}
                         {(message.retryAttempts?.length ?? 0) > 0 && (
                           <details className="message-retry-history">
-                            <summary>执行尝试记录（{message.retryAttempts!.length}）</summary>
+                            <summary>{t('app.attemptHistory', { count: message.retryAttempts!.length })}</summary>
                             <ol>
                               {message.retryAttempts!.map((attempt, index) => (
                                 <li key={`${attempt.attemptedAt}_${index}`}>
@@ -2362,49 +2508,53 @@ export default function App() {
                               <span />
                             </div>
                             <div className={`message-translation markdown-body ${!message.translation ? 'pending' : ''}`}>
-                              {message.translation ? <MarkdownMessage content={message.translation} /> : '正在翻译...'}
+                              {message.translation ? <MarkdownMessage content={message.translation} /> : t('app.translating')}
                             </div>
                           </div>
                         )}
                       </div>
                       <div className="message-footer">
                         <div className="message-actions" onMouseDown={(event) => event.preventDefault()}>
-                          <button title="复制整条原始 Markdown" type="button" onClick={() => void copyMessage(message.content)}>
+                          <button title={t('app.copyMarkdown')} type="button" onClick={() => void copyMessage(message.content)}>
                             <Copy size={16} />
                           </button>
                           {message.role === 'assistant' && !message.error && (
                             <button
                               disabled={isStreaming}
-                              title="重新生成"
+                              title={t('app.regenerate')}
                               type="button"
                               onClick={() => regenerateMessage(message.id)}
                             >
                               <RefreshCw size={16} />
                             </button>
                           )}
-                          <button title="引用选中内容或整条消息" type="button" onClick={() => quoteMessage(message)}>
+                          <button title={t('app.quoteMessage')} type="button" onClick={() => quoteMessage(message)}>
                             <AtSign size={16} />
                           </button>
                           <button
                             disabled={isStreaming || isTranslating}
-                            title={isTranslating ? '正在翻译' : '翻译'}
+                            title={isTranslating ? t('app.translating') : t('app.translate')}
                             type="button"
                             onClick={() => translateMessage(message)}
                           >
                             <Languages size={16} />
                           </button>
-                          <button title="保存到本地知识库" type="button" onClick={() => void saveMessageToNote(message)}>
+                          <button title={t('app.saveToKnowledge')} type="button" onClick={() => void saveMessageToNote(message)}>
                             <NotebookPen size={16} />
                           </button>
-                          <button title="删除" type="button" onClick={() => deleteMessage(message.id)}>
+                          <button title={t('common.delete')} type="button" onClick={() => deleteMessage(message.id)}>
                             <Trash2 size={16} />
                           </button>
                         </div>
                         <span
                           className="message-token"
-                          title={`词元：数量 ${formatTokenUnit(messageTokens.total)}，输入 ${formatTokenUnit(messageTokens.input)}，输出 ${formatTokenUnit(messageTokens.output)}`}
+                          title={t('app.tokenBreakdown', {
+                            total: formatTokenUnit(messageTokens.total),
+                            input: formatTokenUnit(messageTokens.input),
+                            output: formatTokenUnit(messageTokens.output)
+                          })}
                         >
-                          词元：{formatTokenUnit(messageTokens.total)}
+                          {t('app.tokenCount', { count: formatTokenUnit(messageTokens.total) })}
                           <span>↑{formatTokenUnit(messageTokens.input)}</span>
                           <span>↓{formatTokenUnit(messageTokens.output)}</span>
                         </span>
@@ -2427,7 +2577,7 @@ export default function App() {
                             <i />
                             <i />
                           </span>
-                          <span>正在等待 {conversationProvider.defaultModel} 响应...</span>
+                          <span>{t('app.waitingForModel', { model: conversationProvider.defaultModel })}</span>
                         </div>
                       )}
                     </div>
@@ -2446,11 +2596,11 @@ export default function App() {
             >
               <button type="button" onClick={() => void copySelectionMenuText()}>
                 <Copy size={15} />
-                复制
+                {t('common.copy')}
               </button>
               <button type="button" onClick={quoteSelectionMenuText}>
                 <AtSign size={15} />
-                引用
+                {t('common.quote')}
               </button>
             </div>
           )}
@@ -2463,7 +2613,7 @@ export default function App() {
             >
               <button type="button" onClick={() => void copyImageAttachmentToClipboard()}>
                 <Copy size={15} />
-                复制图片
+                {t('app.copyImage')}
               </button>
             </div>
           )}
@@ -2476,7 +2626,7 @@ export default function App() {
             >
               <button type="button" onClick={() => void revealWorkspaceArtifact()}>
                 <FolderOpen size={15} />
-                {isMac ? '在 Finder 中显示' : '在文件资源管理器中显示'}
+                {isMac ? t('app.revealFinder') : t('app.revealExplorer')}
               </button>
             </div>
           )}
@@ -2487,7 +2637,7 @@ export default function App() {
               type="button"
               onClick={() => scrollToLatest('smooth')}
             >
-              {isStreaming ? 'AI 正在回复 · ↓' : '↓ 回到底部'}
+              {isStreaming ? `${t('app.aiResponding')} · ↓` : `↓ ${t('app.scrollLatest')}`}
             </button>
           )}
 
@@ -2504,7 +2654,7 @@ export default function App() {
                 <button
                   className={pendingAttachments.some((attachment) => attachment.kind === 'file') ? 'active' : ''}
                   disabled={isPickingAttachment}
-                  title="上传附件，支持图片、PDF、Word、文本等"
+                  title={t('app.uploadAttachmentDetailed')}
                   type="button"
                   onClick={() => void pickComposerAttachments('file')}
                 >
@@ -2513,7 +2663,7 @@ export default function App() {
                 <button
                   className={pendingAttachments.some((attachment) => attachment.kind === 'image') ? 'active' : ''}
                   disabled={isPickingAttachment}
-                  title="截图"
+                  title={t('app.captureScreenshot')}
                   type="button"
                   onClick={() => void captureComposerScreenshot()}
                 >
@@ -2521,7 +2671,7 @@ export default function App() {
                 </button>
                 <button
                   className={currentWorkspace ? 'active' : ''}
-                  title="会话授权工作文件夹"
+                  title={t('app.workspaceFolder')}
                   type="button"
                   onClick={() => void bindConversationWorkspace()}
                 >
@@ -2529,7 +2679,7 @@ export default function App() {
                 </button>
                 <button
                   className={knowledgeOpen || pendingKnowledgeRefs.length > 0 ? 'active' : ''}
-                  title="知识库"
+                  title={t('app.knowledgeBase')}
                   type="button"
                   onClick={() => setKnowledgeOpen(true)}
                 >
@@ -2537,11 +2687,11 @@ export default function App() {
                 </button>
                 <button
                   className={webSearchEnabled ? 'active' : ''}
-                  title="联网搜索"
+                  title={t('app.webSearch')}
                   type="button"
                   onClick={() => {
                     setWebSearchEnabled((enabled) => {
-                      showToolNotice(enabled ? '已关闭联网搜索' : '已开启联网搜索，发送时会抓取搜索结果')
+                      showToolNotice(enabled ? t('app.webSearchDisabled') : t('app.webSearchEnabled'))
                       return !enabled
                     })
                   }}
@@ -2550,7 +2700,7 @@ export default function App() {
                 </button>
                 <button
                   className={toolCenterOpen || tools.some((tool) => tool.enabled) ? 'active' : ''}
-                  title="扩展工具配置"
+                  title={t('app.extensions')}
                   type="button"
                   onClick={() => setToolCenterOpen(true)}
                 >
@@ -2574,11 +2724,11 @@ export default function App() {
                   <div className="composer-notice-actions">
                     {toolNotice.conversationId && (
                       <button type="button" onClick={() => openToolNoticeConversation(toolNotice.conversationId!)}>
-                        前往会话
+                        {t('app.goToConversation')}
                       </button>
                     )}
                     {toolNotice.requiresConfirmation && (
-                      <button className="secondary" type="button" onClick={dismissToolNotice}>确认</button>
+                      <button className="secondary" type="button" onClick={dismissToolNotice}>{t('app.confirm')}</button>
                     )}
                   </div>
                 )}
@@ -2593,7 +2743,7 @@ export default function App() {
                         <AtSign size={14} />
                         <span>{reference.title}</span>
                       </span>
-                      <button onClick={() => removePendingQuoteRef(reference.id)} title="移除引用" type="button">
+                      <button onClick={() => removePendingQuoteRef(reference.id)} title={t('app.removeQuote')} type="button">
                         <X size={13} />
                       </button>
                     </div>
@@ -2608,7 +2758,17 @@ export default function App() {
                   <span
                     key={attachment.id}
                     className={`attachment-chip ${attachment.kind === 'image' && attachment.dataUrl ? 'image-chip' : ''} ${attachment.kind === 'image' && !attachment.dataUrl ? 'warning' : ''} ${attachment.localExecutable ? 'local-executable' : ''}`}
-                    title={`${attachment.name} · ${formatAttachmentSize(attachment.size)} · ${attachment.localExecutable ? '可执行本地处理' : getAttachmentSupportLabel(attachment, modelCapabilities)}`}
+                    title={`${attachment.name} · ${formatAttachmentSize(attachment.size)} · ${attachment.localExecutable
+                      ? t('attachments.localExecutable')
+                      : attachment.kind === 'image'
+                        ? !attachment.dataUrl
+                          ? t('attachments.imageUnreadable')
+                          : modelCapabilities.imageInput
+                            ? t('attachments.imageSupported')
+                            : t('attachments.imageVisualInput')
+                        : attachment.text
+                          ? t('attachments.textExtracted')
+                          : t('attachments.textUnavailable')}`}
                     onContextMenu={(event) => openImageAttachmentMenu(event, attachment)}
                   >
                     {attachment.kind === 'image' && attachment.dataUrl ? (
@@ -2619,7 +2779,7 @@ export default function App() {
                       <Paperclip size={14} />
                     )}
                     <span>{attachment.name}</span>
-                    <button onClick={() => removePendingAttachment(attachment.id)} title="移除" type="button">
+                    <button onClick={() => removePendingAttachment(attachment.id)} title={t('common.remove')} type="button">
                       <X size={13} />
                     </button>
                   </span>
@@ -2632,7 +2792,7 @@ export default function App() {
                   <span key={reference.id} className="attachment-chip knowledge-chip" title={reference.content}>
                     <BookOpen size={14} />
                     <span>{reference.title}</span>
-                    <button onClick={() => removePendingKnowledgeRef(reference.id)} title="移除引用" type="button">
+                    <button onClick={() => removePendingKnowledgeRef(reference.id)} title={t('app.removeQuote')} type="button">
                       <X size={13} />
                     </button>
                   </span>
@@ -2651,7 +2811,7 @@ export default function App() {
                     sendMessage()
                   }
                 }}
-                placeholder={needsApiKey ? '请先配置 API Key' : `向 ${activeAssistant.name} 发送消息`}
+                placeholder={needsApiKey ? t('app.configureApiKey') : t('app.messageAssistant', { assistant: activeAssistantDisplay.name })}
                 rows={1}
               />
               <div className="composer-input-actions">
@@ -2677,7 +2837,7 @@ export default function App() {
                     pendingKnowledgeRefs.length === 0
                   }
                   onClick={isStreaming ? stopGenerating : undefined}
-                  title={isStreaming ? '停止生成' : `发送（${messageSendShortcutLabel}）`}
+                  title={isStreaming ? t('app.stopGenerating') : t('app.send', { shortcut: messageSendShortcutLabel })}
                   type={isStreaming ? 'button' : 'submit'}
                 >
                   {isStreaming ? <Square size={15} fill="currentColor" /> : <Send size={18} />}
@@ -2693,19 +2853,19 @@ export default function App() {
           <div className="history-title">
             <div>
               <PanelRightOpen size={17} />
-              <span>当前助手会话</span>
+              <span>{t('app.currentAssistantConversations')}</span>
             </div>
             <div className="history-title-actions">
-              <button className="icon-button compact" onClick={startNewChat} title="新对话">
+              <button className="icon-button compact" onClick={startNewChat} title={t('app.newConversation')}>
                 <MessageSquarePlus size={16} />
               </button>
-              <button className="icon-button compact" onClick={() => setHistoryCollapsed(true)} title="折叠会话栏" type="button">
+              <button className="icon-button compact" onClick={() => setHistoryCollapsed(true)} title={t('app.collapseConversationRail')} type="button">
                 <PanelRightClose size={16} />
               </button>
             </div>
           </div>
           <div className="history-list">
-            {activeAssistantConversations.length === 0 && <div className="history-empty">暂无会话</div>}
+            {activeAssistantConversations.length === 0 && <div className="history-empty">{t('app.noConversations')}</div>}
             {activeAssistantConversations.map((conversation) => (
               <button
                 key={conversation.id}
@@ -2720,7 +2880,7 @@ export default function App() {
                     <FolderOpen
                       className="history-workspace-badge"
                       size={13}
-                      aria-label="已授权工作文件夹"
+                      aria-label={t('app.workspaceAuthorized')}
                     />
                   )}
                 </span>
@@ -2737,6 +2897,14 @@ export default function App() {
         </aside>
       )}
 
+      {hiddenAssistantsOpen && (
+        <HiddenAssistantsDialog
+          assistants={hiddenAssistants}
+          onClose={() => setHiddenAssistantsOpen(false)}
+          onDelete={deleteAssistantWithConfirmation}
+          onRestore={(assistant) => setAssistantHidden(assistant, false)}
+        />
+      )}
       {assistantCenterOpen && (
         <AddAssistantDialog
           globalProviderId={settings.activeProviderId}
@@ -2848,8 +3016,76 @@ export default function App() {
   )
 }
 
-function formatConversationSearchDate(timestamp: number): string {
-  return new Intl.DateTimeFormat('zh-CN', {
+function HiddenAssistantsDialog({
+  assistants,
+  onClose,
+  onDelete,
+  onRestore
+}: {
+  assistants: Assistant[]
+  onClose: () => void
+  onDelete: (assistant: Assistant) => Promise<void>
+  onRestore: (assistant: Assistant) => Promise<void>
+}) {
+  const { t } = useTranslation()
+  const [pendingId, setPendingId] = useState<string | null>(null)
+
+  async function runAction(assistant: Assistant, action: 'restore' | 'delete') {
+    setPendingId(assistant.id)
+    try {
+      if (action === 'restore') await onRestore(assistant)
+      else await onDelete(assistant)
+    } finally {
+      setPendingId(null)
+    }
+  }
+
+  return (
+    <ModalBackdrop onClose={onClose}>
+      <section className="hidden-assistants-modal" onClick={stopModalClick}>
+        <header>
+          <div>
+            <p>G-LLM</p>
+            <h2>{t('assistantActions.hiddenTitle')}</h2>
+          </div>
+          <button className="icon-button compact" onClick={onClose} title={t('common.close')} type="button">
+            <X size={16} />
+          </button>
+        </header>
+        <p className="hidden-assistants-description">{t('assistantActions.hiddenDescription')}</p>
+        <div className="hidden-assistants-list">
+          {assistants.length === 0 && <div className="assistant-empty">{t('assistantActions.noHidden')}</div>}
+          {assistants.map((assistant) => {
+            const displayAssistant = localizeAssistant(assistant)
+            const pending = pendingId === assistant.id
+            return (
+              <article className="hidden-assistant-row" key={assistant.id}>
+                <AssistantAvatar assistant={assistant} />
+                <span>
+                  <strong>{displayAssistant.name}</strong>
+                  <small>{displayAssistant.title}</small>
+                </span>
+                <div>
+                  <button className="secondary-action" disabled={pending} onClick={() => void runAction(assistant, 'restore')} type="button">
+                    <Eye size={15} />
+                    {t('assistantActions.restore')}
+                  </button>
+                  <button className="danger-action" disabled={pending} onClick={() => void runAction(assistant, 'delete')} type="button">
+                    <Trash2 size={15} />
+                    {t('assistantActions.delete')}
+                  </button>
+                </div>
+              </article>
+            )
+          })}
+        </div>
+      </section>
+    </ModalBackdrop>
+  )
+}
+
+function formatConversationSearchDate(timestamp: number, locale: string): string {
+  return new Intl.DateTimeFormat(locale, {
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',
@@ -2876,19 +3112,21 @@ function ConversationSearchDialog({
   onSearch: (query: string) => Promise<void>
   onSelect: (result: ConversationSearchResult) => Promise<void>
 }) {
+  const { t, i18n } = useTranslation()
+
   function submitSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     void onSearch(query)
   }
 
   const statusText = loading
-    ? '正在理解并检索历史会话...'
+    ? t('conversationSearch.searching')
     : response?.mode === 'semantic'
-      ? `智能匹配 · 已检索 ${response.searchedCount} 个会话`
+      ? t('conversationSearch.semanticStatus', { count: response.searchedCount })
       : response?.mode === 'local'
-        ? `本地匹配 · 已检索 ${response.searchedCount} 个会话`
+        ? t('conversationSearch.localStatus', { count: response.searchedCount })
         : response
-          ? `最近会话 · 共 ${response.searchedCount} 个`
+          ? t('conversationSearch.recentStatus', { count: response.searchedCount })
           : ''
 
   return (
@@ -2896,10 +3134,10 @@ function ConversationSearchDialog({
       <section className="conversation-search-modal" onClick={stopModalClick}>
         <header>
           <div>
-            <p>跨空间检索</p>
-            <h2>智能搜索历史会话</h2>
+            <p>{t('conversationSearch.eyebrow')}</p>
+            <h2>{t('conversationSearch.title')}</h2>
           </div>
-          <button className="icon-button compact" onClick={onClose} title="关闭" type="button">
+          <button className="icon-button compact" onClick={onClose} title={t('common.close')} type="button">
             <X size={16} />
           </button>
         </header>
@@ -2910,17 +3148,17 @@ function ConversationSearchDialog({
             autoFocus
             value={query}
             maxLength={300}
-            placeholder="描述你记得的主题、问题、人物或结论"
+            placeholder={t('conversationSearch.placeholder')}
             onChange={(event) => onQueryChange(event.target.value)}
           />
           {query && (
-            <button className="conversation-search-clear" onClick={() => onQueryChange('')} title="清空" type="button">
+            <button className="conversation-search-clear" onClick={() => onQueryChange('')} title={t('common.clear')} type="button">
               <X size={14} />
             </button>
           )}
           <button className="primary-button conversation-search-submit" disabled={loading} type="submit">
             <Sparkles size={15} />
-            <span>智能搜索</span>
+            <span>{t('conversationSearch.submit')}</span>
           </button>
         </form>
 
@@ -2932,8 +3170,8 @@ function ConversationSearchDialog({
           {!loading && response?.results.length === 0 && (
             <div className="conversation-search-empty">
               <Search size={22} />
-              <strong>没有找到相关会话</strong>
-              <span>换一种描述方式，试试当时讨论的目标或结论。</span>
+              <strong>{t('conversationSearch.emptyTitle')}</strong>
+              <span>{t('conversationSearch.emptyDescription')}</span>
             </div>
           )}
           {response?.results.map((result) => (
@@ -2944,8 +3182,8 @@ function ConversationSearchDialog({
               type="button"
             >
               <span className="conversation-search-result-heading">
-                <strong>{result.title || '未命名会话'}</strong>
-                <time>{formatConversationSearchDate(result.updatedAt)}</time>
+                <strong>{result.title || t('conversationSearch.untitled')}</strong>
+                <time>{formatConversationSearchDate(result.updatedAt, i18n.resolvedLanguage ?? 'zh-CN')}</time>
               </span>
               <span className="conversation-search-result-meta">
                 {result.projectName} · {result.assistantName}
@@ -2975,8 +3213,9 @@ function SpaceCenterDialog({
   onRename: (spaceId: string, payload: SpaceFormPayload) => Promise<void>
   onSwitch: (spaceId: string) => Promise<void>
 }) {
+  const { t } = useTranslation()
   const [creating, setCreating] = useState(spaces.length <= 1)
-  const [newName, setNewName] = useState('工作空间')
+  const [newName, setNewName] = useState(() => t('spaces.initialName'))
   const [newDescription, setNewDescription] = useState('')
   const [newLogoDataUrl, setNewLogoDataUrl] = useState('')
   const [newWorkspacePath, setNewWorkspacePath] = useState('')
@@ -3009,7 +3248,7 @@ function SpaceCenterDialog({
       else setEditWorkspacePath(path)
       setError('')
     } catch (err) {
-      setError(err instanceof Error ? err.message : '工作目录选择失败')
+      setError(err instanceof Error ? err.message : t('spaces.errors.chooseWorkspace'))
     }
   }
 
@@ -3019,12 +3258,12 @@ function SpaceCenterDialog({
     if (!file) return
 
     if (!file.type.startsWith('image/')) {
-      setError('请选择图片文件作为空间 Logo')
+      setError(t('spaces.errors.imageOnly'))
       return
     }
 
     if (file.size > 8 * 1024 * 1024) {
-      setError('空间 Logo 图片不能超过 8 MB')
+      setError(t('spaces.errors.imageTooLarge'))
       return
     }
 
@@ -3038,7 +3277,7 @@ function SpaceCenterDialog({
       }
       setError('')
     } catch (err) {
-      setError(err instanceof Error ? err.message : '空间 Logo 读取失败')
+      setError(err instanceof Error ? err.message : t('spaces.errors.imageRead'))
     }
   }
 
@@ -3046,7 +3285,7 @@ function SpaceCenterDialog({
     event.preventDefault()
     const name = newName.trim()
     if (!name) {
-      setError('请输入空间名称')
+      setError(t('spaces.errors.nameRequired'))
       return
     }
 
@@ -3055,12 +3294,12 @@ function SpaceCenterDialog({
     try {
       await onCreate({ name, description: newDescription, logoDataUrl: newLogoDataUrl || undefined, workspacePath: newWorkspacePath || undefined })
       setCreating(false)
-      setNewName('新空间')
+      setNewName(t('spaces.newSpace'))
       setNewDescription('')
       setNewLogoDataUrl('')
       setNewWorkspacePath('')
     } catch (err) {
-      setError(err instanceof Error ? err.message : '空间创建失败')
+      setError(err instanceof Error ? err.message : t('spaces.errors.create'))
     } finally {
       setSavingAction(null)
     }
@@ -3072,7 +3311,7 @@ function SpaceCenterDialog({
 
     const name = editName.trim()
     if (!name) {
-      setError('请输入空间名称')
+      setError(t('spaces.errors.nameRequired'))
       return
     }
 
@@ -3082,7 +3321,7 @@ function SpaceCenterDialog({
       await onRename(renamingId, { name, description: editDescription, logoDataUrl: editLogoDataUrl || undefined, workspacePath: editWorkspacePath || undefined })
       setRenamingId(null)
     } catch (err) {
-      setError(err instanceof Error ? err.message : '空间保存失败')
+      setError(err instanceof Error ? err.message : t('spaces.errors.save'))
     } finally {
       setSavingAction(null)
     }
@@ -3094,7 +3333,7 @@ function SpaceCenterDialog({
     try {
       await onSwitch(spaceId)
     } catch (err) {
-      setError(err instanceof Error ? err.message : '空间切换失败')
+      setError(err instanceof Error ? err.message : t('spaces.errors.switch'))
     } finally {
       setSavingAction(null)
     }
@@ -3105,10 +3344,10 @@ function SpaceCenterDialog({
       <section className="space-center-modal" onClick={stopModalClick}>
         <header>
           <div>
-            <p>空间中心</p>
+            <p>{t('spaces.title')}</p>
             <h2>{getSpaceName(activeSpace)}</h2>
           </div>
-          <button className="icon-button compact" onClick={onClose} title="关闭" type="button">
+          <button className="icon-button compact" onClick={onClose} title={t('common.close')} type="button">
             <X size={16} />
           </button>
         </header>
@@ -3117,41 +3356,39 @@ function SpaceCenterDialog({
         <div className="space-current-card">
           <SpaceLogo className="large" project={activeSpace} />
           <div>
-            <span>当前空间</span>
+            <span>{t('spaces.currentSpace')}</span>
             <strong>{getSpaceName(activeSpace)}</strong>
             <p>{getSpaceDescription(activeSpace)}</p>
           </div>
-          <em>{activeSpace?.id === defaultSpaceId ? '默认空间' : '独立空间'}</em>
+          <em>{activeSpace?.id === defaultSpaceId ? t('app.defaultSpace') : t('app.independentSpace')}</em>
         </div>
 
         <section className="space-guidance">
           <div>
-            <h3>{hasMultipleSpaces ? '空间有什么用' : '为什么创建第二个空间'}</h3>
-            <p>
-              空间用于把不同场景的数据分开。切换空间后，你看到的助手、会话、知识库和记忆会随空间切换。
-            </p>
+            <h3>{hasMultipleSpaces ? t('spaces.whySpaces') : t('spaces.whySecondSpace')}</h3>
+            <p>{t('spaces.guidance')}</p>
           </div>
           <div className="space-insight-grid">
             <article>
               <Database size={17} />
-              <strong>隔离内容</strong>
-              <span>每个空间独立保存会话、助手配置、本地知识库和助手记忆。</span>
+              <strong>{t('spaces.isolatedContent')}</strong>
+              <span>{t('spaces.isolatedContentDescription')}</span>
             </article>
             <article>
               <KeyRound size={17} />
-              <strong>共享设置</strong>
-              <span>模型供应商、API Key、应用偏好和版本更新仍然全局共享。</span>
+              <strong>{t('spaces.sharedSettings')}</strong>
+              <span>{t('spaces.sharedSettingsDescription')}</span>
             </article>
             <article>
               <FolderOpen size={17} />
-              <strong>适用场景</strong>
-              <span>适合区分工作、个人、客户资料、学习研究或不同团队任务。</span>
+              <strong>{t('spaces.useCases')}</strong>
+              <span>{t('spaces.useCasesDescription')}</span>
             </article>
           </div>
           {hasMultipleSpaces && (
             <div className="space-switch-note">
               <CircleCheck size={15} />
-              <span>当前正在使用「{getSpaceName(activeSpace)}」。点击下方“切换”会进入对应空间，不会删除其他空间的数据。</span>
+              <span>{t('spaces.switchNote', { space: getSpaceName(activeSpace) })}</span>
             </div>
           )}
         </section>
@@ -3159,10 +3396,10 @@ function SpaceCenterDialog({
         {hasMultipleSpaces && (
           <section className="space-list-section">
             <div className="space-section-heading">
-              <h3>所有空间</h3>
+              <h3>{t('spaces.allSpaces')}</h3>
               <button className="secondary-action" onClick={() => setCreating((current) => !current)} type="button">
                 <Plus size={15} />
-                新建空间
+                {t('spaces.createNew')}
               </button>
             </div>
             <div className="space-list">
@@ -3177,11 +3414,11 @@ function SpaceCenterDialog({
                         <div className="space-logo-editor">
                           <SpaceLogo className="editable" project={{ ...space, logoDataUrl: editLogoDataUrl || undefined }} />
                           <div>
-                            <strong>{space.id === defaultSpaceId ? '默认空间 Logo' : '空间 Logo'}</strong>
+                            <strong>{space.id === defaultSpaceId ? t('spaces.defaultLogo') : t('spaces.logo')}</strong>
                             <span>
                               {space.id === defaultSpaceId
-                                ? '无极界默认空间使用固定 Logo，不支持修改。'
-                                : '建议使用透明背景或简洁方形图片。'}
+                                ? t('spaces.defaultLogoDescription')
+                                : t('spaces.logoDescription')}
                             </span>
                             {space.id !== defaultSpaceId && (
                               <div className="space-logo-actions">
@@ -3193,7 +3430,7 @@ function SpaceCenterDialog({
                                   onChange={(event) => void chooseSpaceLogo(event, 'edit')}
                                 />
                                 <button className="secondary-action" onClick={() => editLogoInputRef.current?.click()} type="button">
-                                  上传 Logo
+                                  {t('spaces.uploadLogo')}
                                 </button>
                                 <button
                                   className="secondary-action"
@@ -3201,40 +3438,40 @@ function SpaceCenterDialog({
                                   onClick={() => setEditLogoDataUrl('')}
                                   type="button"
                                 >
-                                  移除
+                                  {t('common.remove')}
                                 </button>
                               </div>
                             )}
                           </div>
                         </div>
                         <label>
-                          <span>空间名称</span>
+                          <span>{t('spaces.name')}</span>
                           <input value={editName} onChange={(event) => setEditName(event.target.value)} />
                         </label>
                         <label>
-                          <span>空间说明</span>
+                          <span>{t('spaces.description')}</span>
                           <textarea
                             value={editDescription}
                             onChange={(event) => setEditDescription(event.target.value)}
-                            placeholder="空间说明"
+                            placeholder={t('spaces.description')}
                             rows={2}
                           />
                         </label>
                         <div className="space-workspace-field">
-                          <span>本地工作目录</span>
-                          <strong title={editWorkspacePath}>{editWorkspacePath || '未绑定'}</strong>
+                          <span>{t('spaces.workspace')}</span>
+                          <strong title={editWorkspacePath}>{editWorkspacePath || t('spaces.notBound')}</strong>
                           <div>
-                            <button className="secondary-action" onClick={() => void chooseWorkspace('edit')} type="button"><FolderOpen size={15} />选择目录</button>
-                            <button className="secondary-action" disabled={!editWorkspacePath} onClick={() => setEditWorkspacePath('')} type="button">解除绑定</button>
+                            <button className="secondary-action" onClick={() => void chooseWorkspace('edit')} type="button"><FolderOpen size={15} />{t('spaces.chooseDirectory')}</button>
+                            <button className="secondary-action" disabled={!editWorkspacePath} onClick={() => setEditWorkspacePath('')} type="button">{t('spaces.unbind')}</button>
                           </div>
-                          <small>G-LLM 仅在你确认本地任务后写入该目录；macOS 首次访问时可能显示系统权限提示。</small>
+                          <small>{t('spaces.workspaceDescription')}</small>
                         </div>
                         <div className="space-form-actions">
                           <button className="secondary-action" onClick={() => setRenamingId(null)} type="button">
-                            取消
+                            {t('common.cancel')}
                           </button>
                           <button className="primary-action" disabled={saving || !editName.trim()} type="submit">
-                            保存
+                            {t('common.save')}
                           </button>
                         </div>
                       </form>
@@ -3249,7 +3486,7 @@ function SpaceCenterDialog({
                           {active && (
                             <span className="space-active-badge">
                               <CircleCheck size={14} />
-                              当前
+                              {t('common.current')}
                             </span>
                           )}
                           {!active && (
@@ -3259,10 +3496,10 @@ function SpaceCenterDialog({
                               onClick={() => void handleSwitch(space.id)}
                               type="button"
                             >
-                              切换
+                              {t('spaces.switch')}
                             </button>
                           )}
-                          <button className="icon-button compact" onClick={() => startRename(space)} title="重命名空间" type="button">
+                          <button className="icon-button compact" onClick={() => startRename(space)} title={t('spaces.rename')} type="button">
                             <Pencil size={15} />
                           </button>
                         </div>
@@ -3278,15 +3515,15 @@ function SpaceCenterDialog({
         {(creating || !hasMultipleSpaces) && (
           <form className="space-create-form" onSubmit={handleCreate}>
             <div>
-              <h3>{hasMultipleSpaces ? '新建空间' : '创建第二个空间'}</h3>
-              <p>创建后会自动切换到新空间。</p>
+              <h3>{hasMultipleSpaces ? t('spaces.createNew') : t('spaces.createSecond')}</h3>
+              <p>{t('spaces.createDescription')}</p>
             </div>
             <div className="space-logo-editor">
               <SpaceLogo
                 className="editable"
                 project={{
                   id: 'space_preview',
-                  name: newName || '新空间',
+                  name: newName || t('spaces.newSpace'),
                   description: newDescription,
                   logoDataUrl: newLogoDataUrl || undefined,
                   createdAt: 0,
@@ -3294,8 +3531,8 @@ function SpaceCenterDialog({
                 }}
               />
               <div>
-                <strong>空间 Logo</strong>
-                <span>可选。建议使用透明背景或简洁方形图片。</span>
+                <strong>{t('spaces.logo')}</strong>
+                <span>{t('spaces.optionalLogoDescription')}</span>
                 <div className="space-logo-actions">
                   <input
                     ref={newLogoInputRef}
@@ -3305,45 +3542,45 @@ function SpaceCenterDialog({
                     onChange={(event) => void chooseSpaceLogo(event, 'create')}
                   />
                   <button className="secondary-action" onClick={() => newLogoInputRef.current?.click()} type="button">
-                    上传 Logo
+                    {t('spaces.uploadLogo')}
                   </button>
                   <button className="secondary-action" disabled={!newLogoDataUrl} onClick={() => setNewLogoDataUrl('')} type="button">
-                    移除
+                    {t('common.remove')}
                   </button>
                 </div>
               </div>
             </div>
             <label>
-              <span>空间名称</span>
-              <input value={newName} onChange={(event) => setNewName(event.target.value)} placeholder="例如：客户方案空间" />
+              <span>{t('spaces.name')}</span>
+              <input value={newName} onChange={(event) => setNewName(event.target.value)} placeholder={t('spaces.namePlaceholder')} />
             </label>
             <label>
-              <span>空间说明</span>
+              <span>{t('spaces.description')}</span>
               <textarea
                 value={newDescription}
                 onChange={(event) => setNewDescription(event.target.value)}
-                placeholder="可选"
+                placeholder={t('spaces.optional')}
                 rows={2}
               />
             </label>
             <div className="space-workspace-field">
-              <span>本地工作目录</span>
-              <strong title={newWorkspacePath}>{newWorkspacePath || '可选，创建后也可绑定'}</strong>
+              <span>{t('spaces.workspace')}</span>
+              <strong title={newWorkspacePath}>{newWorkspacePath || t('spaces.workspaceOptional')}</strong>
               <div>
-                <button className="secondary-action" onClick={() => void chooseWorkspace('create')} type="button"><FolderOpen size={15} />选择目录</button>
-                <button className="secondary-action" disabled={!newWorkspacePath} onClick={() => setNewWorkspacePath('')} type="button">清除</button>
+                <button className="secondary-action" onClick={() => void chooseWorkspace('create')} type="button"><FolderOpen size={15} />{t('spaces.chooseDirectory')}</button>
+                <button className="secondary-action" disabled={!newWorkspacePath} onClick={() => setNewWorkspacePath('')} type="button">{t('common.clear')}</button>
               </div>
-              <small>目录路径只保存在本机，不会发送给模型供应商。</small>
+              <small>{t('spaces.localPathDescription')}</small>
             </div>
             {error && <p className="space-error">{error}</p>}
             <div className="space-form-actions">
               {hasMultipleSpaces && (
                 <button className="secondary-action" onClick={() => setCreating(false)} type="button">
-                  取消
+                  {t('common.cancel')}
                 </button>
               )}
               <button className="primary-action" disabled={savingAction === 'create' || !newName.trim()} type="submit">
-                {savingAction === 'create' ? '创建中...' : '创建空间'}
+                {savingAction === 'create' ? t('spaces.creating') : t('spaces.create')}
               </button>
             </div>
           </form>
@@ -3357,6 +3594,7 @@ function SpaceCenterDialog({
 }
 
 function UserAgreementDialog({ onAccept, onRecoverData }: { onAccept: () => void; onRecoverData: () => void }) {
+  const { t } = useTranslation()
   const [recoverHintVisible, setRecoverHintVisible] = useState(false)
 
   return (
@@ -3365,42 +3603,32 @@ function UserAgreementDialog({ onAccept, onRecoverData }: { onAccept: () => void
         <header>
           <div>
             <p>G-LLM</p>
-            <h2>使用协议</h2>
+            <h2>{t('agreement.title')}</h2>
           </div>
         </header>
 
         <div className="agreement-content">
-          <p>
-            欢迎使用无极界 G-LLM。本软件是一个本地 AI 客户端，用于连接你配置的模型服务、管理助手、会话、附件、本地知识库和长期记忆。
-          </p>
+          <p>{t('agreement.intro')}</p>
           <section>
-            <strong>本地数据</strong>
-            <p>
-              你的聊天记录、助手配置、本地知识库、长期记忆和供应商配置默认保存在当前设备本地。请自行做好重要数据备份，并妥善保管 API Key。
-            </p>
+            <strong>{t('agreement.localDataTitle')}</strong>
+            <p>{t('agreement.localData')}</p>
             {recoverHintVisible && (
               <p className="agreement-recover-hint">
-                如果你重装过系统、移动过软件目录，或已经有以前备份的 G-LLM 数据目录，可以选择该目录并重启软件恢复数据。
+                {t('agreement.recoverHint')}
               </p>
             )}
           </section>
           <section>
-            <strong>模型服务</strong>
-            <p>
-              软件会把你发送的消息、附件解析内容和必要上下文提交给你选择的模型供应商。不同供应商的数据处理规则以其自身服务条款为准。
-            </p>
+            <strong>{t('agreement.modelServiceTitle')}</strong>
+            <p>{t('agreement.modelService')}</p>
           </section>
           <section>
-            <strong>使用责任</strong>
-            <p>
-              AI 输出可能存在错误、遗漏或时效性问题。医疗、法律、投资、工程等高风险场景请以专业人士或权威资料为准。
-            </p>
+            <strong>{t('agreement.responsibilityTitle')}</strong>
+            <p>{t('agreement.responsibility')}</p>
           </section>
           <section>
-            <strong>匿名使用统计</strong>
-            <p>
-              匿名统计默认开启，用于了解版本活跃、功能使用和错误类别；不收集聊天内容、API Key、上传文件内容和知识库内容。你可以在供应商设置中随时关闭。
-            </p>
+            <strong>{t('agreement.telemetryTitle')}</strong>
+            <p>{t('agreement.telemetry')}</p>
           </section>
         </div>
 
@@ -3413,10 +3641,10 @@ function UserAgreementDialog({ onAccept, onRecoverData }: { onAccept: () => void
             }}
             type="button"
           >
-            我已有数据目录
+            {t('agreement.recover')}
           </button>
           <button className="primary-action" onClick={onAccept} type="button">
-            同意并开始使用
+            {t('agreement.accept')}
           </button>
         </div>
       </section>
@@ -3433,6 +3661,7 @@ function AssistantSettingsDialog({
   onClose: () => void
   onSave: (assistant: Assistant) => Promise<Assistant>
 }) {
+  const { t } = useTranslation()
   const builtInAssistant = DEFAULT_ASSISTANTS.find((item) => item.id === assistant.id)
   const [name, setName] = useState(assistant.name)
   const [title, setTitle] = useState(assistant.title)
@@ -3468,7 +3697,7 @@ function AssistantSettingsDialog({
         if (!disposed) setAvatarDataUrl(dataUrl)
       })
       .catch((error) => {
-        if (!disposed) setStatus(error instanceof Error ? error.message : '头像裁剪失败')
+        if (!disposed) setStatus(error instanceof Error ? error.message : t('assistantSettings.errors.crop'))
       })
 
     return () => {
@@ -3482,12 +3711,12 @@ function AssistantSettingsDialog({
     if (!file) return
 
     if (!file.type.startsWith('image/')) {
-      setStatus('请选择图片文件作为助手头像')
+      setStatus(t('assistantSettings.errors.imageOnly'))
       return
     }
 
     if (file.size > 8 * 1024 * 1024) {
-      setStatus('头像图片不能超过 8 MB')
+      setStatus(t('assistantSettings.errors.imageTooLarge'))
       return
     }
 
@@ -3497,21 +3726,21 @@ function AssistantSettingsDialog({
       setAvatarZoom(1)
       setAvatarSourceDataUrl(source)
       setAvatarDataUrl(cropped)
-      setStatus('已生成头像预览，保存后生效')
+      setStatus(t('assistantSettings.previewReady'))
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : '头像读取失败')
+      setStatus(error instanceof Error ? error.message : t('assistantSettings.errors.imageRead'))
     }
   }
 
   async function save() {
     const nextPrompt = systemPrompt.trim()
     if (!nextPrompt) {
-      setStatus('默认提示词不能为空')
+      setStatus(t('assistantSettings.errors.promptRequired'))
       return
     }
 
     setSaving(true)
-    setStatus('正在保存助手设置...')
+    setStatus(t('assistantSettings.saving'))
     try {
       await onSave({
         ...assistant,
@@ -3523,7 +3752,7 @@ function AssistantSettingsDialog({
         avatarDataUrl: avatarDataUrl || undefined,
         updatedAt: Date.now()
       })
-      setStatus('已保存助手设置')
+      setStatus(t('assistantSettings.saved'))
       onClose()
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error))
@@ -3535,14 +3764,14 @@ function AssistantSettingsDialog({
   function restoreBuiltInPrompt() {
     if (!builtInAssistant) return
     setSystemPrompt(builtInAssistant.systemPrompt)
-    setStatus('已恢复内置默认提示词，保存后生效')
+    setStatus(t('assistantSettings.promptRestored'))
   }
 
   function restoreDefaultAvatar() {
     setAvatarSourceDataUrl('')
     setAvatarDataUrl('')
     setAvatarZoom(1)
-    setStatus('已恢复默认图标，保存后生效')
+    setStatus(t('assistantSettings.avatarRestored'))
   }
 
   return (
@@ -3550,10 +3779,10 @@ function AssistantSettingsDialog({
       <section className="assistant-settings-modal" onClick={(event) => event.stopPropagation()}>
         <header>
           <div>
-            <p>{assistant.builtIn ? '内置助手' : '自定义助手'}</p>
-            <h2>助手设置</h2>
+            <p>{assistant.builtIn ? t('assistantSettings.builtIn') : t('assistantSettings.custom')}</p>
+            <h2>{t('assistantSettings.title')}</h2>
           </div>
-          <button className="icon-button" onClick={onClose} title="关闭" type="button">
+          <button className="icon-button" onClick={onClose} title={t('common.close')} type="button">
             <X size={18} />
           </button>
         </header>
@@ -3562,20 +3791,20 @@ function AssistantSettingsDialog({
           <div className="assistant-avatar-editor">
             <AssistantAvatar assistant={previewAssistant} className="large" />
             <div>
-              <strong>助手头像</strong>
-              <p>上传图片后会自动居中裁剪为方形头像，可用缩放调整画面大小。</p>
+              <strong>{t('assistantSettings.avatar')}</strong>
+              <p>{t('assistantSettings.avatarDescription')}</p>
               <input ref={avatarInputRef} accept="image/*" hidden type="file" onChange={(event) => void chooseAvatar(event)} />
               <div className="assistant-avatar-actions">
                 <button className="secondary-action" disabled={saving} onClick={() => avatarInputRef.current?.click()} type="button">
-                  上传图片
+                  {t('assistantSettings.uploadImage')}
                 </button>
                 <button className="secondary-action" disabled={saving || !avatarDataUrl} onClick={restoreDefaultAvatar} type="button">
-                  恢复默认图标
+                  {t('assistantSettings.restoreAvatar')}
                 </button>
               </div>
               {avatarSourceDataUrl && (
                 <label className="assistant-avatar-zoom">
-                  <span>裁剪缩放</span>
+                  <span>{t('assistantSettings.cropZoom')}</span>
                   <input
                     max="2.5"
                     min="1"
@@ -3591,22 +3820,22 @@ function AssistantSettingsDialog({
 
           <div className="form-row two">
             <label>
-              <span>助手名称</span>
+              <span>{t('assistantSettings.name')}</span>
               <input value={name} onChange={(event) => setName(event.target.value)} />
             </label>
             <label>
-              <span>回答风格</span>
+              <span>{t('assistantSettings.tone')}</span>
               <input value={tone} onChange={(event) => setTone(event.target.value)} />
             </label>
           </div>
 
           <label>
-            <span>助手说明</span>
+            <span>{t('assistantSettings.description')}</span>
             <input value={title} onChange={(event) => setTitle(event.target.value)} />
           </label>
 
           <label>
-            <span>默认提示词</span>
+            <span>{t('assistantSettings.systemPrompt')}</span>
             <textarea
               className="assistant-prompt-textarea"
               value={systemPrompt}
@@ -3615,7 +3844,7 @@ function AssistantSettingsDialog({
           </label>
 
           <label>
-            <span>开场问题</span>
+            <span>{t('assistantSettings.starters')}</span>
             <textarea
               className="assistant-starters-textarea"
               value={starterPromptText}
@@ -3624,7 +3853,7 @@ function AssistantSettingsDialog({
           </label>
 
           <div className="assistant-settings-note">
-            修改后的默认提示词会用于该助手后续发送的新请求；已经生成过的历史回复不会被改写。
+            {t('assistantSettings.promptNote')}
           </div>
 
           {status && <div className="assistant-status">{status}</div>}
@@ -3632,14 +3861,14 @@ function AssistantSettingsDialog({
 
         <div className="form-actions assistant-settings-actions">
           <button className="secondary-action" disabled={!builtInAssistant || saving} onClick={restoreBuiltInPrompt} type="button">
-            恢复内置提示词
+            {t('assistantSettings.restorePrompt')}
           </button>
           <button className="secondary-action" disabled={saving} onClick={onClose} type="button">
-            不保存关闭
+            {t('settings.closeWithoutSaving')}
           </button>
           <button className="primary-action" disabled={saving || !changed} onClick={() => void save()} type="button">
             <Save size={17} />
-            保存助手
+            {t('assistantSettings.save')}
           </button>
         </div>
       </section>
@@ -3660,6 +3889,7 @@ function AddAssistantDialog({
   onSave: (assistant: Assistant) => Promise<Assistant>
   onSuggest: (keyword: string, provider: ApiProvider) => Promise<AssistantSuggestion>
 }) {
+  const { t } = useTranslation()
   const [keyword, setKeyword] = useState('')
   const [activePresetCategory, setActivePresetCategory] = useState(ASSISTANT_PRESET_CATEGORIES[0])
   const [providerId, setProviderId] = useState(globalProviderId)
@@ -3670,14 +3900,14 @@ function AddAssistantDialog({
   const modelOptions = getModelOptions(selectedProvider, modelId)
   const selectedModel = modelId.trim() || selectedProvider.defaultModel.trim()
   const aiGenerateUnavailableReason = !selectedModel
-    ? '请先选择或填写一个可用模型'
+    ? t('addAssistant.selectModel')
     : selectedProvider.requiresApiKey && !selectedProvider.apiKey.trim()
-      ? `请先在模型供应商设置中填写「${selectedProvider.name}」API Key`
+      ? t('addAssistant.apiKeyRequired', { provider: selectedProvider.name })
       : ''
   const canGenerateAssistant = !isWorking && Boolean(keyword.trim()) && !aiGenerateUnavailableReason
   const visiblePresets = keyword.trim()
-    ? searchAssistantPresets(keyword, '')
-    : searchAssistantPresets('', activePresetCategory)
+    ? searchLocalizedAssistantPresets(keyword, '')
+    : searchLocalizedAssistantPresets('', activePresetCategory)
 
   function selectProvider(nextProviderId: string) {
     const nextProvider = getProviderById(nextProviderId, providers)
@@ -3712,7 +3942,7 @@ function AddAssistantDialog({
 
     try {
       const saved = await onSave(createAssistantFromSuggestion(suggestion))
-      setAssistantStatus(`已添加「${saved.name}」`)
+      setAssistantStatus(t('addAssistant.added', { assistant: saved.name }))
       onClose()
     } catch (error) {
       setAssistantStatus(error instanceof Error ? error.message : String(error))
@@ -3722,13 +3952,13 @@ function AddAssistantDialog({
   }
 
   async function usePresetAssistant(preset: AssistantPreset) {
-    await addAssistant(preset, `正在添加「${preset.name}」...`)
+    await addAssistant(preset, t('addAssistant.adding', { assistant: preset.name }))
   }
 
   async function generateAssistant(nextKeyword = keyword) {
     const text = nextKeyword.trim()
     if (!text) {
-      setAssistantStatus('请输入想创建的助手关键词')
+      setAssistantStatus(t('addAssistant.keywordRequired'))
       return
     }
 
@@ -3737,7 +3967,7 @@ function AddAssistantDialog({
       return
     }
 
-    const matchedPreset = findAssistantPreset(text)
+    const matchedPreset = findLocalizedAssistantPreset(text)
     if (matchedPreset) {
       setActivePresetCategory(matchedPreset.featured ? '精选' : matchedPreset.category)
       await usePresetAssistant(matchedPreset)
@@ -3746,7 +3976,7 @@ function AddAssistantDialog({
 
     if (isWorking) return
     setIsWorking(true)
-    setAssistantStatus(`正在生成「${text}」助手...`)
+    setAssistantStatus(t('addAssistant.generating', { keyword: text }))
 
     try {
       const suggestion = await onSuggest(text, {
@@ -3755,7 +3985,7 @@ function AddAssistantDialog({
         models: getModelOptions(selectedProvider, selectedModel)
       })
       const saved = await onSave(createAssistantFromSuggestion(suggestion))
-      setAssistantStatus(`已添加「${saved.name}」`)
+      setAssistantStatus(t('addAssistant.added', { assistant: saved.name }))
       onClose()
     } catch (error) {
       setAssistantStatus(error instanceof Error ? error.message : String(error))
@@ -3770,10 +4000,10 @@ function AddAssistantDialog({
         <header>
           <div>
             <p>G-LLM</p>
-            <h2>新增助手</h2>
+            <h2>{t('addAssistant.title')}</h2>
           </div>
           <div className="header-actions">
-            <button className="icon-button" onClick={onClose} title="关闭">
+            <button className="icon-button" onClick={onClose} title={t('common.close')}>
               <X size={18} />
             </button>
           </div>
@@ -3782,7 +4012,7 @@ function AddAssistantDialog({
         <div className="assistant-simple-search">
           <input
             autoFocus
-            placeholder="搜索：家庭医生、合同审查、小红书文案..."
+            placeholder={t('addAssistant.searchPlaceholder')}
             value={keyword}
             onChange={(event) => setKeyword(event.target.value)}
             onKeyDown={(event) => {
@@ -3798,18 +4028,20 @@ function AddAssistantDialog({
             onClick={() => void generateAssistant()}
             title={
               aiGenerateUnavailableReason ||
-              (keyword.trim() ? `使用 ${selectedProvider.name} · ${selectedModel} 生成助手配置` : '请输入助手关键词')
+              (keyword.trim()
+                ? t('addAssistant.generateTitle', { provider: selectedProvider.name, model: selectedModel })
+                : t('addAssistant.keywordRequired'))
             }
             type="button"
           >
             <Sparkles size={16} />
-            AI 生成添加
+            {t('addAssistant.generate')}
           </button>
         </div>
 
         <div className="assistant-create-model">
           <label>
-            <span>供应商</span>
+            <span>{t('addAssistant.provider')}</span>
             <select value={providerId} onChange={(event) => selectProvider(event.target.value)}>
               {providers.map((provider) => (
                 <option key={provider.id} value={provider.id}>
@@ -3819,7 +4051,7 @@ function AddAssistantDialog({
             </select>
           </label>
           <label>
-            <span>模型</span>
+            <span>{t('modelPicker.model')}</span>
             <select value={modelId} onChange={(event) => setModelId(event.target.value)}>
               {modelOptions.map((model) => (
                 <option key={model.id} value={model.id}>
@@ -3839,7 +4071,7 @@ function AddAssistantDialog({
                 onClick={() => setActivePresetCategory(category)}
                 type="button"
               >
-                {category}
+                {localizeAssistantPresetCategory(category)}
               </button>
             ))}
           </div>
@@ -3865,13 +4097,13 @@ function AddAssistantDialog({
                   <small>{preset.title}</small>
                   <em>{preset.description}</em>
                 </span>
-                <b>添加</b>
+                <b>{t('common.add')}</b>
               </button>
             )
           })}
 
           {visiblePresets.length === 0 && (
-            <div className="preset-empty">没有命中预置，可以用 AI 生成一个新的助手。</div>
+            <div className="preset-empty">{t('addAssistant.empty')}</div>
           )}
         </div>
 
@@ -3898,6 +4130,8 @@ function ConversationModelDialog({
   onSaveAssistant: (assistant: Assistant) => Promise<Assistant>
   onSaveConversation: (conversation: Conversation) => void
 }) {
+  const { t } = useTranslation()
+  const displayAssistant = localizeAssistant(assistant)
   const globalProvider = getProviderById(globalProviderId, providers)
   const assistantProvider = getEffectiveProvider(assistant, globalProvider, providers)
   const initialProviderId =
@@ -3918,7 +4152,7 @@ function ConversationModelDialog({
 
   function saveConversationModel(useAssistantDefault = false) {
     setSaving(true)
-    setStatus(useAssistantDefault ? '正在使用助手默认模型...' : '正在保存本会话模型...')
+    setStatus(useAssistantDefault ? t('conversationModel.usingDefault') : t('conversationModel.savingConversation'))
 
     try {
       const nextProvider = useAssistantDefault ? assistantProvider : selectedProvider
@@ -3930,8 +4164,8 @@ function ConversationModelDialog({
       })
       setStatus(
         useAssistantDefault
-          ? `本会话已使用助手默认模型：${assistantProvider.defaultModel}`
-          : `本会话已绑定 ${selectedProvider.name} · ${modelId}`
+          ? t('conversationModel.defaultApplied', { model: assistantProvider.defaultModel })
+          : t('conversationModel.conversationApplied', { provider: selectedProvider.name, model: modelId })
       )
       onClose()
     } catch (error) {
@@ -3943,7 +4177,7 @@ function ConversationModelDialog({
 
   async function saveAsAssistantDefault() {
     setSaving(true)
-    setStatus('正在保存为助手默认模型...')
+    setStatus(t('conversationModel.savingDefault'))
 
     try {
       const saved = await onSaveAssistant({
@@ -3951,7 +4185,7 @@ function ConversationModelDialog({
         modelProviderId: selectedProvider.id,
         modelId
       })
-      setStatus(`「${saved.name}」之后的新会话默认使用 ${selectedProvider.name} · ${modelId}`)
+      setStatus(t('conversationModel.defaultSaved', { assistant: saved.name, provider: selectedProvider.name, model: modelId }))
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error))
     } finally {
@@ -3964,20 +4198,24 @@ function ConversationModelDialog({
       <section className="assistant-model-modal" onClick={(event) => event.stopPropagation()}>
         <header>
           <div>
-            <p>{assistant.name}</p>
-            <h2>会话模型</h2>
+            <p>{displayAssistant.name}</p>
+            <h2>{t('conversationModel.title')}</h2>
           </div>
-          <button className="icon-button" onClick={onClose} title="关闭">
+          <button className="icon-button" onClick={onClose} title={t('common.close')}>
             <X size={18} />
           </button>
         </header>
 
         <div className="assistant-model-note">
-          当前设置只影响「{conversation.title}」这一次会话。助手默认模型：{assistantProvider.name} · {assistantProvider.defaultModel}
+          {t('conversationModel.note', {
+            conversation: conversation.title,
+            provider: assistantProvider.name,
+            model: assistantProvider.defaultModel
+          })}
         </div>
 
         <label>
-          <span>供应商</span>
+          <span>{t('addAssistant.provider')}</span>
           <select value={providerId} onChange={(event) => selectProvider(event.target.value)}>
             {providers.map((provider) => (
               <option key={provider.id} value={provider.id}>
@@ -3991,14 +4229,14 @@ function ConversationModelDialog({
 
         <div className="form-actions">
           <button className="secondary-action" disabled={saving} onClick={() => saveConversationModel(true)} type="button">
-            使用助手默认
+            {t('conversationModel.useDefault')}
           </button>
           <button className="secondary-action" disabled={saving || !modelId.trim()} onClick={() => void saveAsAssistantDefault()} type="button">
-            保存为助手默认
+            {t('conversationModel.saveDefault')}
           </button>
           <button className="primary-action" disabled={saving || !modelId.trim()} onClick={() => saveConversationModel()} type="button">
             <Save size={17} />
-            保存本会话
+            {t('conversationModel.saveConversation')}
           </button>
         </div>
 
@@ -4029,6 +4267,8 @@ function KnowledgeBaseDialog({
   onReference: (note: KnowledgeNote) => void
   onSaveMemory: (memory: AssistantMemory) => Promise<AssistantMemory>
 }) {
+  const { t, i18n } = useTranslation()
+  const displayAssistant = localizeAssistant(assistant)
   const [query, setQuery] = useState('')
   const [activeTab, setActiveTab] = useState<'knowledge' | 'memory'>('knowledge')
   const [memoryDraft, setMemoryDraft] = useState('')
@@ -4044,7 +4284,7 @@ function KnowledgeBaseDialog({
   async function addMemory(content: string, source?: Pick<AssistantMemory, 'sourceNoteId' | 'sourceMessageId'>) {
     const text = content.trim()
     if (!text) {
-      setStatus('请输入记忆内容')
+      setStatus(t('knowledge.memoryRequired'))
       return
     }
 
@@ -4060,7 +4300,7 @@ function KnowledgeBaseDialog({
         createdAt: now,
         updatedAt: now
       })
-      setStatus(`已添加长期记忆：${saved.content.slice(0, 28)}`)
+      setStatus(t('knowledge.memoryAdded', { content: saved.content.slice(0, 28) }))
       setMemoryDraft('')
       setActiveTab('memory')
     } catch (error) {
@@ -4071,7 +4311,7 @@ function KnowledgeBaseDialog({
   async function toggleMemory(memory: AssistantMemory) {
     try {
       const saved = await onSaveMemory({ ...memory, enabled: !memory.enabled, updatedAt: Date.now() })
-      setStatus(`${saved.enabled ? '已启用' : '已停用'}长期记忆`)
+      setStatus(saved.enabled ? t('knowledge.memoryEnabled') : t('knowledge.memoryDisabled'))
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error))
     }
@@ -4080,7 +4320,7 @@ function KnowledgeBaseDialog({
   async function removeMemory(memory: AssistantMemory) {
     try {
       await onDeleteMemory(memory.id)
-      setStatus('已删除长期记忆')
+      setStatus(t('knowledge.memoryDeleted'))
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error))
     }
@@ -4091,27 +4331,27 @@ function KnowledgeBaseDialog({
       <section className="knowledge-modal" onClick={stopModalClick}>
         <header>
           <div>
-            <p>{assistant.name}</p>
-            <h2>知识与记忆</h2>
+            <p>{displayAssistant.name}</p>
+            <h2>{t('knowledge.title')}</h2>
           </div>
-          <button className="icon-button" onClick={onClose} title="关闭">
+          <button className="icon-button" onClick={onClose} title={t('common.close')}>
             <X size={18} />
           </button>
         </header>
 
         <div className="knowledge-tabs">
           <button className={activeTab === 'knowledge' ? 'active' : ''} onClick={() => setActiveTab('knowledge')} type="button">
-            当前助手知识库
+            {t('knowledge.knowledgeTab')}
           </button>
           <button className={activeTab === 'memory' ? 'active' : ''} onClick={() => setActiveTab('memory')} type="button">
-            长期记忆
+            {t('knowledge.memoryTab')}
           </button>
         </div>
 
         <div className="knowledge-search">
           <input
             autoFocus
-            placeholder={activeTab === 'knowledge' ? '搜索当前助手的知识' : '搜索当前助手的记忆'}
+            placeholder={activeTab === 'knowledge' ? t('knowledge.searchKnowledge') : t('knowledge.searchMemory')}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
           />
@@ -4119,12 +4359,12 @@ function KnowledgeBaseDialog({
 
         {activeTab === 'knowledge' ? (
           <div className="knowledge-list">
-            {visibleNotes.length === 0 && <div className="knowledge-empty">当前助手暂无知识</div>}
+            {visibleNotes.length === 0 && <div className="knowledge-empty">{t('knowledge.emptyKnowledge')}</div>}
             {visibleNotes.map((note) => (
               <article className="knowledge-item" key={note.id}>
                 <div>
                   <strong>{note.title}</strong>
-                  <time>{new Date(note.createdAt).toLocaleString()}</time>
+                  <time>{new Date(note.createdAt).toLocaleString(i18n.resolvedLanguage)}</time>
                 </div>
                 <p>{note.content}</p>
                 <div className="knowledge-actions">
@@ -4132,23 +4372,23 @@ function KnowledgeBaseDialog({
                     type="button"
                     onClick={() => {
                       onReference(note)
-                      setStatus(`已引用「${note.title}」，关闭窗口后可在输入区看到`)
+                      setStatus(t('knowledge.referenced', { title: note.title }))
                     }}
                   >
                     <AtSign size={15} />
-                    引用
+                    {t('common.quote')}
                   </button>
                   <button type="button" onClick={() => void addMemory(note.content, { sourceNoteId: note.id, sourceMessageId: note.messageId })}>
                     <Brain size={15} />
-                    记住
+                    {t('knowledge.remember')}
                   </button>
                   <button type="button" onClick={() => void onCopy(note.content)}>
                     <Copy size={15} />
-                    复制
+                    {t('common.copy')}
                   </button>
                   <button type="button" onClick={() => void onDelete(note.id)}>
                     <Trash2 size={15} />
-                    删除
+                    {t('common.delete')}
                   </button>
                 </div>
               </article>
@@ -4158,38 +4398,38 @@ function KnowledgeBaseDialog({
           <>
             <div className="memory-form">
               <textarea
-                placeholder="添加当前助手需要长期记住的内容，例如：用户喜欢简洁中文回答；用户公司品牌叫 G-LLM；合同审查时优先关注付款、交付和违约责任。"
+                placeholder={t('knowledge.memoryPlaceholder')}
                 value={memoryDraft}
                 onChange={(event) => setMemoryDraft(event.target.value)}
                 rows={3}
               />
               <button className="primary-action" type="button" onClick={() => void addMemory(memoryDraft)}>
                 <Plus size={16} />
-                添加记忆
+                {t('knowledge.addMemory')}
               </button>
             </div>
 
             <div className="knowledge-list">
-              {visibleMemories.length === 0 && <div className="knowledge-empty">当前助手暂无长期记忆</div>}
+              {visibleMemories.length === 0 && <div className="knowledge-empty">{t('knowledge.emptyMemory')}</div>}
               {visibleMemories.map((memory) => (
                 <article className={`memory-item ${memory.enabled ? 'enabled' : ''}`} key={memory.id}>
                   <div>
-                    <strong>{memory.enabled ? '已启用' : '已停用'}</strong>
-                    <time>{new Date(memory.updatedAt).toLocaleString()}</time>
+                    <strong>{memory.enabled ? t('common.enabled') : t('common.disabled')}</strong>
+                    <time>{new Date(memory.updatedAt).toLocaleString(i18n.resolvedLanguage)}</time>
                   </div>
                   <p>{memory.content}</p>
                   <div className="knowledge-actions">
                     <button type="button" onClick={() => void toggleMemory(memory)}>
                       <CircleCheck size={15} />
-                      {memory.enabled ? '停用' : '启用'}
+                      {memory.enabled ? t('knowledge.disable') : t('knowledge.enable')}
                     </button>
                     <button type="button" onClick={() => void onCopy(memory.content)}>
                       <Copy size={15} />
-                      复制
+                      {t('common.copy')}
                     </button>
                     <button type="button" onClick={() => void removeMemory(memory)}>
                       <Trash2 size={15} />
-                      删除
+                      {t('common.delete')}
                     </button>
                   </div>
                 </article>
@@ -4203,24 +4443,6 @@ function KnowledgeBaseDialog({
   )
 }
 
-const toolTypeLabels: Record<ToolConfigType, string> = {
-  function: '函数工具',
-  mcp: 'MCP 服务',
-  plugin: '外部插件'
-}
-
-const toolEndpointLabels: Record<ToolConfigType, string> = {
-  function: 'HTTP 接口地址',
-  mcp: 'MCP 命令或服务地址',
-  plugin: '插件标识或入口地址'
-}
-
-const toolEndpointPlaceholders: Record<ToolConfigType, string> = {
-  function: '例如：https://api.example.com/tools/search',
-  mcp: '例如：npx -y @modelcontextprotocol/server-filesystem C:/data',
-  plugin: '例如：company.crm 或 https://plugin.example.com/manifest.json'
-}
-
 function ToolConfigDialog({
   tools,
   onClose,
@@ -4232,6 +4454,7 @@ function ToolConfigDialog({
   onDelete: (id: string) => Promise<void>
   onSave: (tool: ToolConfig) => Promise<ToolConfig>
 }) {
+  const { t } = useTranslation()
   const [type, setType] = useState<ToolConfigType>('function')
   const [name, setName] = useState('')
   const [endpoint, setEndpoint] = useState('')
@@ -4242,12 +4465,12 @@ function ToolConfigDialog({
   async function saveNewTool() {
     const trimmedName = name.trim()
     if (!trimmedName) {
-      setStatus('请输入工具名称')
+      setStatus(t('tools.nameRequired'))
       return
     }
 
     setSaving(true)
-    setStatus('正在保存工具配置...')
+    setStatus(t('tools.saving'))
     const now = Date.now()
 
     try {
@@ -4261,7 +4484,7 @@ function ToolConfigDialog({
         createdAt: now,
         updatedAt: now
       })
-      setStatus(`已保存「${saved.name}」`)
+      setStatus(t('tools.saved', { tool: saved.name }))
       setName('')
       setEndpoint('')
       setDescription('')
@@ -4276,7 +4499,7 @@ function ToolConfigDialog({
     setSaving(true)
     try {
       const saved = await onSave({ ...tool, enabled: !tool.enabled, updatedAt: Date.now() })
-      setStatus(`${saved.enabled ? '已启用' : '已停用'}「${saved.name}」`)
+      setStatus(saved.enabled ? t('tools.enabled', { tool: saved.name }) : t('tools.disabled', { tool: saved.name }))
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error))
     } finally {
@@ -4288,7 +4511,7 @@ function ToolConfigDialog({
     setSaving(true)
     try {
       await onDelete(tool.id)
-      setStatus(`已删除「${tool.name}」`)
+      setStatus(t('tools.deleted', { tool: tool.name }))
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error))
     } finally {
@@ -4301,46 +4524,46 @@ function ToolConfigDialog({
       <section className="tool-center-modal" onClick={stopModalClick}>
         <header>
           <div>
-            <p>无极界</p>
-            <h2>扩展工具配置</h2>
+            <p>G-LLM</p>
+            <h2>{t('tools.title')}</h2>
           </div>
-          <button className="icon-button" onClick={onClose} title="关闭">
+          <button className="icon-button" onClick={onClose} title={t('common.close')}>
             <X size={18} />
           </button>
         </header>
 
         <div className="tool-center-note">
-          这里仅配置模型可调用的扩展工具：函数工具、MCP 服务和外部插件。附件、截图、知识库、联网搜索继续使用输入框上的独立按钮。
+          {t('tools.note')}
         </div>
 
         <div className="tool-config-form">
           <div className="tool-type-tabs">
             {(['function', 'mcp', 'plugin'] as ToolConfigType[]).map((item) => (
               <button key={item} className={item === type ? 'active' : ''} onClick={() => setType(item)} type="button">
-                {toolTypeLabels[item]}
+                {t(`tools.types.${item}`)}
               </button>
             ))}
           </div>
           <label>
-            <span>工具名称</span>
+            <span>{t('tools.name')}</span>
             <input
-              placeholder={type === 'function' ? '例如：客户资料查询' : type === 'mcp' ? '例如：本地文件 MCP' : '例如：CRM 插件'}
+              placeholder={t(`tools.namePlaceholders.${type}`)}
               value={name}
               onChange={(event) => setName(event.target.value)}
             />
           </label>
           <label>
-            <span>{toolEndpointLabels[type]}</span>
+            <span>{t(`tools.endpointLabels.${type}`)}</span>
             <input
-              placeholder={toolEndpointPlaceholders[type]}
+              placeholder={t(`tools.endpointPlaceholders.${type}`)}
               value={endpoint}
               onChange={(event) => setEndpoint(event.target.value)}
             />
           </label>
           <label>
-            <span>用途说明</span>
+            <span>{t('tools.description')}</span>
             <textarea
-              placeholder="写给自己和后续模型调用系统看的说明，例如：根据客户手机号查询 CRM 客户档案。"
+              placeholder={t('tools.descriptionPlaceholder')}
               value={description}
               onChange={(event) => setDescription(event.target.value)}
               rows={3}
@@ -4348,12 +4571,12 @@ function ToolConfigDialog({
           </label>
           <button className="primary-action" disabled={saving} onClick={() => void saveNewTool()} type="button">
             <Plus size={16} />
-            添加配置
+            {t('tools.add')}
           </button>
         </div>
 
         <div className="tool-card-list">
-          {tools.length === 0 && <div className="tool-empty">暂无扩展工具配置</div>}
+          {tools.length === 0 && <div className="tool-empty">{t('tools.empty')}</div>}
           {tools.map((tool) => (
             <article key={tool.id} className={`tool-card ${tool.enabled ? 'enabled' : ''}`}>
               <span className="tool-card-icon">
@@ -4361,15 +4584,15 @@ function ToolConfigDialog({
               </span>
               <div>
                 <strong>{tool.name}</strong>
-                <p>{toolTypeLabels[tool.type]}{tool.endpoint ? ` · ${tool.endpoint}` : ''}</p>
+                <p>{t(`tools.types.${tool.type}`)}{tool.endpoint ? ` · ${tool.endpoint}` : ''}</p>
                 {tool.description && <em>{tool.description}</em>}
               </div>
               <div className="tool-card-actions">
                 <button disabled={saving} type="button" onClick={() => void toggleTool(tool)}>
-                  {tool.enabled ? '停用' : '启用'}
+                  {tool.enabled ? t('knowledge.disable') : t('knowledge.enable')}
                 </button>
                 <button disabled={saving} type="button" onClick={() => void removeTool(tool)}>
-                  删除
+                  {t('common.delete')}
                 </button>
               </div>
             </article>
@@ -4421,8 +4644,12 @@ function AddProviderDialog({
   onClose: () => void
   onCreate: (provider: ApiProvider) => Promise<void>
 }) {
+  const { t } = useTranslation()
   const [selectedTemplateId, setSelectedTemplateId] = useState<ProviderTemplateId>('openai-compatible')
-  const [draft, setDraft] = useState(() => createProviderFromTemplate('openai-compatible'))
+  const [draft, setDraft] = useState(() => ({
+    ...createProviderFromTemplate('openai-compatible'),
+    name: t('provider.templates.openai-compatible.name')
+  }))
   const [query, setQuery] = useState('')
   const [status, setStatus] = useState('')
   const [saving, setSaving] = useState(false)
@@ -4432,14 +4659,24 @@ function AddProviderDialog({
 
   function matchesTemplate(template: (typeof PROVIDER_TEMPLATES)[number]) {
     if (!normalizedQuery) return true
-    return [template.name, template.description, template.id, providerTemplateCategoryLabels[template.category]]
+    return [
+      template.name,
+      template.description,
+      t(`provider.templates.${template.id}.name`),
+      t(`provider.templates.${template.id}.description`),
+      template.id,
+      t(`provider.categories.${template.category}`)
+    ]
       .join(' ')
       .toLowerCase()
       .includes(normalizedQuery)
   }
 
   function selectTemplate(templateId: ProviderTemplateId) {
-    const provider = createProviderFromTemplate(templateId)
+    const provider = {
+      ...createProviderFromTemplate(templateId),
+      name: t(`provider.templates.${templateId}.name`)
+    }
     setSelectedTemplateId(templateId)
     setDraft(provider)
     setStatus('')
@@ -4447,7 +4684,7 @@ function AddProviderDialog({
 
   async function addProvider() {
     setSaving(true)
-    setStatus('正在添加供应商...')
+    setStatus(t('provider.adding'))
 
     try {
       await onCreate(draft)
@@ -4465,9 +4702,9 @@ function AddProviderDialog({
         <header>
           <div>
             <p>G-LLM</p>
-            <h2>新增供应商</h2>
+            <h2>{t('provider.addDialogTitle')}</h2>
           </div>
-          <button className="icon-button" onClick={onClose} title="关闭" type="button">
+          <button className="icon-button" onClick={onClose} title={t('common.close')} type="button">
             <X size={18} />
           </button>
         </header>
@@ -4478,21 +4715,21 @@ function AddProviderDialog({
               <Search size={17} />
               <input
                 autoFocus
-                placeholder="搜索供应商，例如 OpenAI、Kimi、Ollama"
+                placeholder={t('provider.searchPlaceholder')}
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
               />
             </label>
 
             <div className="provider-template-scroll">
-              {!hasVisibleTemplates && <div className="provider-template-empty">没有匹配的供应商模板</div>}
+              {!hasVisibleTemplates && <div className="provider-template-empty">{t('provider.noTemplates')}</div>}
               {providerTemplateCategoryOrder.map((category) => {
                 const templates = PROVIDER_TEMPLATES.filter((template) => template.category === category && matchesTemplate(template))
                 if (templates.length === 0) return null
 
                 return (
                   <div className="template-group" key={category}>
-                    <span>{providerTemplateCategoryLabels[category]}</span>
+                    <span>{t(`provider.categories.${category}`)}</span>
                     <div className="provider-template-list">
                       {templates.map((template) => (
                         <button
@@ -4503,8 +4740,8 @@ function AddProviderDialog({
                         >
                           <Plug size={16} />
                           <span>
-                            <strong>{template.name}</strong>
-                            <small>{template.description}</small>
+                            <strong>{t(`provider.templates.${template.id}.name`)}</strong>
+                            <small>{t(`provider.templates.${template.id}.description`)}</small>
                           </span>
                         </button>
                       ))}
@@ -4519,13 +4756,13 @@ function AddProviderDialog({
             <div className="provider-add-summary">
               <Plug size={18} />
               <span>
-                <strong>{selectedTemplate.name}</strong>
-                <small>{selectedTemplate.description}</small>
+                <strong>{t(`provider.templates.${selectedTemplate.id}.name`)}</strong>
+                <small>{t(`provider.templates.${selectedTemplate.id}.description`)}</small>
               </span>
             </div>
 
             <label>
-              <span>供应商名称</span>
+              <span>{t('provider.name')}</span>
               <input
                 value={draft.name}
                 onChange={(event) => setDraft({ ...draft, name: event.target.value })}
@@ -4543,7 +4780,7 @@ function AddProviderDialog({
             <label>
               <span>API Key</span>
               <input
-                placeholder={draft.requiresApiKey ? '请输入你的密钥，也可以添加后再填写' : '本地服务可留空'}
+                placeholder={draft.requiresApiKey ? t('provider.enterApiKeyLater') : t('provider.localKeyOptional')}
                 type="password"
                 value={draft.apiKey}
                 onChange={(event) => setDraft({ ...draft, apiKey: event.target.value })}
@@ -4551,7 +4788,7 @@ function AddProviderDialog({
             </label>
 
             <label>
-              <span>默认模型</span>
+              <span>{t('provider.globalDefaultModel')}</span>
               <select value={draft.defaultModel} onChange={(event) => setDraft({ ...draft, defaultModel: event.target.value })}>
                 {modelOptions.map((model) => (
                   <option key={model.id} value={model.id}>
@@ -4562,7 +4799,7 @@ function AddProviderDialog({
             </label>
 
             <label className="switch-row provider-add-switch">
-              <span>需要 API Key</span>
+              <span>{t('provider.requiresApiKey')}</span>
               <input
                 checked={draft.requiresApiKey}
                 type="checkbox"
@@ -4570,16 +4807,16 @@ function AddProviderDialog({
               />
             </label>
 
-            <div className="provider-add-note">添加后可在供应商设置中拉取模型、测试连接，并选择全局默认模型。</div>
+            <div className="provider-add-note">{t('provider.addNote')}</div>
             {status && <div className="provider-status">{status}</div>}
 
             <div className="form-actions">
               <button className="secondary-action" disabled={saving} onClick={onClose} type="button">
-                取消
+                {t('common.cancel')}
               </button>
               <button className="primary-action" disabled={saving} onClick={() => void addProvider()} type="button">
                 <Plus size={17} />
-                添加供应商
+                {t('provider.addProvider')}
               </button>
             </div>
           </div>
@@ -4622,6 +4859,7 @@ function SettingsPanel({
   onDeleteProvider: (id: string) => Promise<void>
   onDataLocationChange: (info: DataLocationInfo) => void
 }) {
+  const { t, i18n } = useTranslation()
   const [settingsDraft, setSettingsDraft] = useState(settings)
   const [providerDraft, setProviderDraft] = useState(() => getProviderById(settings.activeProviderId, providers))
   const [providerStatus, setProviderStatus] = useState('')
@@ -4645,7 +4883,7 @@ function SettingsPanel({
   const providerSaved = providers.some((provider) => provider.id === providerDraft.id)
   const savedProvider = providers.find((provider) => provider.id === providerDraft.id) ?? null
   const visibleProviders = providerSaved ? providers : [providerDraft, ...providers]
-  const defaultModelLabel = providerDraft.defaultModel || '未设置'
+  const defaultModelLabel = providerDraft.defaultModel || t('common.notSet')
   const settingsChanged =
     JSON.stringify(getComparableSettings(settingsDraft)) !== JSON.stringify(getComparableSettings(settings))
   const providerChanged =
@@ -4678,7 +4916,7 @@ function SettingsPanel({
     const savedProvider = await onSaveProvider(provider)
     setProviderDraft(savedProvider)
     setSettingsDraft({ ...settingsDraft, activeProviderId: savedProvider.id })
-    setProviderStatus(`已添加「${savedProvider.name}」。可继续拉取模型、测试连接；点击保存后它会成为全局默认供应商。`)
+    setProviderStatus(t('provider.added', { provider: savedProvider.name }))
     setNewModelId('')
     setApiKeyVisible(false)
     setAddProviderOpen(false)
@@ -4686,7 +4924,7 @@ function SettingsPanel({
 
   function setDefaultModel(modelId: string) {
     setProviderDraft({ ...providerDraft, defaultModel: modelId })
-    setProviderStatus(`已选择 ${modelId} 为全局默认模型，保存配置后生效`)
+    setProviderStatus(t('provider.defaultSelected', { model: modelId }))
   }
 
   function addManualModel() {
@@ -4703,7 +4941,7 @@ function SettingsPanel({
       defaultModel: providerDraft.defaultModel || id
     })
     setNewModelId('')
-    setProviderStatus(`已添加模型 ${id}，保存配置后生效`)
+    setProviderStatus(t('provider.modelAdded', { model: id }))
   }
 
   function deleteModel(id: string) {
@@ -4716,7 +4954,7 @@ function SettingsPanel({
       models: nextModels,
       defaultModel: nextDefaultModel
     })
-    setProviderStatus(`已移除模型 ${id}，保存配置后生效`)
+    setProviderStatus(t('provider.modelRemoved', { model: id }))
   }
 
   async function saveAll() {
@@ -4735,7 +4973,7 @@ function SettingsPanel({
 
   async function deleteCurrentProvider() {
     if (providerDraft.id === DEFAULT_PROVIDER_ID) return
-    const confirmed = window.confirm(`确定删除供应商「${providerDraft.name}」吗？删除后不会影响默认 G-LLM 供应商。`)
+    const confirmed = window.confirm(t('provider.confirmDelete', { provider: providerDraft.name }))
     if (!confirmed) return
 
     await onDeleteProvider(providerDraft.id)
@@ -4747,7 +4985,7 @@ function SettingsPanel({
 
   async function testConnection() {
     setIsChecking(true)
-    setProviderStatus('正在测试连接...')
+    setProviderStatus(t('provider.testing'))
     const result = await onCheckProvider(providerDraft)
     setProviderStatus(result.message)
     if (result.ok && result.models?.length) {
@@ -4773,7 +5011,7 @@ function SettingsPanel({
         setSettingsDraft((current) => ({ ...current, theme: 'gold' }))
       }
     } catch (error) {
-      setThemeEntitlementStatus(error instanceof Error ? error.message : '金色主题资格检测失败')
+      setThemeEntitlementStatus(error instanceof Error ? error.message : t('provider.goldCheckFailed'))
     } finally {
       setIsCheckingThemeEntitlement(false)
     }
@@ -4781,12 +5019,12 @@ function SettingsPanel({
 
   async function refreshModels() {
     setIsRefreshing(true)
-    setProviderStatus('正在拉取模型列表...')
+    setProviderStatus(t('provider.fetching'))
     try {
       const saved = await onRefreshProviderModels(providerDraft)
       setProviderDraft(saved)
       setSettingsDraft({ ...settingsDraft, activeProviderId: saved.id })
-      setProviderStatus(`已拉取 ${saved.models.length} 个模型，保存配置后生效`)
+      setProviderStatus(t('provider.fetched', { count: saved.models.length }))
     } catch (error) {
       setProviderStatus(error instanceof Error ? error.message : String(error))
     }
@@ -4803,17 +5041,15 @@ function SettingsPanel({
   }
 
   async function chooseDataDirectory() {
-    const confirmed = window.confirm(
-      '将选择新的数据目录，并把当前聊天记录、助手、本地知识库、长期记忆和供应商配置复制过去。重启软件后生效，旧目录会保留为备份。是否继续？'
-    )
+    const confirmed = window.confirm(t('storage.confirmChoose'))
     if (!confirmed) return
 
     setIsChangingDataLocation(true)
-    setDataLocationStatus('正在选择数据目录...')
+    setDataLocationStatus(t('storage.choosing'))
     try {
       const result = await window.gllm.chooseDataDirectory()
       if (!result) {
-        setDataLocationStatus('已取消选择数据目录')
+        setDataLocationStatus(t('storage.chooseCancelled'))
         return
       }
 
@@ -4828,13 +5064,11 @@ function SettingsPanel({
   }
 
   async function resetDataDirectory() {
-    const confirmed = window.confirm(
-      '将把当前数据复制回默认目录，并恢复使用系统默认数据位置。重启软件后生效，当前目录不会自动删除。是否继续？'
-    )
+    const confirmed = window.confirm(t('storage.confirmReset'))
     if (!confirmed) return
 
     setIsChangingDataLocation(true)
-    setDataLocationStatus('正在恢复默认数据目录...')
+    setDataLocationStatus(t('storage.resetting'))
     try {
       const result = await window.gllm.resetDataDirectory()
       setDataLocationInfo(result.info)
@@ -4849,11 +5083,11 @@ function SettingsPanel({
 
   async function exportDataArchive() {
     setIsArchivingData(true)
-    setDataLocationStatus('正在导出数据压缩包...')
+    setDataLocationStatus(t('storage.exporting'))
     try {
       const result = await window.gllm.exportDataArchive()
       if (!result) {
-        setDataLocationStatus('已取消导出数据')
+        setDataLocationStatus(t('storage.exportCancelled'))
         return
       }
 
@@ -4866,23 +5100,21 @@ function SettingsPanel({
   }
 
   async function importDataArchive() {
-    const confirmed = window.confirm(
-      '导入 ZIP 数据包会先备份当前数据，然后用压缩包中的数据替换当前数据。导入完成后需要重启软件才会生效。是否继续？'
-    )
+    const confirmed = window.confirm(t('storage.confirmImport'))
     if (!confirmed) return
 
     setIsArchivingData(true)
-    setDataLocationStatus('正在导入数据压缩包...')
+    setDataLocationStatus(t('storage.importing'))
     try {
       const result = await window.gllm.importDataArchive()
       if (!result) {
-        setDataLocationStatus('已取消导入数据')
+        setDataLocationStatus(t('storage.importCancelled'))
         return
       }
 
       setDataArchiveNeedsRestart(Boolean(result.restartRequired))
       setDataLocationStatus(
-        result.backupPath ? `${result.message} 当前数据已备份到：${result.backupPath}` : result.message
+        result.backupPath ? t('storage.importBackup', { message: result.message, path: result.backupPath }) : result.message
       )
     } catch (error) {
       setDataLocationStatus(error instanceof Error ? error.message : String(error))
@@ -4906,7 +5138,7 @@ function SettingsPanel({
         updateAvailable: false,
         status: 'unavailable',
         downloadPageUrl: 'https://llm.gprophet.com/download',
-        message: error instanceof Error ? error.message : '检查更新失败，请稍后重试。'
+        message: error instanceof Error ? error.message : t('about.updateCheckFailed')
       })
     } finally {
       setIsCheckingUpdate(false)
@@ -4921,14 +5153,14 @@ function SettingsPanel({
     try {
       await window.gllm.openLegalDocument(document)
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : '无法打开法律文件，请检查安装是否完整。')
+      window.alert(error instanceof Error ? error.message : t('about.legalOpenFailed'))
     }
   }
 
   const isWindows = window.gllm.platform === 'win32'
 
   async function quitApp() {
-    const confirmed = window.confirm('确定退出 G-LLM 吗？关闭主窗口只会隐藏到托盘，最小化会显示右下角浮动 Logo。退出会关闭主窗口、小窗口和浮动 Logo。')
+    const confirmed = window.confirm(t('about.confirmQuit'))
     if (!confirmed) return
 
     await window.gllm.quitApp()
@@ -4938,38 +5170,26 @@ function SettingsPanel({
     <ModalBackdrop className="drawer-backdrop" onClose={onClose}>
       <section className="settings-drawer provider-drawer" onClick={(event) => event.stopPropagation()}>
         <div className="settings-tabs-row">
-          <div className="settings-tabs" role="tablist" aria-label="设置分类">
+          <div className="settings-tabs" role="tablist" aria-label={t('settings.tabsLabel')}>
             {settingsTabs.map((tab) => (
               <button
-                aria-selected={activeSettingsTab === tab.id}
-                className={activeSettingsTab === tab.id ? 'active' : ''}
-                key={tab.id}
-                onClick={() => setActiveSettingsTab(tab.id)}
+                aria-selected={activeSettingsTab === tab}
+                className={activeSettingsTab === tab ? 'active' : ''}
+                key={tab}
+                onClick={() => setActiveSettingsTab(tab)}
                 role="tab"
                 type="button"
               >
-                {tab.label}
+                {t(`settings.tabs.${tab}`)}
               </button>
             ))}
           </div>
-          {activeSettingsTab === 'providers' && (
-            <div className="provider-tab-summary">
-              <div>
-                <span>全局供应商</span>
-                <strong>{providerDraft.name}</strong>
-              </div>
-              <div>
-                <span>全局默认模型</span>
-                <strong>{defaultModelLabel}</strong>
-              </div>
-            </div>
-          )}
         </div>
 
         {activeSettingsTab === 'providers' && providerNeedsKey && (
           <div className="setup-warning">
             <KeyRound size={18} />
-            <span>首次使用需要填写 API Key。默认网关已设置为 https://llm.gprophet.com/v1。</span>
+            <span>{t('provider.apiKeyIntro')}</span>
           </div>
         )}
 
@@ -4979,13 +5199,13 @@ function SettingsPanel({
               <div className="provider-list">
                 <div className="provider-list-head">
                   <div className="provider-list-title">
-                    <strong>供应商</strong>
+                    <strong>{t('provider.providers')}</strong>
                     <button onClick={() => setAddProviderOpen(true)} type="button">
                       <Plus size={15} />
-                      新增
+                      {t('provider.add')}
                     </button>
                   </div>
-                  <small>选中的供应商会成为全局默认供应商。</small>
+                  <small>{t('provider.globalHint')}</small>
                 </div>
                 {visibleProviders.map((provider) => {
                   const isActiveProvider = provider.id === providerDraft.id
@@ -4999,7 +5219,7 @@ function SettingsPanel({
                     >
                       <Plug size={17} />
                       <span>
-                        <strong>{displayProvider.name}{isActiveProvider && !providerSaved ? '（未保存）' : ''}</strong>
+                        <strong>{displayProvider.name}{isActiveProvider && !providerSaved ? ` (${t('provider.unsaved')})` : ''}</strong>
                         <small>{displayProvider.apiBaseUrl}</small>
                       </span>
                     </button>
@@ -5011,14 +5231,14 @@ function SettingsPanel({
             <div className="provider-form">
               <div className="form-row two provider-default-model-row">
                 <label>
-                  <span>供应商名称</span>
+                  <span>{t('provider.name')}</span>
                   <input
                     value={providerDraft.name}
                     onChange={(event) => setProviderDraft({ ...providerDraft, name: event.target.value })}
                   />
                 </label>
                 <div className="settings-model-field">
-                  <span>全局默认模型</span>
+                  <span>{t('provider.globalDefaultModel')}</span>
                   <ModelPickerMenu
                     provider={providerDraft}
                     value={providerDraft.defaultModel}
@@ -5040,17 +5260,17 @@ function SettingsPanel({
                 <span>API Key</span>
                 <div className="secret-input-row">
                   <input
-                    placeholder={providerDraft.requiresApiKey ? '请输入你的密钥' : '本地服务可留空'}
+                    placeholder={providerDraft.requiresApiKey ? t('provider.enterApiKey') : t('provider.localKeyOptional')}
                     type={apiKeyVisible ? 'text' : 'password'}
                     value={providerDraft.apiKey}
                     onChange={(event) => setProviderDraft({ ...providerDraft, apiKey: event.target.value })}
                   />
                   <button
-                    aria-label={apiKeyVisible ? '隐藏 API Key' : '显示 API Key'}
+                    aria-label={apiKeyVisible ? t('provider.hideApiKey') : t('provider.showApiKey')}
                     aria-pressed={apiKeyVisible}
                     className="secret-toggle-button"
                     onClick={() => setApiKeyVisible((visible) => !visible)}
-                    title={apiKeyVisible ? '隐藏 API Key' : '显示 API Key'}
+                    title={apiKeyVisible ? t('provider.hideApiKey') : t('provider.showApiKey')}
                     type="button"
                   >
                     {apiKeyVisible ? <EyeOff size={18} /> : <Eye size={18} />}
@@ -5059,7 +5279,7 @@ function SettingsPanel({
               </label>
 
               <label className="switch-row">
-                <span>需要 API Key</span>
+                <span>{t('provider.requiresApiKey')}</span>
                 <input
                   checked={providerDraft.requiresApiKey}
                   type="checkbox"
@@ -5070,27 +5290,27 @@ function SettingsPanel({
               <div className="provider-tools">
                 <button disabled={isChecking} onClick={testConnection} type="button">
                   <CircleCheck size={16} />
-                  测试连接
+                  {t('provider.testConnection')}
                 </button>
                 <button disabled={isRefreshing} onClick={refreshModels} type="button">
                   <RefreshCw size={16} />
-                  拉取模型
+                  {t('provider.fetchModels')}
                 </button>
-                {providerDraft.modelsUpdatedAt && <span>{new Date(providerDraft.modelsUpdatedAt).toLocaleString()}</span>}
+                {providerDraft.modelsUpdatedAt && <span>{new Date(providerDraft.modelsUpdatedAt).toLocaleString(i18n.resolvedLanguage)}</span>}
               </div>
 
               {providerStatus && <div className="provider-status">{providerStatus}</div>}
 
               <section className="model-manager">
                 <div className="default-model-card">
-                  <span>当前全局默认模型</span>
+                  <span>{t('provider.currentDefaultModel')}</span>
                   <strong>{defaultModelLabel}</strong>
-                  <small>下方点击任意模型标签即可切换默认模型，不必只靠下拉框查找。</small>
+                  <small>{t('provider.defaultModelHint')}</small>
                 </div>
                 <div className="model-manager-head">
                   <div>
-                    <strong>模型管理</strong>
-                    <small>模型能力会从上游模型列表和模型 ID 自动识别，用于决定聊天、看图、生成图片等能力。</small>
+                    <strong>{t('provider.modelManager')}</strong>
+                    <small>{t('provider.capabilitiesHint')}</small>
                   </div>
                 </div>
                 <div className="model-chip-list">
@@ -5101,17 +5321,17 @@ function SettingsPanel({
                     >
                       <button className="model-name-button" onClick={() => setDefaultModel(model.id)} type="button">
                         <span>{model.name && model.name !== model.id ? `${model.name} (${model.id})` : model.id}</span>
-                        {model.id === providerDraft.defaultModel && <small>默认</small>}
+                        {model.id === providerDraft.defaultModel && <small>{t('provider.defaultBadge')}</small>}
                       </button>
                       <span className="model-capability-list">
                         {normalizeModelCapabilities(model).map((capability) => (
                           <span key={capability} className={`model-capability-badge type-${capability}`}>
-                            {MODEL_CAPABILITY_LABELS[capability]}
+                            {t(`modelPicker.capability.${capability}`)}
                           </span>
                         ))}
                       </span>
                       {model.id !== providerDraft.defaultModel && (
-                        <button className="model-delete-button" onClick={() => deleteModel(model.id)} title="删除模型" type="button">
+                        <button className="model-delete-button" onClick={() => deleteModel(model.id)} title={t('provider.deleteModel')} type="button">
                           <X size={14} />
                         </button>
                       )}
@@ -5120,12 +5340,12 @@ function SettingsPanel({
                 </div>
                 <div className="model-add-fallback">
                   <div>
-                    <strong>手动添加模型</strong>
-                    <small>仅在上游接口无法拉取模型，或模型尚未出现在列表中时使用。</small>
+                    <strong>{t('provider.manualAdd')}</strong>
+                    <small>{t('provider.manualAddHint')}</small>
                   </div>
                   <div className="model-add-row">
                     <input
-                      placeholder="输入模型 ID，例如 gpt-5.5"
+                      placeholder={t('provider.modelIdPlaceholder')}
                       value={newModelId}
                       onChange={(event) => setNewModelId(event.target.value)}
                       onKeyDown={(event) => {
@@ -5137,7 +5357,7 @@ function SettingsPanel({
                     />
                     <button onClick={addManualModel} type="button">
                       <Plus size={16} />
-                      添加模型
+                      {t('provider.addModel')}
                     </button>
                   </div>
                 </div>
@@ -5145,10 +5365,10 @@ function SettingsPanel({
 
               <section className="parameter-section">
                 <ParameterToggle
-                  description="关闭时使用模型默认采样设置"
+                  description={t('provider.temperatureHint')}
                   enabled={settingsDraft.enableTemperature}
-                  label="模型温度"
-                  valueLabel={settingsDraft.enableTemperature ? settingsDraft.temperature.toFixed(1) : '默认值'}
+                  label={t('provider.temperature')}
+                  valueLabel={settingsDraft.enableTemperature ? settingsDraft.temperature.toFixed(1) : t('common.defaultValue')}
                   onEnabledChange={(enabled) => setSettingsDraft({ ...settingsDraft, enableTemperature: enabled })}
                 >
                   <div className="temperature-control">
@@ -5163,18 +5383,18 @@ function SettingsPanel({
                       }
                     />
                     <div className="range-marks">
-                      <span>精确</span>
+                      <span>{t('provider.precise')}</span>
                       <span>1</span>
-                      <span>创意</span>
+                      <span>{t('provider.creative')}</span>
                     </div>
                   </div>
                 </ParameterToggle>
 
                 <ParameterToggle
-                  description="限制单次回复最多生成的词元数"
+                  description={t('provider.maxTokensHint')}
                   enabled={settingsDraft.enableMaxTokens}
-                  label="最大词元"
-                  valueLabel={settingsDraft.enableMaxTokens ? settingsDraft.maxTokens.toLocaleString() : '默认值'}
+                  label={t('provider.maxTokens')}
+                  valueLabel={settingsDraft.enableMaxTokens ? settingsDraft.maxTokens.toLocaleString(i18n.resolvedLanguage) : t('common.defaultValue')}
                   onEnabledChange={(enabled) => setSettingsDraft({ ...settingsDraft, enableMaxTokens: enabled })}
                 >
                   <input
@@ -5196,15 +5416,15 @@ function SettingsPanel({
                     type="button"
                   >
                     <Trash2 size={17} />
-                    删除供应商
+                    {t('provider.deleteProvider')}
                   </button>
                   <button className="secondary-action" onClick={onClose} type="button">
                     <X size={17} />
-                    不保存关闭
+                    {t('settings.closeWithoutSaving')}
                   </button>
                   <button className="primary-action" disabled={!configChanged} onClick={saveAll} type="button">
                     <Save size={17} />
-                    保存配置
+                    {t('settings.saveConfiguration')}
                   </button>
                 </div>
               </div>
@@ -5214,13 +5434,34 @@ function SettingsPanel({
 
         {activeSettingsTab === 'personalization' && (
           <div className="settings-tab-panel personalization-settings-panel">
+            <section className="preference-section language-preference-section">
+              <div className="data-location-head">
+                <div>
+                  <strong>{t('language.label')}</strong>
+                  <small>{t('language.description')}</small>
+                </div>
+              </div>
+              <select
+                className="language-select"
+                value={settingsDraft.language}
+                onChange={(event) => {
+                  const language = event.target.value as AppSettings['language']
+                  setSettingsDraft({ ...settingsDraft, language })
+                }}
+              >
+                <option value="system">{t('language.system')}</option>
+                <option value="zh-CN">{t('language.zhCN')}</option>
+                <option value="en-US">{t('language.enUS')}</option>
+              </select>
+            </section>
+
             <section className="preference-section theme-preference-section">
               <div className="data-location-head">
                 <div>
-                  <strong>界面主题</strong>
-                  <small>主窗口、快速对话和内容组件使用同一套配色。</small>
+                  <strong>{t('settings.theme.title')}</strong>
+                  <small>{t('settings.theme.description')}</small>
                 </div>
-                {goldThemeEntitled && <span>G-LLM 专属主题</span>}
+                {goldThemeEntitled && <span>{t('settings.theme.exclusive')}</span>}
               </div>
 
               <div className="theme-option-list">
@@ -5234,8 +5475,8 @@ function SettingsPanel({
                   />
                   <span className="theme-preview light"><Sun size={19} /></span>
                   <span>
-                    <strong>亮色</strong>
-                    <small>清晰明亮</small>
+                    <strong>{t('settings.theme.light')}</strong>
+                    <small>{t('settings.theme.lightDescription')}</small>
                   </span>
                 </label>
 
@@ -5249,15 +5490,15 @@ function SettingsPanel({
                   />
                   <span className="theme-preview dark"><Moon size={19} /></span>
                   <span>
-                    <strong>暗色</strong>
-                    <small>沉浸克制</small>
+                    <strong>{t('settings.theme.dark')}</strong>
+                    <small>{t('settings.theme.darkDescription')}</small>
                   </span>
                 </label>
 
                 <label
                   aria-disabled={goldThemeEntitlementChecked && !goldThemeEntitled}
                   className={`theme-option gold ${settingsDraft.theme === 'gold' ? 'active' : ''} ${goldThemeEntitlementChecked && !goldThemeEntitled ? 'disabled' : ''}`}
-                  title={goldThemeEntitlementChecked && !goldThemeEntitled ? themeEntitlementStatus : '选择时检测官方 G-LLM 调用占比'}
+                  title={goldThemeEntitlementChecked && !goldThemeEntitled ? themeEntitlementStatus : t('settings.theme.eligibilityHint')}
                   onClick={goldThemeEntitlementChecked && !goldThemeEntitled
                     ? (event) => {
                         event.preventDefault()
@@ -5275,14 +5516,14 @@ function SettingsPanel({
                   />
                   <span className="theme-preview gold"><Crown size={19} /></span>
                   <span>
-                    <strong>金色</strong>
-                    <small>{goldThemeEntitlementChecked && !goldThemeEntitled ? '官方调用占比需超过 50%' : '专业尊享'}</small>
+                    <strong>{t('settings.theme.gold')}</strong>
+                    <small>{goldThemeEntitlementChecked && !goldThemeEntitled ? t('settings.theme.eligibilityRequired') : t('settings.theme.goldDescription')}</small>
                   </span>
                 </label>
               </div>
               {(isCheckingThemeEntitlement || themeEntitlementStatus) && (
                 <small className="theme-entitlement-status">
-                  {isCheckingThemeEntitlement ? '正在统计官方 G-LLM 调用占比...' : themeEntitlementStatus}
+                  {isCheckingThemeEntitlement ? t('settings.theme.checkingEligibility') : themeEntitlementStatus}
                 </small>
               )}
             </section>
@@ -5290,8 +5531,8 @@ function SettingsPanel({
             <section className="preference-section">
               <div className="data-location-head">
                 <div>
-                  <strong>消息发送方式</strong>
-                  <small>用于主窗口和小窗口输入框。中文输入法正在组词时，回车只确认输入，不会发送消息。</small>
+                  <strong>{t('settings.sendShortcut.title')}</strong>
+                  <small>{t('settings.sendShortcut.description')}</small>
                 </div>
                 <span>{getMessageSendShortcutLabel(settingsDraft.messageSendShortcut)}</span>
               </div>
@@ -5306,8 +5547,8 @@ function SettingsPanel({
                     onChange={() => setSettingsDraft({ ...settingsDraft, messageSendShortcut: 'enter' })}
                   />
                   <span>
-                    <strong>按 Enter 发送</strong>
-                    <small>适合短消息和快速问答；需要换行时按 Shift + Enter。</small>
+                    <strong>{t('settings.sendShortcut.enter')}</strong>
+                    <small>{t('settings.sendShortcut.enterDescription')}</small>
                   </span>
                 </label>
 
@@ -5320,8 +5561,8 @@ function SettingsPanel({
                     onChange={() => setSettingsDraft({ ...settingsDraft, messageSendShortcut: 'ctrl-enter' })}
                   />
                   <span>
-                    <strong>按 Ctrl + Enter 发送</strong>
-                    <small>适合长文本编辑；普通 Enter 保留为换行，macOS 也支持 Command + Enter。</small>
+                    <strong>{t('settings.sendShortcut.ctrlEnter')}</strong>
+                    <small>{t('settings.sendShortcut.ctrlEnterDescription')}</small>
                   </span>
                 </label>
               </div>
@@ -5330,11 +5571,11 @@ function SettingsPanel({
             <div className="form-actions settings-panel-actions">
               <button className="secondary-action" onClick={onClose} type="button">
                 <X size={17} />
-                不保存关闭
+                {t('settings.closeWithoutSaving')}
               </button>
               <button className="primary-action" disabled={!configChanged} onClick={saveAll} type="button">
                 <Save size={17} />
-                保存配置
+                {t('settings.saveConfiguration')}
               </button>
             </div>
           </div>
@@ -5345,10 +5586,10 @@ function SettingsPanel({
             <section className="data-location-section">
               <div className="data-location-head">
                 <div>
-                  <strong>数据存储位置</strong>
-                  <small>聊天记录、助手、本地知识库、长期记忆和供应商配置都会保存在用户本地。</small>
+                  <strong>{t('storage.title')}</strong>
+                  <small>{t('storage.description')}</small>
                 </div>
-                <span>{dataLocationInfo?.mode === 'portable' ? '便携版' : '标准版'}</span>
+                <span>{dataLocationInfo?.mode === 'portable' ? t('storage.portable') : t('storage.standard')}</span>
               </div>
 
               {dataLocationInfo ? (
@@ -5356,47 +5597,47 @@ function SettingsPanel({
                   <Database size={19} />
                   <div className="data-location-content">
                     <div className="data-location-row">
-                      <span>当前目录</span>
+                      <span>{t('storage.currentDirectory')}</span>
                       <strong title={dataLocationInfo.effectivePath}>{dataLocationInfo.effectivePath}</strong>
                     </div>
                     <div className="data-location-row">
-                      <span>默认目录</span>
+                      <span>{t('storage.defaultDirectory')}</span>
                       <strong title={dataLocationInfo.defaultPath}>{dataLocationInfo.defaultPath}</strong>
                     </div>
                     {dataLocationInfo.customPath && (
                       <div className="data-location-row">
-                        <span>自定义</span>
+                        <span>{t('storage.customDirectory')}</span>
                         <strong title={dataLocationInfo.customPath}>{dataLocationInfo.customPath}</strong>
                       </div>
                     )}
                     {dataLocationInfo.pendingRestart && (
                       <div className="data-location-pending">
-                        <span>待生效</span>
-                        <strong>数据目录已修改，重启软件后生效。</strong>
+                        <span>{t('storage.pending')}</span>
+                        <strong>{t('storage.pendingDescription')}</strong>
                       </div>
                     )}
                   </div>
                 </div>
               ) : (
-                <div className="data-location-card loading">正在读取数据目录...</div>
+                <div className="data-location-card loading">{t('storage.loading')}</div>
               )}
 
               <div className="data-location-actions">
                 <button onClick={openDataDirectory} type="button">
                   <FolderOpen size={15} />
-                  打开目录
+                  {t('storage.openDirectory')}
                 </button>
                 <button disabled={isChangingDataLocation} onClick={chooseDataDirectory} type="button">
                   <Database size={15} />
-                  更改目录
+                  {t('storage.changeDirectory')}
                 </button>
                 <button disabled={isChangingDataLocation || !dataLocationInfo?.isCustom} onClick={resetDataDirectory} type="button">
                   <RotateCcw size={15} />
-                  恢复默认
+                  {t('storage.restoreDefault')}
                 </button>
                 <button disabled={!(dataLocationInfo?.pendingRestart || dataArchiveNeedsRestart)} onClick={relaunchApp} type="button">
                   <Power size={15} />
-                  重启生效
+                  {t('storage.restartToApply')}
                 </button>
               </div>
               {dataLocationStatus && <p>{dataLocationStatus}</p>}
@@ -5405,19 +5646,19 @@ function SettingsPanel({
             <section className="data-archive-section">
               <div className="data-location-head">
                 <div>
-                  <strong>数据导入导出</strong>
-                  <small>将当前本地数据导出为 ZIP 压缩包，或从 ZIP 压缩包恢复数据。导入前会自动备份当前数据。</small>
+                  <strong>{t('storage.archiveTitle')}</strong>
+                  <small>{t('storage.archiveDescription')}</small>
                 </div>
                 <span>ZIP</span>
               </div>
               <div className="data-archive-actions">
                 <button disabled={isArchivingData} onClick={exportDataArchive} type="button">
                   <Download size={16} />
-                  导出数据
+                  {t('storage.export')}
                 </button>
                 <button disabled={isArchivingData} onClick={importDataArchive} type="button">
                   <Upload size={16} />
-                  导入数据
+                  {t('storage.import')}
                 </button>
               </div>
             </section>
@@ -5425,11 +5666,11 @@ function SettingsPanel({
             <div className="form-actions settings-panel-actions">
               <button className="secondary-action" onClick={onClose} type="button">
                 <X size={17} />
-                不保存关闭
+                {t('settings.closeWithoutSaving')}
               </button>
               <button className="primary-action" disabled={!configChanged} onClick={saveAll} type="button">
                 <Save size={17} />
-                保存配置
+                {t('settings.saveConfiguration')}
               </button>
             </div>
           </div>
@@ -5441,16 +5682,14 @@ function SettingsPanel({
               <div className="about-system-card">
                 <img alt="G-LLM" src={logo} />
                 <div>
-                  <strong>无极界 G-LLM</strong>
-                  <span>本地优先的 AI 助手客户端</span>
+                  <strong>{t('about.productName')}</strong>
+                  <span>{t('about.tagline')}</span>
                 </div>
               </div>
-              <p>
-                无极界 G-LLM 面向企业和个人用户，提供多助手、多会话、模型供应商、本地知识库和长期记忆能力。用户数据默认保存在本机，可按需切换数据目录，便于备份、迁移和私有化使用。
-              </p>
+              <p>{t('about.description')}</p>
               <div className="about-system-meta">
                 <div>
-                  <span>版本</span>
+                  <span>{t('about.version')}</span>
                   <strong>V{appVersion}{appBuildCode ? `(${appBuildCode})` : ''}</strong>
                 </div>
                 <div className="about-update-actions">
@@ -5461,22 +5700,22 @@ function SettingsPanel({
                     type="button"
                   >
                     <RefreshCw className={isCheckingUpdate ? 'spin' : ''} size={15} />
-                    {isCheckingUpdate ? '正在检查...' : '检查新版本'}
+                    {isCheckingUpdate ? t('about.checking') : t('about.checkUpdates')}
                   </button>
                   <button className="about-release-link" onClick={() => void openDownloadPage()} type="button">
                     <ExternalLink size={15} />
-                    下载与更新日志
+                    {t('about.downloadAndChangelog')}
                   </button>
                 </div>
               </div>
               {updateInfo && (
                 <div className={`about-update-result ${updateInfo.status}`} role="status">
                   <strong>{updateInfo.message}</strong>
-                  {updateInfo.updatedAt && <small>发布日期：{updateInfo.updatedAt}</small>}
+                  {updateInfo.updatedAt && <small>{t('about.releaseDate', { date: updateInfo.updatedAt })}</small>}
                   {updateInfo.releaseNotes && <p>{updateInfo.releaseNotes}</p>}
                   {(updateInfo.updateAvailable || updateInfo.status === 'unavailable') && (
                     <button onClick={() => void openDownloadPage()} type="button">
-                      前往官网下载页
+                      {t('about.openDownloadPage')}
                       <ExternalLink size={14} />
                     </button>
                   )}
@@ -5484,25 +5723,25 @@ function SettingsPanel({
               )}
               <div className="about-legal-summary">
                 <div>
-                  <strong>源码与商业使用</strong>
-                  <span>V1.1.0 起允许个人和企业免费内部使用，当前 V1.2.0 将于 2030-07-14 自动转换为 AGPL-3.0-only。</span>
+                  <strong>{t('about.sourceAndCommercial')}</strong>
+                  <span>{t('about.licenseSummary', { version: appVersion })}</span>
                 </div>
                 <div className="about-legal-actions">
                   <button className="about-release-link" onClick={() => void openLegalDocument('license')} type="button">
                     <Scale size={15} />
-                    源码许可证
+                    {t('about.sourceLicense')}
                   </button>
                   <button className="about-release-link" onClick={() => void openLegalDocument('third-party')} type="button">
                     <BookOpen size={15} />
-                    第三方声明
+                    {t('about.thirdParty')}
                   </button>
                   <button className="about-release-link" onClick={() => void openLegalDocument('commercial')} type="button">
                     <Briefcase size={15} />
-                    商业授权
+                    {t('about.commercialLicense')}
                   </button>
                   <button className="about-release-link" onClick={() => void openLegalDocument('trademarks')} type="button">
                     <FileText size={15} />
-                    商标政策
+                    {t('about.trademarkPolicy')}
                   </button>
                 </div>
               </div>
@@ -5511,8 +5750,8 @@ function SettingsPanel({
             <section className="privacy-section">
               <label className="switch-row telemetry-switch">
                 <span>
-                  <strong>匿名使用统计</strong>
-                  <small>默认开启，仅用于统计装机量、活跃度、版本分布和基础功能使用趋势，不上传聊天内容、API Key、附件或本地知识库。</small>
+                  <strong>{t('about.telemetry')}</strong>
+                  <small>{t('about.telemetryDescription')}</small>
                 </span>
                 <input
                   checked={settingsDraft.telemetryEnabled}
@@ -5520,22 +5759,20 @@ function SettingsPanel({
                   onChange={(event) => setSettingsDraft({ ...settingsDraft, telemetryEnabled: event.target.checked })}
                 />
               </label>
-              <p>关闭后，客户端不会继续发送匿名使用统计。已关闭状态会保存在本地设置中。</p>
+              <p>{t('about.telemetryDisabledDescription')}</p>
             </section>
 
             {isWindows && (
               <section className="app-lifecycle-section">
                 <div className="data-location-head">
                   <div>
-                    <strong>应用驻留与退出</strong>
-                    <small>
-                      Windows 下关闭主窗口会隐藏到系统托盘；最小化会显示右下角浮动 Logo。托盘菜单可重新显示悬浮窗，退出请使用这里、托盘菜单或浮动 Logo 右键菜单。
-                    </small>
+                    <strong>{t('about.lifecycle')}</strong>
+                    <small>{t('about.lifecycleDescription')}</small>
                   </div>
                 </div>
                 <button className="danger-action app-quit-button" onClick={quitApp} type="button">
                   <Power size={16} />
-                  退出 G-LLM
+                  {t('about.quit')}
                 </button>
               </section>
             )}
@@ -5543,11 +5780,11 @@ function SettingsPanel({
             <div className="form-actions settings-panel-actions">
               <button className="secondary-action" onClick={onClose} type="button">
                 <X size={17} />
-                不保存关闭
+                {t('settings.closeWithoutSaving')}
               </button>
               <button className="primary-action" disabled={!configChanged} onClick={saveAll} type="button">
                 <Save size={17} />
-                保存配置
+                {t('settings.saveConfiguration')}
               </button>
             </div>
           </div>

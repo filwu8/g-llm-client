@@ -23,6 +23,7 @@ import type {
 import { supportsReasoningEffort } from '../shared/featureFlags'
 import { compressImageToTarget, renderPdfToTarget } from './localFileTasks'
 import { getConversationProjectMemoryContext, prepareConversationContext } from './gllmClient'
+import { mainT } from './i18n'
 
 type AgentMessageContent = string | Array<
   | { type: 'text'; text: string }
@@ -96,17 +97,16 @@ function wait(milliseconds: number, signal?: AbortSignal): Promise<void> {
   })
 }
 
-function friendlyModelStatus(status: number): string {
-  if (status === 429) return '模型服务当前请求较多（429），请稍后重试'
-  if (status === 502) return '模型网关暂时无法连接上游服务（502）'
-  if (status === 503) return '模型服务暂时不可用（503）'
-  if (status === 504) return '模型服务响应超时（504）'
-  if (status >= 500) return `模型服务发生临时故障（${status}）`
-  return `模型请求失败（HTTP ${status}）`
+function friendlyModelStatus(status: number, request: WorkspaceAgentRequest): string {
+  if ([429, 502, 503, 504].includes(status)) {
+    return mainT(`main.workspace.status${status}`, request.settings.language)
+  }
+  if (status >= 500) return mainT('main.workspace.status5xx', request.settings.language, { status })
+  return mainT('main.workspace.statusHttp', request.settings.language, { status })
 }
 
-async function safeResponseError(response: Response): Promise<string> {
-  const fallback = friendlyModelStatus(response.status)
+async function safeResponseError(response: Response, request: WorkspaceAgentRequest): Promise<string> {
+  const fallback = friendlyModelStatus(response.status, request)
   try {
     const contentType = response.headers.get('content-type')?.toLocaleLowerCase() ?? ''
     const body = (await response.text()).trim()
@@ -154,7 +154,7 @@ async function fetchModelWithRetry(
         attempt,
         maxAttempts,
         status: response.status,
-        reason: friendlyModelStatus(response.status)
+        reason: friendlyModelStatus(response.status, request)
       })
       await response.arrayBuffer().catch(() => undefined)
     } catch (error) {
@@ -563,8 +563,8 @@ async function executeTool(
     const targetBytes = Math.max(10_000, Math.min(100 * 1024 * 1024, Number(args.targetBytes) || 2 * 1024 * 1024))
     const minimumBytes = Math.max(0, Math.min(targetBytes, Number(args.minimumBytes) || 0))
     const buffer = name === 'compress_pdf'
-      ? await renderPdfToTarget(source, targetBytes, undefined, minimumBytes)
-      : await compressImageToTarget(source, targetBytes)
+      ? await renderPdfToTarget(source, targetBytes, undefined, minimumBytes, request.settings.language)
+      : await compressImageToTarget(source, targetBytes, request.settings.language)
     await writeFile(output, buffer, { flag: 'wx' })
     const info = await stat(output)
     if (info.size > targetBytes) throw new Error('输出文件仍超过目标大小')
@@ -607,8 +607,12 @@ async function executeTool(
   throw new Error(`不支持的工具：${name}`)
 }
 
-function activityLabel(tool: string): string {
-  return ({ list_directory: '查看目录', inspect_file: '检查文件', read_file: '读取文件', read_document: '读取文档正文', create_docx: '生成 Word 文档', write_file: '写入文件', replace_text: '修改文件', create_directory: '创建目录', move_file: '移动文件', search_files: '搜索文件', compress_image: '压缩图片', compress_pdf: '压缩 PDF', run_javascript: '运行临时脚本', generate_image: '生成图片' } as Record<string, string>)[tool] ?? tool
+function activityLabel(tool: string, request: WorkspaceAgentRequest): string {
+  const knownTools = new Set([
+    'list_directory', 'inspect_file', 'read_file', 'read_document', 'create_docx', 'write_file', 'replace_text',
+    'create_directory', 'move_file', 'search_files', 'compress_image', 'compress_pdf', 'run_javascript', 'generate_image'
+  ])
+  return knownTools.has(tool) ? mainT(`main.workspace.tools.${tool}`, request.settings.language) : tool
 }
 
 function extractJson(value: string): Record<string, unknown> | null {
@@ -682,20 +686,22 @@ async function runWorkspaceAgentUnlocked(
 ): Promise<WorkspaceAgentResult> {
   signal?.throwIfAborted()
   const root = await realpath(request.workspace.rootPath)
+  const language = request.settings.language
+  const isEnglish = mainT('main.locale', language) === 'en-US'
   const activities: WorkspaceToolActivity[] = []
   const changedFiles = new Set<string>()
   const latestUserRequest = request.messages.slice().reverse().find((message) => message.role === 'user')?.content ?? ''
-  const actionRequested = /压缩|生成|创建|新建|修改|改成|替换|重命名|移动|整理|处理|转换|合并|拆分|写入|保存|编写|实现|修复|批量/.test(latestUserRequest)
+  const actionRequested = /压缩|生成|创建|新建|修改|改成|替换|重命名|移动|整理|处理|转换|合并|拆分|写入|保存|编写|实现|修复|批量|compress|generate|create|modify|replace|rename|move|organize|process|convert|merge|split|write|save|implement|fix|batch/i.test(latestUserRequest)
   const conversationContext = prepareConversationContext(request.messages)
   const hasPriorWorkspaceObservation = request.messages.some((message) => (message.workspaceActivities?.length ?? 0) > 0)
-  const latestMentionsWorkspace = /目录|文件夹|工作区|项目|代码库|仓库|文件/.test(latestUserRequest)
+  const latestMentionsWorkspace = /目录|文件夹|工作区|项目|代码库|仓库|文件|directory|folder|workspace|project|codebase|repository|repo|file/i.test(latestUserRequest)
   const shouldObserveWorkspace = !hasPriorWorkspaceObservation || latestMentionsWorkspace || actionRequested
   let workspaceObservation = '本轮沿用同一会话已授权的工作目录；用户最新消息未要求重新检查目录。'
   if (shouldObserveWorkspace) {
     const initialActivity: WorkspaceToolActivity = {
       id: `observe_${randomUUID()}`,
       tool: 'list_directory',
-      label: hasPriorWorkspaceObservation ? '同步工作目录' : '观察工作目录',
+      label: mainT(hasPriorWorkspaceObservation ? 'main.workspace.syncFolder' : 'main.workspace.observeFolder', language),
       status: 'running'
     }
     activities.push(initialActivity)
@@ -703,11 +709,15 @@ async function runWorkspaceAgentUnlocked(
     try {
       const observation = await executeTool(request, root, request.workspace.permission, 'list_directory', { path: '.' }, signal)
       initialActivity.status = 'completed'
-      initialActivity.detail = observation.output.slice(0, 240)
+      initialActivity.detail = isEnglish
+        ? mainT('main.workspace.folderObserved', language)
+        : observation.output.slice(0, 240)
       workspaceObservation = `当前工作目录清单：\n${observation.output}`
     } catch (error) {
       initialActivity.status = 'failed'
-      initialActivity.detail = error instanceof Error ? error.message : '无法读取工作目录'
+      initialActivity.detail = isEnglish
+        ? mainT('main.workspace.readFolderFailed', language)
+        : error instanceof Error ? error.message : mainT('main.workspace.readFolderFailed', language)
       throw error
     } finally {
       onProgress?.({ conversationId: request.conversationId, activity: { ...initialActivity } })
@@ -730,17 +740,20 @@ async function runWorkspaceAgentUnlocked(
     const completionActivity: WorkspaceToolActivity = {
       id: `local_completion_${randomUUID()}`,
       tool: 'local_completion',
-      label: '完成工作区任务',
+      label: mainT('main.workspace.completeTask', language),
       status: 'completed',
       detail: usedLocalFallback
-        ? '文件已生成并验证；最终说明请求未响应，已使用本地结果完成本轮任务'
-        : '文件已生成并验证，已在本地完成结果整理'
+        ? mainT('main.workspace.completeFallbackDetail', language)
+        : mainT('main.workspace.completeDetail', language)
     }
     activities.push(completionActivity)
     onProgress?.({ conversationId: request.conversationId, activity: { ...completionActivity } })
     return {
       conversationId: request.conversationId,
-      content: `文件已经生成并验证完成。\n\n输出文件：\n${completedFiles.map((file) => `- ${file}`).join('\n')}${usedLocalFallback ? '\n\n最终说明请求未响应，但不影响上述文件。' : ''}`,
+      content: mainT('main.workspace.completeContent', language, {
+        files: completedFiles.map((file) => `- ${file}`).join('\n'),
+        fallback: usedLocalFallback ? mainT('main.workspace.completeFallbackNote', language) : ''
+      }),
       activities,
       changedFiles: completedFiles
     }
@@ -761,10 +774,14 @@ async function runWorkspaceAgentUnlocked(
           retryActivity ??= {
             id: `model_retry_${randomUUID()}`,
             tool: 'model_request_retry',
-            label: '自动重试模型请求',
+            label: mainT('main.workspace.retryModel', language),
             status: 'running'
           }
-          retryActivity.detail = `${info.reason}；正在进行第 ${info.attempt + 1}/${info.maxAttempts} 次请求`
+          retryActivity.detail = mainT('main.workspace.retryProgress', language, {
+            reason: info.reason,
+            current: info.attempt + 1,
+            total: info.maxAttempts
+          })
           onProgress?.({ conversationId: request.conversationId, activity: { ...retryActivity } })
         }
         let response = await fetchModelWithRetry(request, body, handleRetry, maxAttempts, signal)
@@ -778,8 +795,8 @@ async function runWorkspaceAgentUnlocked(
         if (retryActivity) {
           retryActivity.status = response.ok ? 'completed' : 'failed'
           retryActivity.detail = response.ok
-            ? `${retryActivity.detail ?? '模型请求已重试'}；连接已恢复`
-            : `${friendlyModelStatus(response.status)}；已达到自动重试上限`
+            ? mainT('main.workspace.retryRecovered', language, { detail: retryActivity.detail ?? mainT('main.workspace.retryModel', language) })
+            : mainT('main.workspace.retryExhausted', language, { status: friendlyModelStatus(response.status, request) })
           activities.push(retryActivity)
           onProgress?.({ conversationId: request.conversationId, activity: { ...retryActivity } })
         }
@@ -787,7 +804,9 @@ async function runWorkspaceAgentUnlocked(
       } catch (error) {
         if (retryActivity) {
           retryActivity.status = 'failed'
-          retryActivity.detail = error instanceof Error ? error.message : '自动重试后仍然失败'
+          retryActivity.detail = isEnglish
+            ? mainT('main.workspace.retryFailed', language)
+            : error instanceof Error ? error.message : mainT('main.workspace.retryFailed', language)
           activities.push(retryActivity)
           onProgress?.({ conversationId: request.conversationId, activity: { ...retryActivity } })
         }
@@ -819,10 +838,10 @@ async function runWorkspaceAgentUnlocked(
           max_tokens: request.settings.enableMaxTokens ? request.settings.maxTokens : 4096
         }, isArtifactSummaryRequest ? 1 : 3)
       }
-      if (!response.ok) throw new Error(`模型请求阶段失败：${await safeResponseError(response)}`)
+      if (!response.ok) throw new Error(mainT('main.workspace.modelStageFailed', language, { error: await safeResponseError(response, request) }))
       const payload = await response.json() as { choices?: Array<{ message?: { content?: string | null; tool_calls?: ToolCall[] } }> }
       const responseMessage = payload.choices?.[0]?.message
-      if (!responseMessage) throw new Error('模型没有返回可用响应')
+      if (!responseMessage) throw new Error(mainT('main.workspace.noModelResponse', language))
       message = responseMessage
     } catch (error) {
       signal?.throwIfAborted()
@@ -833,7 +852,7 @@ async function runWorkspaceAgentUnlocked(
     if (!nativeToolMode && calls.length === 0) {
       const instruction = extractJson(message.content ?? '')
       if (typeof instruction?.final === 'string') {
-        message.content = instruction.final.trim() || '任务已结束。'
+        message.content = instruction.final.trim() || mainT('main.workspace.taskEnded', language)
       }
       if (typeof instruction?.tool === 'string') {
         calls = [{ id: `fallback_${randomUUID()}`, type: 'function', function: { name: instruction.tool, arguments: JSON.stringify(instruction.arguments ?? {}) } }]
@@ -855,10 +874,10 @@ async function runWorkspaceAgentUnlocked(
         })
         continue
       }
-      return { conversationId: request.conversationId, content: message.content?.trim() || '任务已结束。', activities, changedFiles: Array.from(changedFiles) }
+      return { conversationId: request.conversationId, content: message.content?.trim() || mainT('main.workspace.taskEnded', language), activities, changedFiles: Array.from(changedFiles) }
     }
     for (const call of calls.slice(0, 6)) {
-      const activity: WorkspaceToolActivity = { id: call.id || randomUUID(), tool: call.function.name, label: activityLabel(call.function.name), status: 'running' }
+      const activity: WorkspaceToolActivity = { id: call.id || randomUUID(), tool: call.function.name, label: activityLabel(call.function.name, request), status: 'running' }
       activities.push(activity)
       onProgress?.({ conversationId: request.conversationId, activity: { ...activity } })
       try {
@@ -874,19 +893,23 @@ async function runWorkspaceAgentUnlocked(
         }
         if (['inspect_file', 'read_file', 'read_document'].includes(call.function.name) && needsVerification) needsVerification = false
         activity.status = 'completed'
-        activity.detail = result.output.slice(0, 240)
+        activity.detail = isEnglish
+          ? mainT('main.workspace.toolCompleted', language, { tool: activity.label })
+          : result.output.slice(0, 240)
         messages.push({ role: 'tool', tool_call_id: call.id, content: result.output })
       } catch (error) {
         signal?.throwIfAborted()
         activity.status = 'failed'
-        activity.detail = error instanceof Error ? error.message : '工具执行失败'
+        activity.detail = isEnglish
+          ? mainT('main.workspace.toolFailed', language, { tool: activity.label })
+          : error instanceof Error ? error.message : mainT('main.workspace.toolFailed', language, { tool: activity.label })
         messages.push({ role: 'tool', tool_call_id: call.id, content: `错误：${activity.detail}` })
       }
       onProgress?.({ conversationId: request.conversationId, activity: { ...activity } })
     }
     if (changedFiles.size > 0 && !needsVerification) return completeVerifiedArtifacts()
   }
-  return { conversationId: request.conversationId, content: '已达到本次工作区操作的最大步骤数，请检查当前结果后继续。', activities, changedFiles: Array.from(changedFiles) }
+  return { conversationId: request.conversationId, content: mainT('main.workspace.maxSteps', language), activities, changedFiles: Array.from(changedFiles) }
 }
 
 export async function runWorkspaceAgent(
@@ -899,7 +922,10 @@ export async function runWorkspaceAgent(
   const lockKey = process.platform === 'linux' ? root : root.toLocaleLowerCase()
   const owner = workspaceRunLocks.get(lockKey)
   if (owner) {
-    throw new Error(owner === request.conversationId ? '当前会话已有工作区任务正在运行' : '另一个会话正在操作这个工作目录，请等待其完成后再试')
+    throw new Error(mainT(
+      owner === request.conversationId ? 'main.workspace.alreadyRunning' : 'main.workspace.folderBusy',
+      request.settings.language
+    ))
   }
   workspaceRunLocks.set(lockKey, request.conversationId)
   try {

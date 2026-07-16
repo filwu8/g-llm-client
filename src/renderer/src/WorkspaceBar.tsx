@@ -6,6 +6,7 @@
 
 import { CircleCheck, FileText, FolderOpen, LoaderCircle, ShieldCheck, Unplug, XCircle } from 'lucide-react'
 import type { MouseEvent as ReactMouseEvent } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import type { ConversationWorkspace, WorkspaceToolActivity } from '@shared/types'
 
@@ -13,13 +14,14 @@ export function WorkspaceBar({ workspace, onUnbind }: {
   workspace: ConversationWorkspace
   onUnbind: () => void
 }) {
+  const { t } = useTranslation()
   return (
     <section className="workspace-bar">
       <div className="workspace-bar-head">
         <FolderOpen size={14} />
         <div><small title={workspace.rootPath}>{workspace.rootPath}</small></div>
-        <span><ShieldCheck size={13} />{workspace.permission === 'read-write' ? '可读取和修改' : '只读'}</span>
-        <button title="解除当前会话的目录授权" type="button" onClick={onUnbind}><Unplug size={14} /></button>
+        <span><ShieldCheck size={13} />{workspace.permission === 'read-write' ? t('workspace.readWrite') : t('workspace.readOnly')}</span>
+        <button title={t('workspace.unbind')} type="button" onClick={onUnbind}><Unplug size={14} /></button>
       </div>
     </section>
   )
@@ -33,13 +35,14 @@ export function WorkspaceActivityLog({ activities, changedFiles, running = false
   onArtifactOpen?: (rootPath: string, relativePath: string) => void
   onArtifactContextMenu?: (event: ReactMouseEvent, rootPath: string, relativePath: string) => void
 }) {
+  const { t } = useTranslation()
   return (
     <div className="workspace-message-activities">
       <div className="workspace-message-activities-title">
         {running && <LoaderCircle className="spin" size={14} />}
-        <strong>{running ? (activities.length > 0 ? '正在操作工作区' : '正在理解任务') : activities.length > 0 ? '工作区操作记录' : '生成文件'}</strong>
+        <strong>{running ? (activities.length > 0 ? t('workspace.operating') : t('workspace.understanding')) : activities.length > 0 ? t('workspace.activityLog') : t('workspace.generatedFiles')}</strong>
       </div>
-      {activities.length === 0 && running && <small>正在结合当前消息、附件和会话上下文...</small>}
+      {activities.length === 0 && running && <small>{t('workspace.readingContext')}</small>}
       {activities.map((activity) => (
         <div className={`workspace-message-activity ${activity.status}`} key={activity.id} title={activity.detail}>
           {activity.status === 'running' ? <LoaderCircle className="spin" size={14} /> : activity.status === 'completed' ? <CircleCheck size={14} /> : <XCircle size={14} />}
@@ -49,7 +52,7 @@ export function WorkspaceActivityLog({ activities, changedFiles, running = false
       ))}
       {changedFiles && changedFiles.length > 0 && (
         <div className="workspace-changed-files">
-          <span>生成或修改的文件</span>
+          <span>{t('workspace.changedFiles')}</span>
           <div>
             {changedFiles.map((file) => {
               const separator = artifactRoot?.includes('\\') ? '\\' : '/'
@@ -57,7 +60,7 @@ export function WorkspaceActivityLog({ activities, changedFiles, running = false
               return (
               <button
                 key={file}
-                title={`${fullPath}\n点击可在系统文件管理器中显示`}
+                title={`${fullPath}\n${t('workspace.revealHint')}`}
                 type="button"
                 onClick={() => {
                   if (artifactRoot && onArtifactOpen) onArtifactOpen(artifactRoot, file)

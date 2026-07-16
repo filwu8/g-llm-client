@@ -23,6 +23,7 @@ import type {
   WebSearchActivity,
   WebSearchResult
 } from '../shared/types'
+import type { AppLanguage } from '../shared/i18n'
 import {
   sanitizeAssistantSystemPrompt,
   universalAssistantPolicy,
@@ -35,6 +36,7 @@ import {
 } from '../shared/modelCapabilities'
 import { supportsReasoningEffort } from '../shared/featureFlags'
 import { saveGeneratedImageResource } from './storage'
+import { mainT } from './i18n'
 
 interface ChatStreamEvent {
   content?: string
@@ -446,9 +448,9 @@ function buildProviderUrl(provider: ApiProvider, fallbackPath: string): string {
   return `${provider.apiBaseUrl.replace(/\/$/, '')}${path}`
 }
 
-function assertProviderReady(provider: ApiProvider): void {
+function assertProviderReady(provider: ApiProvider, language: AppLanguage = 'system'): void {
   if (provider.requiresApiKey && !provider.apiKey.trim()) {
-    throw new Error(`请先为「${provider.name}」填写 API Key`)
+    throw new Error(mainT('main.provider.apiKeyRequired', language, { provider: provider.name }))
   }
 }
 
@@ -692,33 +694,33 @@ async function generateImageMessage(request: ChatRequest, signal?: AbortSignal):
   return formatGeneratedImageResponse(prompt, payload, signal)
 }
 
-function fallbackAssistantSuggestion(keyword: string): AssistantSuggestion {
-  const normalizedKeyword = keyword.trim() || '专业助手'
-  const isMedical = /医生|医疗|健康|兽医|宠物|猫|狗/.test(normalizedKeyword)
-  const isBusiness = /运营|经营|商业|销售|增长|财务|分析/.test(normalizedKeyword)
-  const isWriting = /写作|文案|小红书|公众号|短视频|营销/.test(normalizedKeyword)
+function fallbackAssistantSuggestion(keyword: string, language: AppLanguage = 'system'): AssistantSuggestion {
+  const normalizedKeyword = keyword.trim() || mainT('main.assistant.defaultName', language)
+  const isMedical = /医生|医疗|健康|兽医|宠物|猫|狗|doctor|medical|health|vet|pet/i.test(normalizedKeyword)
+  const isBusiness = /运营|经营|商业|销售|增长|财务|分析|business|sales|growth|finance|analyst/i.test(normalizedKeyword)
+  const isWriting = /写作|文案|小红书|公众号|短视频|营销|writer|copy|content|marketing|video/i.test(normalizedKeyword)
   const icon = isMedical ? 'brain' : isBusiness ? 'chart' : isWriting ? 'pen' : 'sparkles'
   const color = isMedical ? 'green' : isBusiness ? 'rose' : isWriting ? 'violet' : 'ink'
 
   return {
     name: normalizedKeyword,
-    title: `${normalizedKeyword}场景助手`,
-    tone: isMedical ? '谨慎、清晰、负责任' : isBusiness ? '结构化、重判断' : '清晰、专业',
+    title: mainT('main.assistant.fallbackTitle', language, { keyword: normalizedKeyword }),
+    tone: mainT(isMedical ? 'main.assistant.medicalTone' : isBusiness ? 'main.assistant.businessTone' : 'main.assistant.defaultTone', language),
     color,
     icon,
     systemPrompt: sanitizeAssistantSystemPrompt(
-      `你是无极界 G-LLM 的「${normalizedKeyword}」助手。先澄清场景目标，再给出结论、依据和下一步动作三段式回答。回答要清晰、可执行、可验证；涉及高风险事项时必须先说明局限，并建议用户咨询专业人士或核实权威信息。必要时主动给出可执行清单和验收标准。`
+      mainT('main.assistant.fallbackSystemPrompt', language, { keyword: normalizedKeyword })
     ),
     starterPrompts: [
-      `帮我分析一个${normalizedKeyword}相关问题`,
-      `给我一份${normalizedKeyword}的处理建议`,
-      `把下面内容整理成${normalizedKeyword}工作方案`
+      mainT('main.assistant.starterAnalyze', language, { keyword: normalizedKeyword }),
+      mainT('main.assistant.starterAdvice', language, { keyword: normalizedKeyword }),
+      mainT('main.assistant.starterPlan', language, { keyword: normalizedKeyword })
     ]
   }
 }
 
-function sanitizeAssistantSuggestion(keyword: string, value: Partial<AssistantSuggestion>): AssistantSuggestion {
-  const fallback = fallbackAssistantSuggestion(keyword)
+function sanitizeAssistantSuggestion(keyword: string, value: Partial<AssistantSuggestion>, language: AppLanguage): AssistantSuggestion {
+  const fallback = fallbackAssistantSuggestion(keyword, language)
   const starterPrompts = Array.isArray(value.starterPrompts)
     ? value.starterPrompts.map((prompt) => String(prompt).trim()).filter(Boolean).slice(0, 6)
     : []
@@ -1431,10 +1433,11 @@ function formatWebContext(results: WebSearchResult[]): string {
 
 export async function generateAssistantSuggestion(request: AssistantSuggestionRequest): Promise<AssistantSuggestion> {
   const keyword = request.keyword.trim()
-  if (!keyword) return fallbackAssistantSuggestion('专业助手')
+  const language = request.settings.language
+  if (!keyword) return fallbackAssistantSuggestion('', language)
 
   if (request.provider.requiresApiKey && !request.provider.apiKey.trim()) {
-    return fallbackAssistantSuggestion(keyword)
+    return fallbackAssistantSuggestion(keyword, language)
   }
 
   const endpoint = buildProviderUrl(request.provider, request.provider.chatCompletionsPath ?? '/chat/completions')
@@ -1446,22 +1449,21 @@ export async function generateAssistantSuggestion(request: AssistantSuggestionRe
       messages: [
         {
           role: 'system',
-          content:
-            '你是 AI 助手配置专家。根据用户输入的角色关键词，生成一个适合桌面 AI 客户端使用的助手配置。先把角色边界、输出约束、风险边界写进 systemPrompt。只返回 JSON，不要 Markdown。'
+          content: `You design assistant configurations for a desktop AI client. Generate all human-facing fields in ${mainT('main.assistant.outputLanguage', language)}. Put role boundaries, output constraints, and risk boundaries in systemPrompt. The assistant must respond in the user's current language unless explicitly asked otherwise. Return JSON only, without Markdown.`
         },
         {
           role: 'user',
-          content: `关键词：${keyword}
+          content: `Role keyword: ${keyword}
 
-请返回 JSON，字段必须是：
+Return this JSON structure:
 {
-  "name": "助手名称，2-8 个中文字符为佳",
-  "title": "一句话用途说明，最多 18 个中文字符",
-  "tone": "语气标签，最多 12 个中文字符",
-  "color": "ink|green|amber|blue|rose|teal|violet|slate 之一",
-  "icon": "sparkles|file|scale|code|chart|graduation|brain|briefcase|pen 之一",
-  "systemPrompt": "完整系统提示词。要说明角色、边界、工作方式、输出风格。如果是医疗/法律/金融等高风险场景，必须提示非专业替代并建议咨询专业人士。",
-  "starterPrompts": ["3-5 个用户可直接点击的开场问题"]
+  "name": "concise assistant name",
+  "title": "one-sentence purpose",
+  "tone": "short tone label",
+  "color": "one of ink|green|amber|blue|rose|teal|violet|slate",
+  "icon": "one of sparkles|file|scale|code|chart|graduation|brain|briefcase|pen",
+  "systemPrompt": "complete instructions covering role, boundaries, workflow, and output style; high-risk medical, legal, or financial roles must state that they do not replace a qualified professional",
+  "starterPrompts": ["3-5 ready-to-use opening questions"]
 }`
         }
       ],
@@ -1470,12 +1472,12 @@ export async function generateAssistantSuggestion(request: AssistantSuggestionRe
     })
   })
 
-  if (!response.ok) return fallbackAssistantSuggestion(keyword)
+  if (!response.ok) return fallbackAssistantSuggestion(keyword, language)
 
   const payload = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> }
   const content = payload.choices?.[0]?.message?.content ?? ''
   const parsed = extractJsonObject(content)
-  return sanitizeAssistantSuggestion(keyword, parsed ?? fallbackAssistantSuggestion(keyword))
+  return sanitizeAssistantSuggestion(keyword, parsed ?? fallbackAssistantSuggestion(keyword, language), language)
 }
 
 export async function searchConversations(
@@ -1518,11 +1520,11 @@ export async function searchConversations(
           {
             role: 'system',
             content:
-              '你是桌面 AI 客户端的历史会话语义检索器。理解用户描述的主题、任务、结论、人物和近义表达，不要求关键词完全一致。只能从候选列表选择真实 id，按相关度降序返回 JSON，不要 Markdown。若没有相关候选，返回空 matches。reason 用不超过 24 个中文字符说明匹配原因。'
+              'You rank conversation history for semantic search. Understand topics, tasks, conclusions, people, and synonyms without requiring exact keywords. Select only real ids from the candidate list, sort by relevance, and return JSON only. Return an empty matches array when nothing is relevant. Write each short reason in the same language as the search query.'
           },
           {
             role: 'user',
-            content: `搜索描述：${query}\n\n候选会话：\n${JSON.stringify(catalog)}\n\n最多返回 ${limit} 条，格式：\n{"matches":[{"id":"候选中的 id","score":0-100,"reason":"匹配原因"}]}`
+            content: `Search query: ${query}\n\nCandidate conversations:\n${JSON.stringify(catalog)}\n\nReturn at most ${limit} matches in this format:\n{"matches":[{"id":"candidate id","score":0-100,"reason":"short reason"}]}`
           }
         ],
         temperature: 0.1,
@@ -1570,8 +1572,8 @@ export async function searchConversations(
   return { mode: 'local', results: localResults, searchedCount }
 }
 
-export async function fetchProviderModels(provider: ApiProvider): Promise<ProviderModel[]> {
-  assertProviderReady(provider)
+export async function fetchProviderModels(provider: ApiProvider, language: AppLanguage = 'system'): Promise<ProviderModel[]> {
+  assertProviderReady(provider, language)
 
   const endpoint = buildProviderUrl(provider, provider.modelsPath ?? '/models')
   const response = await fetch(endpoint, {
@@ -1581,23 +1583,23 @@ export async function fetchProviderModels(provider: ApiProvider): Promise<Provid
 
   if (!response.ok) {
     const detail = await response.text().catch(() => '')
-    throw new Error(`${provider.name} 模型列表请求失败：${response.status} ${detail}`.trim())
+    throw new Error(mainT('main.provider.modelsRequestFailed', language, { provider: provider.name, status: response.status, detail }).trim())
   }
 
   const models = parseProviderModels(await response.json())
   if (models.length === 0) {
-    throw new Error(`${provider.name} 没有返回可用模型`)
+    throw new Error(mainT('main.provider.noModels', language, { provider: provider.name }))
   }
 
   return models
 }
 
-export async function checkProviderConnection(provider: ApiProvider): Promise<ProviderCheckResult> {
+export async function checkProviderConnection(provider: ApiProvider, language: AppLanguage = 'system'): Promise<ProviderCheckResult> {
   try {
-    const models = await fetchProviderModels(provider)
+    const models = await fetchProviderModels(provider, language)
     return {
       ok: true,
-      message: `连接成功，发现 ${models.length} 个模型`,
+      message: mainT('main.provider.connected', language, { count: models.length }),
       models
     }
   } catch (error) {
@@ -1609,7 +1611,7 @@ export async function checkProviderConnection(provider: ApiProvider): Promise<Pr
 }
 
 export async function* streamGllmChat(request: ChatRequest, signal?: AbortSignal): AsyncGenerator<ChatStreamEvent> {
-  assertProviderReady(request.provider)
+  assertProviderReady(request.provider, request.settings.language)
   signal?.throwIfAborted()
 
   if (request.purpose !== 'translation' && shouldUseImageGenerationEndpoint(request.provider)) {

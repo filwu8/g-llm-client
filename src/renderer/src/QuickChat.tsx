@@ -30,6 +30,7 @@ import {
   useRef,
   useState
 } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import logo from './assets/gllm-logo.png'
 import { ChatErrorRetry } from './ChatErrorRetry'
@@ -47,6 +48,8 @@ import {
   resizeComposerTextarea
 } from './composerInput'
 import { getMessageSendShortcutLabel, shouldSendMessageFromKeyboard } from './keyboard'
+import { applyRendererLanguage } from './i18n'
+import { localizeAssistant } from './localizedContent'
 import { MarkdownMessage } from './MarkdownMessage'
 import { getModelOptions, ModelPickerMenu } from './ModelPicker'
 import { applyDocumentTheme } from './theme'
@@ -98,16 +101,6 @@ function getKnowledgeReferenceText(knowledgeRefs: KnowledgeReference[] = []): st
   return knowledgeRefs.map((reference) => `${reference.title}\n${reference.content}`).join('\n\n')
 }
 
-function getQuoteReferenceTitle(content: string): string {
-  const firstLine =
-    content
-      .split('\n')
-      .map((line) => line.trim())
-      .find(Boolean) ?? '引用内容'
-  const collapsed = firstLine.replace(/\s+/g, ' ')
-  return `引用内容：${collapsed.length > 22 ? `${collapsed.slice(0, 22)}...` : collapsed}`
-}
-
 function createMessage(
   role: ChatMessage['role'],
   content: string,
@@ -132,7 +125,7 @@ function createMessage(
   }
 }
 
-function createQuickConversation(assistant: Assistant, title = '快速对话'): Conversation {
+function createQuickConversation(assistant: Assistant, title: string): Conversation {
   const now = Date.now()
 
   return {
@@ -203,6 +196,7 @@ function getQuickModelId(conversation: Conversation | null, assistant: Assistant
 }
 
 export default function QuickChat() {
+  const { t, i18n } = useTranslation()
   const isWindows = window.gllm.platform === 'win32'
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const [providers, setProviders] = useState<ApiProvider[]>([DEFAULT_PROVIDER])
@@ -229,6 +223,10 @@ export default function QuickChat() {
   const conversationRef = useRef<Conversation | null>(null)
 
   const assistant = useMemo(() => getAssistantById(activeAssistantId, assistants), [activeAssistantId, assistants])
+  const assistantDisplay = useMemo(
+    () => localizeAssistant(assistant),
+    [assistant, i18n.resolvedLanguage]
+  )
   const assistantMemories = useMemo(
     () => memories.filter((memory) => memory.assistantId === assistant.id && memory.enabled),
     [assistant.id, memories]
@@ -257,7 +255,8 @@ export default function QuickChat() {
   useEffect(() => {
     void Promise.all([window.gllm.getState(), window.gllm.getActiveAssistantId()]).then(([state, activeId]) => {
       const loadedProviders = state.providers.length > 0 ? state.providers : [DEFAULT_PROVIDER]
-      const loadedAssistants = state.assistants.length > 0 ? state.assistants : DEFAULT_ASSISTANTS
+      const visibleStateAssistants = state.assistants.filter((assistant) => !assistant.hidden)
+      const loadedAssistants = visibleStateAssistants.length > 0 ? visibleStateAssistants : DEFAULT_ASSISTANTS
       const quickAssistant = getAssistantById(activeId, loadedAssistants)
 
       setSettings(state.settings)
@@ -280,6 +279,10 @@ export default function QuickChat() {
   useEffect(() => {
     if (settings) applyDocumentTheme(settings.theme, true)
   }, [settings?.theme])
+
+  useEffect(() => {
+    if (settings) applyRendererLanguage(settings.language)
+  }, [settings?.language])
 
   useEffect(() => {
     return window.gllm.onSettingsChanged((nextSettings) => {
@@ -473,9 +476,9 @@ export default function QuickChat() {
       const picked = await window.gllm.pickAttachments(kind)
       if (picked.length === 0) return
       setPendingAttachments((current) => [...current, ...picked].slice(0, 8))
-      setStatus(`已添加 ${picked.length} 个附件`)
+      setStatus(t('quickChat.attachmentsAdded', { count: picked.length }))
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : '选择附件失败')
+      setStatus(error instanceof Error ? error.message : t('quickChat.attachmentPickFailed'))
     } finally {
       setIsPickingAttachment(false)
     }
@@ -485,16 +488,16 @@ export default function QuickChat() {
     if (isPickingAttachment) return
     setIsPickingAttachment(true)
     try {
-      setStatus('请选择截图区域')
+      setStatus(t('quickChat.selectScreenshotArea'))
       const screenshot = await window.gllm.captureScreenshot()
       if (!screenshot) {
-        setStatus('未检测到新的截图')
+        setStatus(t('quickChat.noScreenshot'))
         return
       }
       setPendingAttachments((current) => [...current, screenshot].slice(0, 8))
-      setStatus('截图已添加')
+      setStatus(t('quickChat.screenshotAdded'))
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : '截图失败')
+      setStatus(error instanceof Error ? error.message : t('quickChat.screenshotFailed'))
     } finally {
       setIsPickingAttachment(false)
     }
@@ -512,14 +515,14 @@ export default function QuickChat() {
     setIsPickingAttachment(true)
     try {
       const inputs = await Promise.all(files.map(async (file, index) => ({
-        name: file.name || `粘贴附件_${index + 1}`,
+        name: file.name || t('quickChat.pastedAttachmentName', { index: index + 1 }),
         mimeType: file.type || 'application/octet-stream',
         size: file.size,
         kind: file.type.startsWith('image/') ? 'image' as const : 'file' as const,
         dataUrl: file.size <= 12 * 1024 * 1024
           ? await new Promise<string>((resolve, reject) => {
               const reader = new FileReader()
-              reader.onerror = () => reject(reader.error ?? new Error('读取剪贴板附件失败'))
+              reader.onerror = () => reject(reader.error ?? new Error(t('quickChat.clipboardReadFailed')))
               reader.onload = () => resolve(String(reader.result ?? ''))
               reader.readAsDataURL(file)
             })
@@ -527,9 +530,9 @@ export default function QuickChat() {
       })))
       const prepared = await window.gllm.preparePastedAttachments(inputs)
       setPendingAttachments((current) => [...current, ...prepared].slice(0, 8))
-      if (prepared.length > 0) setStatus(`已从剪贴板添加 ${prepared.length} 个附件`)
+      if (prepared.length > 0) setStatus(t('quickChat.clipboardAttachmentsAdded', { count: prepared.length }))
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : '粘贴附件失败')
+      setStatus(error instanceof Error ? error.message : t('quickChat.clipboardAttachmentFailed'))
     } finally {
       setIsPickingAttachment(false)
     }
@@ -572,7 +575,7 @@ export default function QuickChat() {
     if (!settings || isStreaming || !conversation) return
 
     if (needsApiKey) {
-      setStatus(`请先在主窗口配置 ${selectedProvider.name} API Key`)
+      setStatus(t('quickChat.configureProviderApiKey', { provider: selectedProvider.name }))
       void openMainWindow()
       return
     }
@@ -614,7 +617,7 @@ export default function QuickChat() {
     if (!settings || isStreaming) return
 
     if (needsApiKey) {
-      setStatus(`请先在主窗口配置 ${selectedProvider.name} API Key`)
+      setStatus(t('quickChat.configureProviderApiKey', { provider: selectedProvider.name }))
       void openMainWindow()
       return
     }
@@ -622,16 +625,21 @@ export default function QuickChat() {
     const text = content.trim()
     if (!text && pendingQuoteRefs.length === 0 && pendingAttachments.length === 0) return
     const messageText = text || (pendingQuoteRefs.length > 0
-      ? '请结合我引用的对话内容回答。'
+      ? t('quickChat.answerWithQuote')
       : pendingAttachments.some((attachment) => attachment.kind === 'image')
-        ? '请分析我上传的图片。'
-        : '请分析我上传的附件。')
+        ? t('quickChat.analyzeImage')
+        : t('quickChat.analyzeAttachment'))
 
-    const baseConversation = conversation ?? createQuickConversation(assistant, `快速对话：${messageText.slice(0, 18)}`)
+    const baseConversation = conversation ?? createQuickConversation(
+      assistant,
+      t('quickChat.conversationTitle', { text: messageText.slice(0, 18) })
+    )
     const userMessage = createMessage('user', messageText, pendingAttachments, pendingQuoteRefs)
     const nextConversation: Conversation = {
       ...baseConversation,
-      title: baseConversation.messages.length === 0 ? `快速对话：${messageText.slice(0, 18)}` : baseConversation.title,
+      title: baseConversation.messages.length === 0
+        ? t('quickChat.conversationTitle', { text: messageText.slice(0, 18) })
+        : baseConversation.title,
       messages: [...baseConversation.messages, userMessage],
       modelProviderId: selectedProvider.id,
       modelId: selectedProvider.defaultModel,
@@ -702,9 +710,9 @@ export default function QuickChat() {
       } else {
         await writePlainTextToClipboard(selectionMenu.text)
       }
-      setStatus(selectionMenu.source === 'selection' ? '已复制选中富文本' : '已复制消息 Markdown')
+      setStatus(selectionMenu.source === 'selection' ? t('quickChat.copiedSelection') : t('quickChat.copiedMessage'))
     } catch {
-      setStatus('复制失败，请手动选择文本复制')
+      setStatus(t('quickChat.copyFailed'))
     } finally {
       setSelectionMenu(null)
     }
@@ -718,7 +726,7 @@ export default function QuickChat() {
       ...current,
       {
         id: `${quoteReferencePrefix}${createId('quick_quote')}`,
-        title: getQuoteReferenceTitle(trimmed),
+        title: t('quickChat.quoteTitle', { text: trimmed.length > 22 ? `${trimmed.slice(0, 22)}...` : trimmed }),
         content: trimmed
       }
     ].slice(-4))
@@ -733,7 +741,7 @@ export default function QuickChat() {
     if (!selectionMenu) return
 
     addQuoteReference(selectionMenu.text)
-    setStatus(selectionMenu.source === 'selection' ? '已添加选中引用，发送时会作为上下文' : '已添加消息引用，发送时会作为上下文')
+    setStatus(selectionMenu.source === 'selection' ? t('quickChat.quotedSelection') : t('quickChat.quotedMessage'))
     setSelectionMenu(null)
   }
 
@@ -743,23 +751,23 @@ export default function QuickChat() {
         <div className="quick-brand">
           <img src={logo} alt="G-LLM" />
           <div>
-            <strong>{assistant.name}</strong>
-            <span>{assistant.title} · {selectedProvider.name} · {selectedProvider.defaultModel}</span>
+            <strong>{assistantDisplay.name}</strong>
+            <span>{assistantDisplay.title} · {selectedProvider.name} · {selectedProvider.defaultModel}</span>
           </div>
         </div>
         <div className="quick-actions">
-          <button title="新建快速对话" type="button" onClick={startNewQuickChat}>
+          <button title={t('quickChat.new')} type="button" onClick={startNewQuickChat}>
             <MessageSquarePlus size={17} />
           </button>
           <button
-            aria-label={isWindows ? '最小化快速对话' : '关闭快速对话'}
-            title={isWindows ? '最小化' : '关闭'}
+            aria-label={isWindows ? t('quickChat.minimizeAria') : t('quickChat.closeAria')}
+            title={isWindows ? t('quickChat.minimize') : t('common.close')}
             type="button"
             onClick={() => void window.gllm.hideQuickPanel()}
           >
             {isWindows ? <Minus size={18} /> : <X size={18} />}
           </button>
-          <button title="打开完整窗口" type="button" onClick={() => void openMainWindow()}>
+          <button title={t('quickChat.openMain')} type="button" onClick={() => void openMainWindow()}>
             <ExternalLink size={17} />
           </button>
         </div>
@@ -768,10 +776,10 @@ export default function QuickChat() {
       <main className="quick-content" ref={messagesRef} onScroll={updateMessageScrollState} onWheel={handleMessageWheel}>
         {messages.length === 0 ? (
           <section className="quick-empty">
-            <p><span>你好</span></p>
-            <h1>{assistant.name}可以帮你做什么？</h1>
+            <p><span>{t('quickChat.greeting')}</span></p>
+            <h1>{t('quickChat.prompt', { assistant: assistantDisplay.name })}</h1>
             <div className="quick-starters">
-              {assistant.starterPrompts.map((prompt) => (
+              {assistantDisplay.starterPrompts.map((prompt) => (
                 <button key={prompt} type="button" onClick={() => sendMessage(prompt)}>
                   {prompt}
                 </button>
@@ -787,7 +795,7 @@ export default function QuickChat() {
               onContextMenu={(event) => openSelectionContextMenu(event, message)}
             >
               <div className="quick-message-bubble">
-                <MarkdownMessage content={message.content || (message.role === 'assistant' ? '正在思考...' : '')} />
+                <MarkdownMessage content={message.content || (message.role === 'assistant' ? t('app.thinking') : '')} />
                 {message.attachments && message.attachments.length > 0 && (
                   <div className="message-attachments quick-message-attachments">
                     {message.attachments.map((attachment) => (
@@ -830,7 +838,7 @@ export default function QuickChat() {
       {messages.length > 0 && !isNearMessageBottom && (
         <button className="quick-scroll-latest-button" type="button" onClick={() => scrollToLatest('smooth')}>
           <ArrowDown size={15} />
-          <span>{isStreaming ? 'AI 正在回复' : '回到底部'}</span>
+          <span>{isStreaming ? t('app.aiResponding') : t('app.scrollLatest')}</span>
         </button>
       )}
 
@@ -843,11 +851,11 @@ export default function QuickChat() {
         >
           <button type="button" onClick={() => void copySelectionMenuText()}>
             <Copy size={15} />
-            复制
+            {t('common.copy')}
           </button>
           <button type="button" onClick={quoteSelectionMenuText}>
             <AtSign size={15} />
-            引用
+            {t('common.quote')}
           </button>
         </div>
       )}
@@ -877,7 +885,7 @@ export default function QuickChat() {
                     <AtSign size={14} />
                     <span>{reference.title}</span>
                   </span>
-                  <button onClick={() => removePendingQuoteRef(reference.id)} title="移除引用" type="button">
+                  <button onClick={() => removePendingQuoteRef(reference.id)} title={t('app.removeQuote')} type="button">
                     <X size={13} />
                   </button>
                 </div>
@@ -902,7 +910,7 @@ export default function QuickChat() {
                   <Paperclip size={14} />
                 )}
                 <span>{attachment.name}</span>
-                <button onClick={() => removePendingAttachment(attachment.id)} title="移除附件" type="button">
+                <button onClick={() => removePendingAttachment(attachment.id)} title={t('app.removeAttachment')} type="button">
                   <X size={13} />
                 </button>
               </span>
@@ -914,35 +922,35 @@ export default function QuickChat() {
             <button
               className={pendingAttachments.length > 0 ? 'active' : ''}
               disabled={isPickingAttachment}
-              title="上传附件"
+              title={t('app.uploadAttachment')}
               type="button"
               onClick={() => void pickQuickAttachments('file')}
             >
               <Paperclip size={16} />
             </button>
-            <button disabled={isPickingAttachment} title="截图" type="button" onClick={() => void captureQuickScreenshot()}>
+            <button disabled={isPickingAttachment} title={t('app.captureScreenshot')} type="button" onClick={() => void captureQuickScreenshot()}>
               <ImagePlus size={16} />
             </button>
-            <button title="工作文件夹（在完整窗口中打开）" type="button" onClick={() => void openMainWindow()}>
+            <button title={t('quickChat.workspace')} type="button" onClick={() => void openMainWindow()}>
               <FolderOpen size={16} />
             </button>
-            <button title="知识库（在完整窗口中打开）" type="button" onClick={() => void openMainWindow()}>
+            <button title={t('quickChat.knowledge')} type="button" onClick={() => void openMainWindow()}>
               <BookOpen size={16} />
             </button>
             <button
               className={webSearchEnabled ? 'active' : ''}
-              title={webSearchEnabled ? '关闭联网搜索' : '开启联网搜索'}
+              title={webSearchEnabled ? t('app.disableWebSearch') : t('app.enableWebSearch')}
               type="button"
               onClick={() => {
                 setWebSearchEnabled((enabled) => {
-                  setStatus(enabled ? '已关闭联网搜索' : '已开启联网搜索')
+                  setStatus(enabled ? t('app.webSearchDisabled') : t('app.webSearchEnabled'))
                   return !enabled
                 })
               }}
             >
               <Globe2 size={16} />
             </button>
-            <button title="扩展工具（在完整窗口中打开）" type="button" onClick={() => void openMainWindow()}>
+            <button title={t('quickChat.tools')} type="button" onClick={() => void openMainWindow()}>
               <Wrench size={16} />
             </button>
           </div>
@@ -952,7 +960,7 @@ export default function QuickChat() {
           value={draft}
           disabled={!settings}
           rows={1}
-          placeholder={needsApiKey ? '请先配置 API Key' : '输入消息'}
+          placeholder={needsApiKey ? t('app.configureApiKey') : t('app.inputPlaceholder')}
           onChange={(event) => setDraft(event.target.value)}
           onPaste={(event) => void handleQuickPaste(event)}
           onKeyDown={handleDraftKeyDown}
@@ -975,7 +983,7 @@ export default function QuickChat() {
             className={`quick-send-button${isStreaming ? ' stop' : ''}`}
             disabled={!settings || (!isStreaming && !draft.trim() && pendingQuoteRefs.length === 0 && pendingAttachments.length === 0)}
             onClick={isStreaming ? stopGenerating : undefined}
-            title={isStreaming ? '停止生成' : `发送（${messageSendShortcutLabel}）`}
+            title={isStreaming ? t('app.stopGenerating') : t('app.send', { shortcut: messageSendShortcutLabel })}
             type={isStreaming ? 'button' : 'submit'}
           >
             {isStreaming ? <Square size={14} fill="currentColor" /> : <ArrowUp size={18} />}

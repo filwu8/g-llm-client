@@ -6,6 +6,7 @@
 
 import { RefreshCw } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 interface ChatErrorRetryProps {
   error: string
@@ -15,6 +16,7 @@ interface ChatErrorRetryProps {
 }
 
 export function ChatErrorRetry({ error, retryAt, disabled, onRetry }: ChatErrorRetryProps) {
+  const { t } = useTranslation()
   const [remainingSeconds, setRemainingSeconds] = useState(() =>
     retryAt ? Math.max(0, Math.ceil((retryAt - Date.now()) / 1000)) : 0
   )
@@ -41,15 +43,15 @@ export function ChatErrorRetry({ error, retryAt, disabled, onRetry }: ChatErrorR
     <div className="message-error-actions">
       {retryAt && remainingSeconds > 0 && (
         <p className="message-retry-countdown" aria-live="polite">
-          将在 {remainingSeconds} 秒后自动重试
+          {t('errors.autoRetry', { seconds: remainingSeconds })}
         </p>
       )}
       <button className="message-retry-button" disabled={disabled} type="button" onClick={onRetry}>
         <RefreshCw size={15} />
-        <span>{retryAt ? '立即重试' : '重新发送'}</span>
+        <span>{retryAt ? t('errors.retryNow') : t('errors.resend')}</span>
       </button>
       <details className="message-error-detail">
-        <summary>开发错误详情</summary>
+        <summary>{t('errors.technicalDetails')}</summary>
         <pre>{error}</pre>
       </details>
     </div>

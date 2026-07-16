@@ -11,7 +11,9 @@ import mammoth from 'mammoth'
 import { readFile, stat } from 'node:fs/promises'
 import { basename, extname } from 'node:path'
 
+import type { AppLanguage } from '../shared/i18n'
 import type { AttachmentKind, ClipboardAttachmentInput, PreparedAttachment } from '../shared/types'
+import { mainT } from './i18n'
 
 const maxTextBytes = 2 * 1024 * 1024
 const maxDocumentBytes = 12 * 1024 * 1024
@@ -363,16 +365,20 @@ async function prepareClipboardAttachment(input: ClipboardAttachmentInput, index
   return base
 }
 
-export async function pickAttachments(owner: BrowserWindow | null, kind: AttachmentKind): Promise<PreparedAttachment[]> {
+export async function pickAttachments(
+  owner: BrowserWindow | null,
+  kind: AttachmentKind,
+  language: AppLanguage
+): Promise<PreparedAttachment[]> {
   const options: Electron.OpenDialogOptions = {
-    title: kind === 'image' ? '选择图片' : '选择附件',
+    title: mainT(kind === 'image' ? 'native.chooseImage' : 'native.chooseAttachment', language),
     properties: ['openFile', 'multiSelections'],
     filters:
       kind === 'image'
-        ? [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] }]
+        ? [{ name: mainT('native.images', language), extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] }]
         : [
             {
-              name: '文档、图片与常用文本',
+              name: mainT('native.documentsImagesText', language),
               extensions: [
                 'pdf',
                 'docx',
@@ -384,7 +390,7 @@ export async function pickAttachments(owner: BrowserWindow | null, kind: Attachm
                 ...Array.from(textExtensions).map((extension) => extension.slice(1))
               ]
             },
-            { name: '所有文件', extensions: ['*'] }
+            { name: mainT('native.allFiles', language), extensions: ['*'] }
           ]
   }
   const result = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options)
