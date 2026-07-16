@@ -24,7 +24,7 @@ G-LLM Desktop Client V1.2.0 is licensed under the Business Source License 1.1 (B
 V1.2.0 automatically changes to AGPL-3.0-only on July 14, 2030. V1.0.10 and earlier remain under the license included with each corresponding release; this agreement does not retroactively withdraw rights already granted.
 
 8. Intellectual property and trademarks
-Except for rights expressly granted by the applicable license, intellectual property rights in the software and modifications remain with their respective owners. The source license does not grant rights to use G-LLM, WujiJie, 无极界, related logos, icons, slogans or visual assets for branding, white-label distribution or representation as an official product.
+Except for rights expressly granted by the applicable license, intellectual property rights in the software and modifications remain with their respective owners. The source license does not grant rights to use G-LLM, WujiJie, related localized product names, logos, icons, slogans or visual assets for branding, white-label distribution or representation as an official product.
 
 9. Third-party components
 This software includes third-party components under their own licenses. The complete inventory and license notices are in legal/THIRD_PARTY_NOTICES.md included with the application. Those third-party licenses control their respective components.
