@@ -14,6 +14,7 @@ import {
   Menu,
   net,
   nativeImage,
+  nativeTheme,
   protocol,
   screen,
   shell,
@@ -80,6 +81,7 @@ import {
   resetDataRoot,
   recordThemeRequestUsage,
   saveAssistant,
+  reorderAssistants,
   saveConversation,
   saveMemory,
   saveNote,
@@ -339,6 +341,43 @@ function showExistingInstance(): void {
   createWindow()
 }
 
+function getWindowBackgroundColor(settings: Pick<AppSettings, 'theme'>): string {
+  if (settings.theme === 'dark') return '#0f172a'
+  if (settings.theme === 'gold') return '#1c1008'
+  if (settings.theme === 'auto' && nativeTheme.shouldUseDarkColors) return '#0f172a'
+  return '#f4f7f6'
+}
+
+function getTitleBarOverlay(settings: Pick<AppSettings, 'theme'>): { color: string; symbolColor: string; height: number } {
+  const effectiveTheme = settings.theme === 'auto'
+    ? nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
+    : settings.theme
+
+  if (effectiveTheme === 'gold') {
+    return { color: '#1c1008', symbolColor: '#f7d774', height: 44 }
+  }
+  if (effectiveTheme === 'dark') {
+    return { color: '#0b1220', symbolColor: '#f8fafc', height: 44 }
+  }
+  return { color: '#f8fafc', symbolColor: '#0f172a', height: 44 }
+}
+
+function applyNativeWindowColors(settings: Pick<AppSettings, 'theme'>): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  mainWindow.setBackgroundColor(getWindowBackgroundColor(settings))
+  if (process.platform === 'win32') mainWindow.setTitleBarOverlay(getTitleBarOverlay(settings))
+}
+
+function syncNativeTheme(settings: Pick<AppSettings, 'theme'>): void {
+  nativeTheme.themeSource = settings.theme === 'auto'
+    ? 'system'
+    : settings.theme === 'light'
+      ? 'light'
+      : 'dark'
+
+  applyNativeWindowColors(settings)
+}
+
 function createWindow(): BrowserWindow {
   quickWindow?.hide()
   hideFloatingLogo()
@@ -351,18 +390,21 @@ function createWindow(): BrowserWindow {
     return mainWindow
   }
 
+  const settings = getSettings()
+  syncNativeTheme(settings)
+
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 820,
     minWidth: 1100,
     minHeight: 680,
-    title: mainT('about.productName', getSettings().language),
-    backgroundColor:
-      getSettings().theme === 'dark' ? '#0f172a' : getSettings().theme === 'gold' ? '#1c1008' : '#f4f7f6',
+    title: mainT('about.productName', settings.language),
+    backgroundColor: getWindowBackgroundColor(settings),
     autoHideMenuBar: true,
     skipTaskbar: false,
     icon: getAppIconPath(),
-    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : process.platform === 'win32' ? 'hidden' : 'default',
+    titleBarOverlay: process.platform === 'win32' ? getTitleBarOverlay(settings) : undefined,
     trafficLightPosition: process.platform === 'darwin' ? { x: 18, y: 10 } : undefined,
     webPreferences: {
       preload: join(__dirname, '../preload/index.mjs'),
@@ -1047,12 +1089,6 @@ function toggleQuickWindow(anchorBounds?: Rectangle): void {
 }
 
 function handleTrayClick(anchorBounds?: Rectangle): void {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    quickWindow?.hide()
-    createWindow()
-    return
-  }
-
   toggleQuickWindow(anchorBounds)
 }
 
@@ -1069,7 +1105,6 @@ function setupTray(): void {
   tray.on('right-click', () => {
     tray?.popUpContextMenu(buildAppStatusMenu(tray.getBounds()))
   })
-  tray.setContextMenu(buildAppStatusMenu(tray.getBounds()))
 }
 
 function quitApp(): void {
@@ -1087,6 +1122,7 @@ function broadcastActiveAssistantChange(): void {
 }
 
 function broadcastSettingsChange(settings: AppSettings): void {
+  syncNativeTheme(settings)
   for (const window of BrowserWindow.getAllWindows()) {
     if (!window.isDestroyed()) window.webContents.send('settings:changed', settings)
   }
@@ -1094,7 +1130,6 @@ function broadcastSettingsChange(settings: AppSettings): void {
   if (quickWindow && !quickWindow.isDestroyed()) quickWindow.setTitle(mainT('quickChat.title', settings.language))
   if (tray) {
     tray.setToolTip(mainT('quickChat.title', settings.language))
-    tray.setContextMenu(buildAppStatusMenu(tray.getBounds()))
   }
 }
 
@@ -1160,6 +1195,11 @@ if (gotSingleInstanceLock && shouldUseSingleInstanceLock) {
     showExistingInstance()
   })
 }
+
+nativeTheme.on('updated', () => {
+  const settings = getSettings()
+  if (settings.theme === 'auto') applyNativeWindowColors(settings)
+})
 
 process.on('uncaughtException', (error) => {
   writeMainLog('Uncaught exception', error)
@@ -1380,6 +1420,7 @@ app.whenReady().then(() => {
     }
   })
   ipcMain.handle('assistant:save', (_, assistant) => saveAssistant(assistant))
+  ipcMain.handle('assistant:reorder', (_, ids: string[]) => reorderAssistants(ids))
   ipcMain.handle('assistant:delete', (_, id: string) => {
     const assistant = getAssistants().find((item) => item.id === id)
     if (!assistant) return getAppStateSnapshot()

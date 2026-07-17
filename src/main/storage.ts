@@ -59,6 +59,7 @@ interface StoreSchema {
   projects: Project[]
   providers: ApiProvider[]
   assistants: Assistant[]
+  assistantOrders: Record<string, string[]>
   deletedBuiltInAssistants: string[]
   conversations: Conversation[]
   notes: KnowledgeNote[]
@@ -590,7 +591,8 @@ export async function importDataArchive(archivePath: string): Promise<DataArchiv
 export const defaultSettings: AppSettings = {
   activeProviderId: DEFAULT_PROVIDER_ID,
   language: 'system',
-  theme: 'light',
+  timeZone: 'system',
+  theme: 'auto',
   temperature: 1,
   enableTemperature: false,
   maxTokens: 4096,
@@ -611,6 +613,7 @@ const store = new Store<StoreSchema>({
     projects: [],
     providers: [],
     assistants: [],
+    assistantOrders: {},
     deletedBuiltInAssistants: [],
     conversations: [],
     notes: [],
@@ -865,7 +868,18 @@ function sanitizeMessageSendShortcut(value: unknown): MessageSendShortcut {
 }
 
 function sanitizeAppTheme(value: unknown): AppTheme {
-  return value === 'dark' || value === 'gold' ? value : 'light'
+  return value === 'auto' || value === 'dark' || value === 'gold' ? value : 'light'
+}
+
+function sanitizeTimeZone(value: unknown): string {
+  if (value === 'system') return 'system'
+  if (typeof value !== 'string' || !value.trim()) return 'system'
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: value }).format(0)
+    return value
+  } catch {
+    return 'system'
+  }
 }
 
 function sanitizeMessage(message: ChatMessage): ChatMessage {
@@ -1136,6 +1150,7 @@ export function getSettings(): AppSettings {
     ...defaultSettings,
     activeProviderId,
     language: sanitizeAppLanguage(saved.language),
+    timeZone: sanitizeTimeZone(saved.timeZone),
     theme: sanitizeAppTheme(saved.theme),
     temperature: Number.isFinite(saved.temperature)
       ? Math.min(2, Math.max(0, Number(saved.temperature)))
@@ -1167,6 +1182,7 @@ export function setSettings(settings: AppSettings): AppSettings {
     ...settings,
     activeProviderId,
     language: sanitizeAppLanguage(settings.language),
+    timeZone: sanitizeTimeZone(settings.timeZone),
     theme: sanitizeAppTheme(settings.theme),
     temperature: Number.isFinite(settings.temperature)
       ? Math.min(2, Math.max(0, Number(settings.temperature)))
@@ -1289,7 +1305,34 @@ export function getAssistants(projectId = getActiveProjectId()): Assistant[] {
     })
   const custom = savedAssistants.filter((assistant) => !defaultIds.has(assistant.id))
 
-  return [...defaults, ...custom]
+  const assistants = [...defaults, ...custom]
+  const order = store.get('assistantOrders', {})[normalizedProjectId] ?? []
+  const orderById = new Map(order.map((id, index) => [id, index]))
+  return assistants
+    .map((assistant, index) => ({ assistant, index }))
+    .sort((first, second) => {
+      const firstOrder = orderById.get(first.assistant.id)
+      const secondOrder = orderById.get(second.assistant.id)
+      if (firstOrder === undefined && secondOrder === undefined) return first.index - second.index
+      if (firstOrder === undefined) return 1
+      if (secondOrder === undefined) return -1
+      return firstOrder - secondOrder
+    })
+    .map(({ assistant }) => assistant)
+}
+
+export function reorderAssistants(ids: string[], projectId = getActiveProjectId()): Assistant[] {
+  const normalizedProjectId = sanitizeProjectId(projectId)
+  const assistants = getAssistants(normalizedProjectId)
+  const validIds = new Set(assistants.map((assistant) => assistant.id))
+  const orderedIds = Array.from(new Set(ids.filter((id) => typeof id === 'string' && validIds.has(id))))
+  const missingIds = assistants.map((assistant) => assistant.id).filter((id) => !orderedIds.includes(id))
+  const assistantOrders = store.get('assistantOrders', {})
+  store.set('assistantOrders', {
+    ...assistantOrders,
+    [normalizedProjectId]: [...orderedIds, ...missingIds]
+  })
+  return getAssistants(normalizedProjectId)
 }
 
 export function saveAssistant(assistant: Assistant, projectId = getActiveProjectId()): Assistant {

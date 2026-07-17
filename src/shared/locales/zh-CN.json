@@ -25,6 +25,7 @@
     "enUS": "English"
   },
   "assistantActions": {
+    "pin": "置顶助手",
     "hide": "隐藏助手",
     "delete": "删除助手",
     "restore": "恢复显示",
@@ -540,6 +541,8 @@
       "title": "界面主题",
       "description": "主窗口、快速对话和内容组件使用同一套配色。",
       "exclusive": "G-LLM 专属主题",
+      "auto": "跟随系统",
+      "autoDescription": "自动切换亮色与暗色",
       "light": "亮色",
       "lightDescription": "清晰明亮",
       "dark": "暗色",
@@ -549,8 +552,13 @@
       "eligibilityHint": "选择时检测官方 G-LLM 调用占比",
       "eligibilityRequired": "官方调用占比需超过 50%",
       "checkingEligibility": "正在统计官方 G-LLM 调用占比..."
-    },
-    "sendShortcut": {
+      },
+      "timeZone": {
+        "title": "对话时区",
+        "description": "用于显示每条消息的时间戳，可跟随设备或手动选择。",
+        "system": "跟随设备（{{zone}}）"
+      },
+      "sendShortcut": {
       "title": "消息发送方式",
       "description": "用于主窗口和小窗口输入框。中文输入法正在组词时，回车只确认输入，不会发送消息。",
       "enter": "按 Enter 发送",

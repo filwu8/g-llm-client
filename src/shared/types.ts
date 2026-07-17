@@ -7,7 +7,7 @@
 export type Role = 'system' | 'user' | 'assistant'
 export type MessageSendShortcut = 'enter' | 'ctrl-enter'
 export type ReasoningEffort = 'default' | 'low' | 'medium' | 'high'
-export type AppTheme = 'light' | 'dark' | 'gold'
+export type AppTheme = 'auto' | 'light' | 'dark' | 'gold'
 export type FloatingMascotSkin = 'blue' | 'gold'
 export type FloatingMascotAppearance = 'auto' | FloatingMascotSkin
 
@@ -426,6 +426,7 @@ export interface AssistantSuggestionRequest {
 export interface AppSettings {
   activeProviderId: string
   language: import('./i18n').AppLanguage
+  timeZone: string
   theme: AppTheme
   temperature: number
   enableTemperature: boolean

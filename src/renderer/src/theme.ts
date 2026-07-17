@@ -7,12 +7,24 @@
 import type { AppTheme } from '@shared/types'
 
 const themeClasses = ['theme-light', 'theme-dark', 'theme-gold']
+type EffectiveTheme = Exclude<AppTheme, 'auto'>
 
-export function getEffectiveTheme(theme: AppTheme, goldThemeEntitled: boolean): AppTheme {
+let selectedTheme: AppTheme = 'auto'
+let selectedGoldEntitlement = true
+let systemThemeListenerInstalled = false
+
+function getSystemTheme(): EffectiveTheme {
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+}
+
+export function getEffectiveTheme(theme: AppTheme, goldThemeEntitled: boolean): EffectiveTheme {
+  if (theme === 'auto') return getSystemTheme()
   return theme === 'gold' && !goldThemeEntitled ? 'light' : theme
 }
 
-export function applyDocumentTheme(theme: AppTheme, goldThemeEntitled: boolean): AppTheme {
+export function applyDocumentTheme(theme: AppTheme, goldThemeEntitled: boolean): EffectiveTheme {
+  selectedTheme = theme
+  selectedGoldEntitlement = goldThemeEntitled
   const effectiveTheme = getEffectiveTheme(theme, goldThemeEntitled)
   const root = document.documentElement
   root.classList.remove(...themeClasses)
@@ -20,5 +32,12 @@ export function applyDocumentTheme(theme: AppTheme, goldThemeEntitled: boolean):
   root.dataset.theme = effectiveTheme
   root.style.colorScheme = effectiveTheme === 'light' ? 'light' : 'dark'
   window.dispatchEvent(new CustomEvent('gllm-theme-changed', { detail: { theme: effectiveTheme } }))
+
+  if (!systemThemeListenerInstalled) {
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+      if (selectedTheme === 'auto') applyDocumentTheme(selectedTheme, selectedGoldEntitlement)
+    })
+    systemThemeListenerInstalled = true
+  }
   return effectiveTheme
 }

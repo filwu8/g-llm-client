@@ -16,8 +16,11 @@ import {
   ImagePlus,
   MessageSquarePlus,
   Minus,
+  NotebookPen,
   Paperclip,
+  RefreshCw,
   Square,
+  Trash2,
   Wrench,
   X
 } from 'lucide-react'
@@ -53,6 +56,7 @@ import { localizeAssistant } from './localizedContent'
 import { MarkdownMessage } from './MarkdownMessage'
 import { getModelOptions, ModelPickerMenu } from './ModelPicker'
 import { applyDocumentTheme } from './theme'
+import { formatMessageTimestamp } from './timeZone'
 import { DEFAULT_ASSISTANTS, getAssistantById } from '@shared/assistants'
 import { DEFAULT_PROVIDER, getProviderById } from '@shared/providers'
 import type {
@@ -95,6 +99,20 @@ function estimateTokenCount(text: string): number {
       .match(/[A-Za-z0-9_]+|[^\sA-Za-z0-9_]/g)?.length ?? 0
 
   return Math.max(1, Math.ceil(cjkCount + nonCjkTokens * 0.75))
+}
+
+function formatTokenUnit(value: number): string {
+  if (value >= 1_000_000) return `${Number((value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1))}M`
+  if (value >= 1_000) return `${Number((value / 1_000).toFixed(value >= 10_000 ? 0 : 1))}K`
+  return `${value}`
+}
+
+function getQuickMessageTokenUsage(message: ChatMessage) {
+  const fallback = estimateTokenCount(message.content)
+  const input = Math.max(0, Math.round(message.inputTokens ?? (message.role === 'user' ? fallback : 0)))
+  const output = Math.max(0, Math.round(message.outputTokens ?? (message.role === 'assistant' ? fallback : 0)))
+  const total = Math.max(0, Math.round(message.tokenCount ?? input + output))
+  return { total, input, output }
 }
 
 function getKnowledgeReferenceText(knowledgeRefs: KnowledgeReference[] = []): string {
@@ -745,6 +763,57 @@ export default function QuickChat() {
     setSelectionMenu(null)
   }
 
+  async function copyQuickMessage(message: ChatMessage) {
+    try {
+      await writePlainTextToClipboard(message.content)
+      setStatus(t('quickChat.copiedMessage'))
+    } catch {
+      setStatus(t('quickChat.copyFailed'))
+    }
+  }
+
+  function quoteQuickMessage(message: ChatMessage) {
+    addQuoteReference(message.content)
+    setStatus(t('quickChat.quotedMessage'))
+  }
+
+  async function saveQuickMessageToNote(message: ChatMessage) {
+    if (!conversation) return
+    const content = message.content.trim()
+    if (!content) return
+    const now = Date.now()
+    await window.gllm.saveNote({
+      id: createId('note'),
+      projectId: conversation.projectId,
+      title: content.split('\n').find((line) => line.trim())?.trim().slice(0, 36) || t('notices.chatNote'),
+      content,
+      assistantId: assistant.id,
+      conversationId: conversation.id,
+      messageId: message.id,
+      createdAt: now,
+      updatedAt: now
+    })
+    setStatus(t('notices.savedToKnowledge'))
+  }
+
+  function deleteQuickMessage(messageId: string) {
+    if (!conversation) return
+    const nextMessages = conversation.messages.filter((message) => message.id !== messageId)
+    const firstUserMessage = nextMessages.find((message) => message.role === 'user')
+    const nextConversation: Conversation = {
+      ...conversation,
+      title: firstUserMessage?.content.slice(0, 28) || conversation.title,
+      messages: nextMessages,
+      totalTokens: nextMessages.reduce((sum, message) => sum + (message.tokenCount ?? 0), 0),
+      updatedAt: Date.now()
+    }
+    setConversation(nextConversation)
+    setConversations((current) => [nextConversation, ...current.filter((item) => item.id !== nextConversation.id)])
+    conversationRef.current = nextConversation
+    void window.gllm.saveConversation(nextConversation)
+    setStatus(t('notices.messageDeleted'))
+  }
+
   return (
     <div className="quick-shell">
       <header className="quick-titlebar">
@@ -787,8 +856,15 @@ export default function QuickChat() {
             </div>
           </section>
         ) : (
-          messages.map((message, messageIndex) => (
-            <article
+          messages.map((message, messageIndex) => {
+            const messageTimestamp = formatMessageTimestamp(
+              message.createdAt,
+              i18n.resolvedLanguage ?? 'zh-CN',
+              settings?.timeZone
+            )
+            const messageTokens = getQuickMessageTokenUsage(message)
+            return (
+              <article
               key={message.id}
               className={`quick-message ${message.role} ${message.error ? 'message-error' : ''}`}
               data-message-id={message.id}
@@ -821,8 +897,45 @@ export default function QuickChat() {
                   />
                 )}
               </div>
+              <div className="quick-message-footer">
+                <div className="quick-message-actions" onMouseDown={(event) => event.preventDefault()}>
+                  <button title={t('app.copyMarkdown')} type="button" onClick={() => void copyQuickMessage(message)}>
+                    <Copy size={14} />
+                  </button>
+                  {message.role === 'assistant' && !message.error && (
+                    <button disabled={isStreaming} title={t('app.regenerate')} type="button" onClick={() => retryMessage(message.id)}>
+                      <RefreshCw size={14} />
+                    </button>
+                  )}
+                  <button title={t('app.quoteMessage')} type="button" onClick={() => quoteQuickMessage(message)}>
+                    <AtSign size={14} />
+                  </button>
+                  <button title={t('app.saveToKnowledge')} type="button" onClick={() => void saveQuickMessageToNote(message)}>
+                    <NotebookPen size={14} />
+                  </button>
+                  <button title={t('common.delete')} type="button" onClick={() => deleteQuickMessage(message.id)}>
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+                <div className="quick-message-meta">
+                  <time dateTime={messageTimestamp.iso} title={messageTimestamp.full}>{messageTimestamp.short}</time>
+                  <span
+                    className="quick-message-token"
+                    title={t('app.tokenBreakdown', {
+                      total: formatTokenUnit(messageTokens.total),
+                      input: formatTokenUnit(messageTokens.input),
+                      output: formatTokenUnit(messageTokens.output)
+                    })}
+                  >
+                    {t('app.tokenCount', { count: formatTokenUnit(messageTokens.total) })}
+                    <span>↑{formatTokenUnit(messageTokens.input)}</span>
+                    <span>↓{formatTokenUnit(messageTokens.output)}</span>
+                  </span>
+                </div>
+              </div>
             </article>
-          ))
+            )
+          })
         )}
         {isStreaming && messages.at(-1)?.role === 'user' && (
           <article className="quick-message assistant">

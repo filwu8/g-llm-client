@@ -21,9 +21,12 @@ const isQuickWindow = windowRoute === 'quick'
 const isFloatingLogoWindow = windowRoute === 'floating-logo'
 const isFloatingHintWindow = windowRoute === 'floating-hint'
 
-if (initialTheme === 'light' || initialTheme === 'dark' || initialTheme === 'gold') {
-  applyDocumentTheme(initialTheme, true)
-}
+applyDocumentTheme(
+  initialTheme === 'auto' || initialTheme === 'light' || initialTheme === 'dark' || initialTheme === 'gold'
+    ? initialTheme
+    : 'auto',
+  true
+)
 
 document.documentElement.classList.toggle('quick-window-document', isQuickWindow)
 document.documentElement.classList.toggle('floating-logo-document', isFloatingLogoWindow)

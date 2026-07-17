@@ -25,6 +25,7 @@
     "enUS": "English"
   },
   "assistantActions": {
+    "pin": "Move to top",
     "hide": "Hide assistant",
     "delete": "Delete assistant",
     "restore": "Show again",
@@ -540,6 +541,8 @@
       "title": "Appearance",
       "description": "Use the same color theme across the main window, Quick Chat, and content components.",
       "exclusive": "G-LLM exclusive theme",
+      "auto": "System",
+      "autoDescription": "Match light or dark mode",
       "light": "Light",
       "lightDescription": "Clear and bright",
       "dark": "Dark",
@@ -549,8 +552,13 @@
       "eligibilityHint": "Checks the share of usage through the official G-LLM service when selected",
       "eligibilityRequired": "Official G-LLM usage must exceed 50%",
       "checkingEligibility": "Checking official G-LLM usage share..."
-    },
-    "sendShortcut": {
+      },
+      "timeZone": {
+        "title": "Conversation time zone",
+        "description": "Controls message timestamps; follow this device or choose a time zone manually.",
+        "system": "Use device time zone ({{zone}})"
+      },
+      "sendShortcut": {
       "title": "Send messages with",
       "description": "Applies to the main and quick chat composers. Enter confirms text while an input method is composing.",
       "enter": "Enter",

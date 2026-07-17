@@ -26,6 +26,7 @@ import {
   KeyRound,
   Languages,
   MessageSquarePlus,
+  MonitorCog,
   Moon,
   NotebookPen,
   PanelLeftClose,
@@ -34,6 +35,7 @@ import {
   PanelRightOpen,
   Paperclip,
   Pencil,
+  Pin,
   Plug,
   Plus,
   Power,
@@ -58,6 +60,7 @@ import {
 import {
   type ChangeEvent,
   type ClipboardEvent as ReactClipboardEvent,
+  type DragEvent as ReactDragEvent,
   type FormEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
@@ -97,6 +100,7 @@ import {
 import { WorkspaceActivityLog, WorkspaceBar } from './WorkspaceBar'
 import { getModelDisplayLabel, getModelOptions, ModelPickerMenu } from './ModelPicker'
 import { applyDocumentTheme } from './theme'
+import { formatMessageTimestamp, getTimeZoneOptionLabel, resolveTimeZone, TIME_ZONE_OPTIONS } from './timeZone'
 import {
   ASSISTANT_PRESET_CATEGORIES,
   type AssistantPreset
@@ -649,6 +653,7 @@ function getComparableSettings(settings: AppSettings) {
   return {
     activeProviderId: settings.activeProviderId,
     language: settings.language,
+    timeZone: settings.timeZone,
     theme: settings.theme,
     temperature: Number(settings.temperature),
     enableTemperature: settings.enableTemperature,
@@ -712,6 +717,9 @@ export default function App() {
   const [projects, setProjects] = useState<Project[]>([])
   const [activeProjectId, setActiveProjectId] = useState('')
   const [assistants, setAssistants] = useState<Assistant[]>(DEFAULT_ASSISTANTS)
+  const [draggedAssistantId, setDraggedAssistantId] = useState<string | null>(null)
+  const [assistantDropTarget, setAssistantDropTarget] = useState<{ id: string; position: 'before' | 'after' } | null>(null)
+  const draggedAssistantIdRef = useRef<string | null>(null)
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [notes, setNotes] = useState<KnowledgeNote[]>([])
   const [memories, setMemories] = useState<AssistantMemory[]>([])
@@ -1460,7 +1468,7 @@ export default function App() {
   function openAssistantContextMenu(event: ReactMouseEvent, assistant: Assistant) {
     event.preventDefault()
     event.stopPropagation()
-    const menuHeight = 88
+    const menuHeight = 126
     setAssistantContextMenu({
       x: Math.min(event.clientX, window.innerWidth - 190),
       y: Math.min(event.clientY, window.innerHeight - menuHeight - 8),
@@ -2208,6 +2216,39 @@ export default function App() {
     return saved
   }
 
+  function getAssistantDropPosition(event: ReactDragEvent<HTMLButtonElement>): 'before' | 'after' {
+    const bounds = event.currentTarget.getBoundingClientRect()
+    return event.clientY < bounds.top + bounds.height / 2 ? 'before' : 'after'
+  }
+
+  async function reorderAssistant(sourceId: string, targetId: string, position: 'before' | 'after') {
+    if (sourceId === targetId) return
+    const previous = assistants
+    const source = previous.find((assistant) => assistant.id === sourceId)
+    const remaining = previous.filter((assistant) => assistant.id !== sourceId)
+    const targetIndex = remaining.findIndex((assistant) => assistant.id === targetId)
+    if (!source || targetIndex < 0) return
+
+    const insertionIndex = targetIndex + (position === 'after' ? 1 : 0)
+    const next = [...remaining]
+    next.splice(insertionIndex, 0, source)
+    setAssistants(next)
+
+    try {
+      const saved = await window.gllm.reorderAssistants(next.map((assistant) => assistant.id))
+      setAssistants(saved)
+    } catch {
+      setAssistants(previous)
+    }
+  }
+
+  async function pinAssistant(assistant: Assistant) {
+    setAssistantContextMenu(null)
+    const firstVisibleAssistant = assistants.find((item) => !item.hidden)
+    if (!firstVisibleAssistant || firstVisibleAssistant.id === assistant.id) return
+    await reorderAssistant(assistant.id, firstVisibleAssistant.id, 'before')
+  }
+
   async function suggestAssistant(keyword: string, provider: ApiProvider): Promise<AssistantSuggestion> {
     if (!settings) throw new Error(t('notices.settingsNotLoaded'))
     return window.gllm.suggestAssistant({
@@ -2227,8 +2268,14 @@ export default function App() {
 
   return (
     <div
-      className={`app-shell ${isMac ? 'mac-window' : ''} ${railCollapsed ? 'rail-collapsed' : ''} ${historyCollapsed ? 'history-collapsed' : ''}`}
+      className={`app-shell ${isMac ? 'mac-window' : ''} ${isWindows ? 'windows-framed' : ''} ${railCollapsed ? 'rail-collapsed' : ''} ${historyCollapsed ? 'history-collapsed' : ''}`}
     >
+      {isWindows && (
+        <div className="windows-titlebar">
+          <img src={logo} alt="" />
+          <span>{t('about.productName')}</span>
+        </div>
+      )}
       {!railCollapsed && (
         <aside className="rail">
           <div className="brand">
@@ -2278,9 +2325,37 @@ export default function App() {
               return (
                 <button
                   key={assistant.id}
-                  className={`assistant-card ${assistant.color} ${active ? 'active' : ''}`}
+                  className={`assistant-card ${assistant.color} ${active ? 'active' : ''} ${assistantSearchQuery.trim() ? 'reorder-disabled' : ''} ${draggedAssistantId === assistant.id ? 'dragging' : ''} ${assistantDropTarget?.id === assistant.id ? `drop-${assistantDropTarget.position}` : ''}`}
+                  draggable={!assistantSearchQuery.trim()}
                   onClick={() => openAssistant(assistant)}
                   onContextMenu={(event) => openAssistantContextMenu(event, assistant)}
+                  onDragStart={(event) => {
+                    draggedAssistantIdRef.current = assistant.id
+                    setDraggedAssistantId(assistant.id)
+                    event.dataTransfer.effectAllowed = 'move'
+                    event.dataTransfer.setData('text/plain', assistant.id)
+                  }}
+                  onDragOver={(event) => {
+                    const sourceId = draggedAssistantIdRef.current
+                    if (!sourceId || sourceId === assistant.id) return
+                    event.preventDefault()
+                    event.dataTransfer.dropEffect = 'move'
+                    setAssistantDropTarget({ id: assistant.id, position: getAssistantDropPosition(event) })
+                  }}
+                  onDrop={(event) => {
+                    event.preventDefault()
+                    const sourceId = draggedAssistantIdRef.current || event.dataTransfer.getData('text/plain')
+                    const position = getAssistantDropPosition(event)
+                    draggedAssistantIdRef.current = null
+                    setDraggedAssistantId(null)
+                    setAssistantDropTarget(null)
+                    if (sourceId) void reorderAssistant(sourceId, assistant.id, position)
+                  }}
+                  onDragEnd={() => {
+                    draggedAssistantIdRef.current = null
+                    setDraggedAssistantId(null)
+                    setAssistantDropTarget(null)
+                  }}
                   title={displayAssistant.name}
                   type="button"
                 >
@@ -2332,6 +2407,14 @@ export default function App() {
             onClick={(event) => event.stopPropagation()}
             onMouseDown={(event) => event.preventDefault()}
           >
+            <button
+              disabled={visibleAssistants[0]?.id === assistant.id}
+              type="button"
+              onClick={() => void pinAssistant(assistant)}
+            >
+              <Pin size={15} />
+              {t('assistantActions.pin')}
+            </button>
             <button type="button" onClick={() => void setAssistantHidden(assistant, true)}>
               <EyeOff size={15} />
               {t('assistantActions.hide')}
@@ -2416,6 +2499,11 @@ export default function App() {
               {activeConversation.messages.map((message, messageIndex) => {
                 const isTranslating = translatingMessageIds.includes(message.id)
                 const messageTokens = estimateMessageTokenUsage(message)
+                const messageTimestamp = formatMessageTimestamp(
+                  message.createdAt,
+                  i18n.resolvedLanguage ?? 'zh-CN',
+                  settings.timeZone
+                )
 
                 return (
                   <article
@@ -2546,18 +2634,21 @@ export default function App() {
                             <Trash2 size={16} />
                           </button>
                         </div>
-                        <span
-                          className="message-token"
-                          title={t('app.tokenBreakdown', {
-                            total: formatTokenUnit(messageTokens.total),
-                            input: formatTokenUnit(messageTokens.input),
-                            output: formatTokenUnit(messageTokens.output)
-                          })}
-                        >
-                          {t('app.tokenCount', { count: formatTokenUnit(messageTokens.total) })}
-                          <span>↑{formatTokenUnit(messageTokens.input)}</span>
-                          <span>↓{formatTokenUnit(messageTokens.output)}</span>
-                        </span>
+                        <div className="message-meta">
+                          <time dateTime={messageTimestamp.iso} title={messageTimestamp.full}>{messageTimestamp.short}</time>
+                          <span
+                            className="message-token"
+                            title={t('app.tokenBreakdown', {
+                              total: formatTokenUnit(messageTokens.total),
+                              input: formatTokenUnit(messageTokens.input),
+                              output: formatTokenUnit(messageTokens.output)
+                            })}
+                          >
+                            {t('app.tokenCount', { count: formatTokenUnit(messageTokens.total) })}
+                            <span>↑{formatTokenUnit(messageTokens.input)}</span>
+                            <span>↓{formatTokenUnit(messageTokens.output)}</span>
+                          </span>
+                        </div>
                       </div>
                     </div>
                   </article>
@@ -5455,6 +5546,27 @@ function SettingsPanel({
               </select>
             </section>
 
+            <section className="preference-section timezone-preference-section">
+              <div className="data-location-head">
+                <div>
+                  <strong>{t('settings.timeZone.title')}</strong>
+                  <small>{t('settings.timeZone.description')}</small>
+                </div>
+              </div>
+              <select
+                className="language-select"
+                value={settingsDraft.timeZone}
+                onChange={(event) => setSettingsDraft({ ...settingsDraft, timeZone: event.target.value })}
+              >
+                <option value="system">
+                  {t('settings.timeZone.system', { zone: resolveTimeZone('system') })}
+                </option>
+                {TIME_ZONE_OPTIONS.map((timeZone) => (
+                  <option key={timeZone} value={timeZone}>{getTimeZoneOptionLabel(timeZone)}</option>
+                ))}
+              </select>
+            </section>
+
             <section className="preference-section theme-preference-section">
               <div className="data-location-head">
                 <div>
@@ -5465,6 +5577,21 @@ function SettingsPanel({
               </div>
 
               <div className="theme-option-list">
+                <label className={`theme-option ${settingsDraft.theme === 'auto' ? 'active' : ''}`}>
+                  <input
+                    checked={settingsDraft.theme === 'auto'}
+                    name="app-theme"
+                    type="radio"
+                    value="auto"
+                    onChange={() => setSettingsDraft({ ...settingsDraft, theme: 'auto' })}
+                  />
+                  <span className="theme-preview auto"><MonitorCog size={19} /></span>
+                  <span>
+                    <strong>{t('settings.theme.auto')}</strong>
+                    <small>{t('settings.theme.autoDescription')}</small>
+                  </span>
+                </label>
+
                 <label className={`theme-option ${settingsDraft.theme === 'light' ? 'active' : ''}`}>
                   <input
                     checked={settingsDraft.theme === 'light'}

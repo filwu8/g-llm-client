@@ -1179,6 +1179,23 @@ function sanitizeSearchQuery(value: string): string {
     .slice(0, 120)
 }
 
+function getLocalSearchQueries(value: string): string[] {
+  const query = sanitizeSearchQuery(value)
+  const entity = query.match(
+    /(?:搜索|检索|查找|查询)(?:一下|下)?\s*([\p{Script=Han}A-Za-z0-9._-]{2,24}?)(?=的|舆论|新闻|资讯|行情|业绩|产能|市占率|\s|$)/u
+  )?.[1]
+  if (!entity) return []
+
+  const fundamentalTopics = ['业绩', '营收', '利润', '产能', '市占率', '市场份额'].filter((term) => query.includes(term))
+  const marketTopics = ['上涨', '下跌', '大涨', '大跌', '股价', '舆论', '新闻'].filter((term) => query.includes(term))
+  const candidates = [
+    [entity, ...fundamentalTopics].join(' '),
+    [entity, ...marketTopics].join(' '),
+    `${entity} 最新公告 机构观点`
+  ]
+  return candidates.map(sanitizeSearchQuery).filter((item) => item !== entity)
+}
+
 function getSearchPlanningContext(messages: ChatMessage[]): string {
   return messages
     .filter((message) => message.role === 'user' || message.role === 'assistant')
@@ -1199,8 +1216,11 @@ function sanitizeSearchPlan(plan: Partial<WebSearchPlan> | null, fallbackQuery: 
   const queries = Array.isArray(plan?.queries)
     ? plan.queries.map((query) => sanitizeSearchQuery(String(query))).filter(Boolean)
     : []
+  const localQueries = getLocalSearchQueries(fallback)
   const includeFallback = fallback.length > 0 && fallback.length <= 48
-  const candidates = includeFallback ? [fallback, ...queries] : queries.length > 0 ? queries : [fallback].filter(Boolean)
+  const candidates = includeFallback
+    ? [fallback, ...localQueries, ...queries]
+    : [...localQueries, ...queries, fallback].filter(Boolean)
   const seen = new Set<string>()
   const uniqueQueries = candidates.filter((query) => {
     const key = query.toLocaleLowerCase()
@@ -1346,7 +1366,7 @@ function normalizeSearchMatchText(value: string): string {
 }
 
 function getSearchTopicTerms(plan: WebSearchPlan, fallbackQuery: string): string[] {
-  const source = `${fallbackQuery} ${plan.queries.join(' ')}`
+  const source = plan.queries.join(' ') || fallbackQuery
   const terms = Array.from(source.matchAll(/[\p{Script=Han}]{2,}|[a-zA-Z][a-zA-Z0-9._-]{2,}|\d{5,6}/gu))
     .map((match) => normalizeSearchMatchText(match[0]))
     .filter((term) => term.length >= 2 && !genericSearchTerms.has(term))
@@ -1392,10 +1412,17 @@ async function searchWebWithPlan(plan: WebSearchPlan, fallbackQuery: string, sig
     return [...newsResults, ...webResults]
   }))
   const terms = getSearchTopicTerms(plan, fallbackQuery)
-  const rankedBatches = batches.map((batch) => batch
-    .map((result) => ({ result, relevance: getSearchResultRelevance(result, terms, fallbackQuery) }))
-    .filter((item) => item.relevance > 0)
-    .sort((first, second) => second.relevance - first.relevance))
+  const rankedBatches = batches.map((batch) => {
+    const ranked = batch
+      .map((result) => ({ result, relevance: getSearchResultRelevance(result, terms, fallbackQuery) }))
+      .sort((first, second) => second.relevance - first.relevance)
+    const relevant = ranked.filter((item) => item.relevance > 0)
+
+    // Search-engine results already correspond to the submitted compact query. If the
+    // conservative local matcher cannot tokenize a Chinese entity, keep those results
+    // instead of incorrectly reporting that zero sources were found.
+    return relevant.length > 0 ? relevant : ranked
+  })
   const seen = new Set<string>()
   const merged: WebSearchResult[] = []
 
