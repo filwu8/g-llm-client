@@ -2309,7 +2309,8 @@ img.space-logo {
   animation: modal-surface-enter 220ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 
-.drawer-backdrop > * {
+.drawer-backdrop > .settings-drawer,
+.drawer-backdrop > .assistant-drawer {
   animation: modal-drawer-enter 240ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 
@@ -7530,7 +7531,8 @@ img.space-logo {
   .assistant-modal-backdrop > *,
   .provider-add-backdrop > *,
   .local-task-backdrop > *,
-  .drawer-backdrop > *,
+  .drawer-backdrop > .settings-drawer,
+  .drawer-backdrop > .assistant-drawer,
   .selection-context-menu,
   .model-dropdown-popover,
   .theme-gold .topbar::after,
