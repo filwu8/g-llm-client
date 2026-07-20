@@ -23,6 +23,7 @@ import {
   type Rectangle
 } from 'electron'
 import { appendFileSync, mkdirSync, statSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
@@ -34,7 +35,8 @@ import type {
   FloatingMascotAppearance,
   FloatingMascotHintEvent,
   FloatingMascotSkin,
-  LegalDocument
+  LegalDocument,
+  WorkspaceApprovalPrompt
 } from '../shared/types'
 import { isOfficialGllmApiProvider } from '../shared/providers'
 import { checkForAppUpdate, DOWNLOAD_PAGE_URL } from './appUpdate'
@@ -131,6 +133,7 @@ interface ActiveResponse {
 }
 
 const activeResponses = new Map<string, ActiveResponse>()
+const pendingWorkspaceApprovals = new Map<string, { senderId: number; resolve: (approved: boolean) => void }>()
 
 function registerActiveResponse(
   kind: 'chat' | 'workspace',
@@ -1483,12 +1486,32 @@ app.whenReady().then(() => {
     const result = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options)
     return result.canceled ? null : result.filePaths[0] ?? null
   })
+  ipcMain.on('workspace-agent:approval-response', (event, id: string, approved: boolean) => {
+    const pending = pendingWorkspaceApprovals.get(id)
+    if (!pending || pending.senderId !== event.sender.id) return
+    pending.resolve(Boolean(approved))
+  })
   ipcMain.handle('workspace-agent:run', async (event, request) => {
     const active = registerActiveResponse('workspace', request.conversationId)
     try {
       return await runWorkspaceAgent(
         request,
         (progress) => event.sender.send('workspace-agent:progress', progress),
+        async (approval) => {
+          const id = randomUUID()
+          const prompt: WorkspaceApprovalPrompt = { id, conversationId: request.conversationId, ...approval }
+          return await new Promise<boolean>((resolvePromise) => {
+            const finish = (approved: boolean) => {
+              pendingWorkspaceApprovals.delete(id)
+              active.controller.signal.removeEventListener('abort', handleAbort)
+              resolvePromise(approved)
+            }
+            const handleAbort = () => finish(false)
+            pendingWorkspaceApprovals.set(id, { senderId: event.sender.id, resolve: finish })
+            active.controller.signal.addEventListener('abort', handleAbort, { once: true })
+            event.sender.send('workspace-agent:approval-requested', prompt)
+          })
+        },
         active.controller.signal
       )
     } catch (error) {

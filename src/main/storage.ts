@@ -944,6 +944,9 @@ function sanitizeConversation(conversation: Conversation, fallbackProjectId = ge
           rootPath: conversation.workspace.rootPath.trim(),
           displayName: conversation.workspace.displayName?.trim() || basename(conversation.workspace.rootPath),
           permission: conversation.workspace.permission === 'read' ? 'read' as const : 'read-write' as const,
+          approvalMode: ['ask', 'auto', 'full'].includes(conversation.workspace.approvalMode ?? '')
+            ? conversation.workspace.approvalMode
+            : 'ask' as const,
           grantedAt: Number.isFinite(conversation.workspace.grantedAt) ? conversation.workspace.grantedAt : now,
           lastVerifiedAt: Number.isFinite(conversation.workspace.lastVerifiedAt) ? conversation.workspace.lastVerifiedAt : now
         }

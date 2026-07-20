@@ -97,7 +97,7 @@ import {
   localizeAssistantPresetCategory,
   searchLocalizedAssistantPresets
 } from './localizedContent'
-import { WorkspaceActivityLog, WorkspaceBar } from './WorkspaceBar'
+import { WorkspaceActivityLog, WorkspaceApprovalDialog, WorkspaceBar, WorkspaceOperationApprovalDialog } from './WorkspaceBar'
 import { getModelDisplayLabel, getModelOptions, ModelPickerMenu } from './ModelPicker'
 import { applyDocumentTheme } from './theme'
 import { formatMessageTimestamp, getTimeZoneOptionLabel, resolveTimeZone, TIME_ZONE_OPTIONS } from './timeZone'
@@ -154,6 +154,7 @@ import type {
   ThemeEntitlementResult,
   WebSearchActivity,
   ConversationWorkspace,
+  WorkspaceApprovalPrompt,
   WorkspaceToolActivity
 } from '@shared/types'
 
@@ -737,6 +738,8 @@ export default function App() {
   const [localTaskResult, setLocalTaskResult] = useState<LocalTaskResult | null>(null)
   const [localTaskRunning, setLocalTaskRunning] = useState(false)
   const [draftWorkspace, setDraftWorkspace] = useState<ConversationWorkspace | undefined>()
+  const [pendingWorkspaceRoot, setPendingWorkspaceRoot] = useState<string | null>(null)
+  const [workspaceApprovalPrompt, setWorkspaceApprovalPrompt] = useState<WorkspaceApprovalPrompt | null>(null)
   const [workspaceActivities, setWorkspaceActivities] = useState<WorkspaceToolActivity[]>([])
   const workspaceActivitiesRef = useRef<WorkspaceToolActivity[]>([])
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -1063,6 +1066,8 @@ export default function App() {
     }),
     []
   )
+
+  useEffect(() => window.gllm.onWorkspaceApprovalRequested(setWorkspaceApprovalPrompt), [])
 
   useEffect(() => {
     setMessageAutoFollow(true)
@@ -1844,6 +1849,7 @@ export default function App() {
       setConversations((current) => [failedConversation, ...current.filter((item) => item.id !== failedConversation.id)])
       void window.gllm.saveConversation(failedConversation)
     } finally {
+      setWorkspaceApprovalPrompt(null)
       setIsStreaming(false)
     }
   }
@@ -2025,11 +2031,23 @@ export default function App() {
         )
         return
       }
+      setPendingWorkspaceRoot(rootPath)
+    } catch (error) {
+      showToolNotice(error instanceof Error ? error.message : t('workspace.bindFailed'))
+    }
+  }
+
+  async function confirmConversationWorkspace(approvalMode: NonNullable<ConversationWorkspace['approvalMode']>) {
+    const rootPath = pendingWorkspaceRoot
+    if (!rootPath) return
+    setPendingWorkspaceRoot(null)
+    try {
       const displayName = rootPath.split(/[\\/]/).filter(Boolean).at(-1) || t('workspace.defaultName')
       const workspace: ConversationWorkspace = {
         rootPath,
         displayName,
         permission: 'read-write',
+        approvalMode,
         grantedAt: Date.now(),
         lastVerifiedAt: Date.now()
       }
@@ -2045,6 +2063,18 @@ export default function App() {
     } catch (error) {
       showToolNotice(error instanceof Error ? error.message : t('workspace.bindFailed'))
     }
+  }
+
+  async function changeConversationWorkspaceApproval(approvalMode: NonNullable<ConversationWorkspace['approvalMode']>) {
+    if (!currentWorkspace) return
+    const workspace = { ...currentWorkspace, approvalMode, lastVerifiedAt: Date.now() }
+    if (!activeConversation) {
+      setDraftWorkspace(workspace)
+      return
+    }
+    const nextConversation = { ...activeConversation, workspace, updatedAt: Date.now() }
+    const saved = await window.gllm.saveConversation(nextConversation)
+    setConversations((current) => [saved, ...current.filter((item) => item.id !== saved.id)])
   }
 
   async function unbindConversationWorkspace() {
@@ -2802,6 +2832,7 @@ export default function App() {
             {currentWorkspace && (
               <WorkspaceBar
                 workspace={currentWorkspace}
+                onApprovalModeChange={(mode) => void changeConversationWorkspaceApproval(mode)}
                 onUnbind={() => void unbindConversationWorkspace()}
               />
             )}
@@ -3003,6 +3034,22 @@ export default function App() {
           onClose={() => setAssistantCenterOpen(false)}
           onSave={saveAssistant}
           onSuggest={suggestAssistant}
+        />
+      )}
+      {pendingWorkspaceRoot && (
+        <WorkspaceApprovalDialog
+          rootPath={pendingWorkspaceRoot}
+          onCancel={() => setPendingWorkspaceRoot(null)}
+          onSelect={(mode) => void confirmConversationWorkspace(mode)}
+        />
+      )}
+      {workspaceApprovalPrompt && (
+        <WorkspaceOperationApprovalDialog
+          prompt={workspaceApprovalPrompt}
+          onRespond={(approved) => {
+            window.gllm.respondWorkspaceApproval(workspaceApprovalPrompt.id, approved)
+            setWorkspaceApprovalPrompt(null)
+          }}
         />
       )}
       {assistantSettingsOpen && (

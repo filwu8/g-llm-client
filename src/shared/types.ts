@@ -373,6 +373,7 @@ export interface ConversationWorkspace {
   rootPath: string
   displayName: string
   permission: 'read' | 'read-write'
+  approvalMode?: 'ask' | 'auto' | 'full'
   grantedAt: number
   lastVerifiedAt: number
 }
@@ -383,6 +384,15 @@ export interface WorkspaceToolActivity {
   label: string
   status: 'running' | 'completed' | 'failed'
   detail?: string
+}
+
+export interface WorkspaceApprovalPrompt {
+  id: string
+  conversationId: string
+  purpose: string
+  workspaceName: string
+  canWrite: boolean
+  isScript: boolean
 }
 
 export interface WorkspaceAgentRequest {

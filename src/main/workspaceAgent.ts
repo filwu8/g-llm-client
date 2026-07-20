@@ -43,6 +43,26 @@ interface ToolCall {
   function: { name: string; arguments: string }
 }
 
+interface ModelMessage {
+  content?: string | null
+  tool_calls?: ToolCall[]
+}
+
+interface ModelResponse {
+  response: Response
+  message?: ModelMessage
+}
+
+export interface WorkspaceToolApprovalRequest {
+  tool: string
+  purpose: string
+  workspaceName: string
+  canWrite: boolean
+  isScript: boolean
+}
+
+type WorkspaceToolApprovalHandler = (request: WorkspaceToolApprovalRequest) => Promise<boolean>
+
 const workspaceRunLocks = new Map<string, string>()
 
 const toolDefinitions = [
@@ -79,6 +99,174 @@ interface ModelRetryInfo {
 function requestSignal(signal: AbortSignal | undefined, timeoutMs: number): AbortSignal {
   const timeoutSignal = AbortSignal.timeout(timeoutMs)
   return signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal
+}
+
+async function fetchModelResponse(
+  request: WorkspaceAgentRequest,
+  body: Record<string, unknown>,
+  signal?: AbortSignal
+): Promise<Response> {
+  const timeoutController = new AbortController()
+  const timeout = setTimeout(() => {
+    timeoutController.abort(new DOMException('Model response headers timed out', 'TimeoutError'))
+  }, 120_000)
+  const fetchSignal = signal
+    ? AbortSignal.any([signal, timeoutController.signal])
+    : timeoutController.signal
+
+  try {
+    return await fetch(providerUrl(request), {
+      method: 'POST',
+      headers: {
+        ...(request.provider.apiKey ? { Authorization: `Bearer ${request.provider.apiKey}` } : {}),
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(body),
+      signal: fetchSignal
+    })
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+function streamTimeoutError(): DOMException {
+  return new DOMException('Model stream was idle for 120 seconds', 'TimeoutError')
+}
+
+async function readStreamChunk(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  signal?: AbortSignal
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  signal?.throwIfAborted()
+  return await new Promise((resolvePromise, rejectPromise) => {
+    const timeout = setTimeout(() => {
+      void reader.cancel().catch(() => undefined)
+      rejectPromise(streamTimeoutError())
+    }, 120_000)
+    const handleAbort = () => {
+      clearTimeout(timeout)
+      void reader.cancel().catch(() => undefined)
+      rejectPromise(signal?.reason)
+    }
+    signal?.addEventListener('abort', handleAbort, { once: true })
+    void reader.read().then(resolvePromise, rejectPromise).finally(() => {
+      clearTimeout(timeout)
+      signal?.removeEventListener('abort', handleAbort)
+    })
+  })
+}
+
+function sseData(eventBlock: string): string[] {
+  const lines = eventBlock.split(/\r?\n/)
+  const values: string[] = []
+  let current: string[] = []
+  for (const line of lines) {
+    if (!line.startsWith('data:')) continue
+    current.push(line.slice(5).trimStart())
+  }
+  if (current.length > 0) values.push(current.join('\n'))
+  return values
+}
+
+async function readModelMessage(response: Response, signal?: AbortSignal): Promise<ModelMessage | undefined> {
+  const contentType = response.headers.get('content-type')?.toLocaleLowerCase() ?? ''
+  if (!contentType.includes('text/event-stream')) {
+    if (!response.body) throw new Error('模型服务未返回响应正文')
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let body = ''
+    while (true) {
+      const { done, value } = await readStreamChunk(reader, signal)
+      if (done) {
+        body += decoder.decode()
+        break
+      }
+      body += decoder.decode(value, { stream: true })
+    }
+    const payload = JSON.parse(body) as { choices?: Array<{ message?: ModelMessage }> }
+    return payload.choices?.[0]?.message
+  }
+  if (!response.body) throw new Error('模型服务未返回响应正文')
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  const toolCalls = new Map<number, ToolCall>()
+  let content = ''
+  let buffer = ''
+
+  const consume = (eventBlock: string): boolean => {
+    for (const data of sseData(eventBlock)) {
+      if (data.trim() === '[DONE]') return true
+      let payload: {
+        error?: { message?: unknown }
+        choices?: Array<{
+          delta?: {
+            content?: unknown
+            tool_calls?: Array<{
+              index?: number
+              id?: string
+              type?: string
+              function?: { name?: string; arguments?: string }
+            }>
+          }
+        }>
+      }
+      try {
+        payload = JSON.parse(data) as typeof payload
+      } catch {
+        continue
+      }
+      if (payload.error) throw new Error(String(payload.error.message ?? '模型流式响应失败'))
+      for (const choice of payload.choices ?? []) {
+        const delta = choice.delta
+        if (typeof delta?.content === 'string') content += delta.content
+        for (const part of delta?.tool_calls ?? []) {
+          const index = Number.isInteger(part.index) ? Number(part.index) : toolCalls.size
+          const existing = toolCalls.get(index) ?? {
+            id: part.id ?? `stream_tool_${randomUUID()}`,
+            type: 'function' as const,
+            function: { name: '', arguments: '' }
+          }
+          if (part.id) existing.id = part.id
+          if (part.function?.name) existing.function.name += part.function.name
+          if (part.function?.arguments) existing.function.arguments += part.function.arguments
+          toolCalls.set(index, existing)
+        }
+      }
+    }
+    return false
+  }
+
+  let finished = false
+  while (!finished) {
+    const { done, value } = await readStreamChunk(reader, signal)
+    if (done) {
+      buffer += decoder.decode()
+      break
+    }
+    buffer += decoder.decode(value, { stream: true })
+    let separator = buffer.match(/\r?\n\r?\n/)
+    while (separator?.index !== undefined) {
+      const eventBlock = buffer.slice(0, separator.index)
+      buffer = buffer.slice(separator.index + separator[0].length)
+      if (consume(eventBlock)) {
+        finished = true
+        break
+      }
+      separator = buffer.match(/\r?\n\r?\n/)
+    }
+  }
+  if (!finished && buffer.trim()) consume(buffer)
+
+  const calls = Array.from(toolCalls.entries())
+    .sort(([left], [right]) => left - right)
+    .map(([, call]) => call)
+    .filter((call) => call.function.name)
+  if (!content && calls.length === 0) return undefined
+  return {
+    content: content || null,
+    tool_calls: calls.length > 0 ? calls : undefined
+  }
 }
 
 function wait(milliseconds: number, signal?: AbortSignal): Promise<void> {
@@ -135,20 +323,13 @@ async function fetchModelWithRetry(
   onRetry: (info: ModelRetryInfo) => void,
   maxAttempts = 3,
   signal?: AbortSignal
-): Promise<Response> {
+): Promise<ModelResponse> {
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     signal?.throwIfAborted()
     try {
-      const response = await fetch(providerUrl(request), {
-        method: 'POST',
-        headers: {
-          ...(request.provider.apiKey ? { Authorization: `Bearer ${request.provider.apiKey}` } : {}),
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(body),
-        signal: requestSignal(signal, 120_000)
-      })
-      if (response.ok || !retryableModelStatuses.has(response.status) || attempt === maxAttempts) return response
+      const response = await fetchModelResponse(request, body, signal)
+      if (response.ok) return { response, message: await readModelMessage(response, signal) }
+      if (!retryableModelStatuses.has(response.status) || attempt === maxAttempts) return { response }
 
       onRetry({
         attempt,
@@ -364,7 +545,30 @@ function workspaceRunnerPath(): string {
     : join(app.getAppPath(), 'resources', 'workspace-script-runner.cjs')
 }
 
-async function runWorkspaceJavascript(root: string, code: string, purpose: string): Promise<{ output: string; changedFiles: string[] }> {
+function friendlyScriptError(raw: string, language: WorkspaceAgentRequest['settings']['language']): string {
+  const isEnglish = mainT('main.locale', language) === 'en-US'
+  const missingCell = raw.match(/Error:\s*cell\s+([A-Z]+\d+)\s+not found/i)?.[1]
+  if (missingCell) {
+    return isEnglish
+      ? `The script tried to update Excel cell ${missingCell}, but that cell was not found in the workbook XML. The script needs to inspect the sheet structure before editing it.`
+      : `脚本准备修改 Excel 单元格 ${missingCell}，但在工作簿内部结构中没有找到该单元格。模板可能采用了不同的存储方式，需要先检查工作表结构再修改。`
+  }
+  const missingGlobal = raw.match(/ReferenceError:\s*([A-Za-z_$][\w$]*)\s+is not defined/i)?.[1]
+  if (missingGlobal) {
+    return isEnglish
+      ? `The script requested “${missingGlobal}”, but that capability is not available in the isolated environment. This is a compatibility issue, not a file permission problem.`
+      : `脚本使用了隔离环境尚未提供的“${missingGlobal}”功能。这属于脚本兼容性问题，不是文件权限不足。`
+  }
+  const firstLine = raw.split(/\r?\n/).find((line) => line.trim())?.replace(/^Error:\s*/i, '').trim()
+  return firstLine || (isEnglish ? 'The temporary script failed' : '临时脚本运行失败')
+}
+
+async function runWorkspaceJavascript(
+  root: string,
+  code: string,
+  purpose: string,
+  language: WorkspaceAgentRequest['settings']['language']
+): Promise<{ output: string; changedFiles: string[] }> {
   if (!code.trim()) throw new Error('脚本代码不能为空')
   if (Buffer.byteLength(code) > 120_000) throw new Error('单次脚本不能超过 120 KB')
   if (/pdf|压缩|文件大小|字节|byte|resize/i.test(purpose) && /writeBase64\s*\(/i.test(code)) {
@@ -415,7 +619,7 @@ async function runWorkspaceJavascript(root: string, code: string, purpose: strin
     })
     child.once('exit', (exitCode) => {
       clearTimeout(timeout)
-      if (exitCode !== 0) reject(new Error(`脚本运行失败：${stderr.trim().slice(-4000) || `退出码 ${exitCode}`}`))
+      if (exitCode !== 0) reject(new Error(friendlyScriptError(stderr.trim().slice(-4000) || `Exit code ${exitCode}`, language)))
       else resolvePromise({ stdout, stderr })
     })
   })
@@ -572,7 +776,7 @@ async function executeTool(
   }
   if (name === 'run_javascript') {
     requireWrite()
-    return runWorkspaceJavascript(root, String(args.code ?? ''), String(args.purpose ?? ''))
+    return runWorkspaceJavascript(root, String(args.code ?? ''), String(args.purpose ?? ''), request.settings.language)
   }
   if (name === 'generate_image') {
     requireWrite()
@@ -682,6 +886,7 @@ function fallbackMessages(messages: AgentMessage[]): Array<{ role: 'system' | 'u
 async function runWorkspaceAgentUnlocked(
   request: WorkspaceAgentRequest,
   onProgress?: (progress: WorkspaceAgentProgress) => void,
+  onToolApproval?: WorkspaceToolApprovalHandler,
   signal?: AbortSignal
 ): Promise<WorkspaceAgentResult> {
   signal?.throwIfAborted()
@@ -768,7 +973,7 @@ async function runWorkspaceAgentUnlocked(
   for (let turn = 0; turn < 14; turn += 1) {
     signal?.throwIfAborted()
     let retryActivity: WorkspaceToolActivity | null = null
-    const requestModel = async (body: Record<string, unknown>, maxAttempts = 3): Promise<Response> => {
+    const requestModel = async (body: Record<string, unknown>, maxAttempts = 3): Promise<ModelResponse> => {
       try {
         const handleRetry = (info: ModelRetryInfo) => {
           retryActivity ??= {
@@ -784,23 +989,23 @@ async function runWorkspaceAgentUnlocked(
           })
           onProgress?.({ conversationId: request.conversationId, activity: { ...retryActivity } })
         }
-        let response = await fetchModelWithRetry(request, body, handleRetry, maxAttempts, signal)
-        if (!response.ok && reasoningEffortSupported && 'reasoning_effort' in body && [400, 422].includes(response.status)) {
-          await response.arrayBuffer().catch(() => undefined)
+        let result = await fetchModelWithRetry(request, body, handleRetry, maxAttempts, signal)
+        if (!result.response.ok && reasoningEffortSupported && 'reasoning_effort' in body && [400, 422].includes(result.response.status)) {
+          await result.response.arrayBuffer().catch(() => undefined)
           reasoningEffortSupported = false
           const compatibleBody = { ...body }
           delete compatibleBody.reasoning_effort
-          response = await fetchModelWithRetry(request, compatibleBody, handleRetry, maxAttempts, signal)
+          result = await fetchModelWithRetry(request, compatibleBody, handleRetry, maxAttempts, signal)
         }
         if (retryActivity) {
-          retryActivity.status = response.ok ? 'completed' : 'failed'
-          retryActivity.detail = response.ok
+          retryActivity.status = result.response.ok ? 'completed' : 'failed'
+          retryActivity.detail = result.response.ok
             ? mainT('main.workspace.retryRecovered', language, { detail: retryActivity.detail ?? mainT('main.workspace.retryModel', language) })
-            : mainT('main.workspace.retryExhausted', language, { status: friendlyModelStatus(response.status, request) })
+            : mainT('main.workspace.retryExhausted', language, { status: friendlyModelStatus(result.response.status, request) })
           activities.push(retryActivity)
           onProgress?.({ conversationId: request.conversationId, activity: { ...retryActivity } })
         }
-        return response
+        return result
       } catch (error) {
         if (retryActivity) {
           retryActivity.status = 'failed'
@@ -814,33 +1019,32 @@ async function runWorkspaceAgentUnlocked(
       }
     }
     const isArtifactSummaryRequest = changedFiles.size > 0 && !needsVerification
-    let message: { content?: string | null; tool_calls?: ToolCall[] }
+    let message: ModelMessage
     try {
-      let response = await requestModel({
+      let result = await requestModel({
         model: request.provider.defaultModel,
         messages: nativeToolMode ? messages : fallbackMessages(messages),
         ...(nativeToolMode ? { tools: toolDefinitions, tool_choice: 'auto' } : {}),
         ...(reasoningEffortSupported && configuredReasoningEffort ? { reasoning_effort: configuredReasoningEffort } : {}),
-        stream: false,
+        stream: true,
         temperature: request.settings.enableTemperature ? Math.min(request.settings.temperature, 0.4) : 0.2,
         max_tokens: request.settings.enableMaxTokens ? request.settings.maxTokens : 4096
       }, isArtifactSummaryRequest ? 1 : 3)
-      if (!response.ok && nativeToolMode && [400, 404, 422].includes(response.status)) {
+      if (!result.response.ok && nativeToolMode && [400, 404, 422].includes(result.response.status)) {
         nativeToolMode = false
-        await response.arrayBuffer().catch(() => undefined)
+        await result.response.arrayBuffer().catch(() => undefined)
         retryActivity = null
-        response = await requestModel({
+        result = await requestModel({
           model: request.provider.defaultModel,
           messages: fallbackMessages(messages),
           ...(reasoningEffortSupported && configuredReasoningEffort ? { reasoning_effort: configuredReasoningEffort } : {}),
-          stream: false,
+          stream: true,
           temperature: 0.1,
           max_tokens: request.settings.enableMaxTokens ? request.settings.maxTokens : 4096
         }, isArtifactSummaryRequest ? 1 : 3)
       }
-      if (!response.ok) throw new Error(mainT('main.workspace.modelStageFailed', language, { error: await safeResponseError(response, request) }))
-      const payload = await response.json() as { choices?: Array<{ message?: { content?: string | null; tool_calls?: ToolCall[] } }> }
-      const responseMessage = payload.choices?.[0]?.message
+      if (!result.response.ok) throw new Error(mainT('main.workspace.modelStageFailed', language, { error: await safeResponseError(result.response, request) }))
+      const responseMessage = result.message
       if (!responseMessage) throw new Error(mainT('main.workspace.noModelResponse', language))
       message = responseMessage
     } catch (error) {
@@ -882,6 +1086,37 @@ async function runWorkspaceAgentUnlocked(
       onProgress?.({ conversationId: request.conversationId, activity: { ...activity } })
       try {
         const args = JSON.parse(call.function.arguments || '{}') as Record<string, unknown>
+        const isScript = call.function.name === 'run_javascript'
+        const writeTools = new Set(['create_docx', 'write_file', 'replace_text', 'create_directory', 'move_file', 'compress_image', 'compress_pdf', 'generate_image'])
+        const canWrite = request.workspace.permission === 'read-write' && (
+          writeTools.has(call.function.name) ||
+          (isScript && /workspace\.(?:writeText|writeBase64|mkdir|copy|move)\s*\(/.test(String(args.code ?? '')))
+        )
+        const approvalMode = request.workspace.approvalMode ?? 'ask'
+        const needsApproval = approvalMode === 'ask'
+          ? isScript || canWrite
+          : approvalMode === 'auto'
+            ? isScript && canWrite
+            : false
+        if (needsApproval && onToolApproval) {
+          const target = String(args.path ?? args.output ?? args.to ?? '').trim()
+          const purpose = isScript
+            ? String(args.purpose ?? '').trim() || (isEnglish ? 'Process files in the workspace' : '处理工作区中的文件')
+            : `${activity.label}${target ? (isEnglish ? `: ${target}` : `：${target}`) : ''}`
+          activity.detail = isEnglish ? 'Waiting for your approval' : '等待你确认是否允许运行'
+          onProgress?.({ conversationId: request.conversationId, activity: { ...activity } })
+          const approved = await onToolApproval({
+            tool: 'run_javascript',
+            purpose,
+            workspaceName: request.workspace.displayName,
+            canWrite,
+            isScript
+          })
+          signal?.throwIfAborted()
+          if (!approved) throw new Error(isEnglish ? 'You did not approve this script' : '用户未批准运行此脚本')
+          activity.detail = isEnglish ? 'Approved; running in the isolated workspace' : '已获批准，正在隔离环境中运行'
+          onProgress?.({ conversationId: request.conversationId, activity: { ...activity } })
+        }
         const result = await executeTool(request, root, request.workspace.permission, call.function.name, args, signal)
         if (result.changedFile) {
           changedFiles.add(result.changedFile)
@@ -915,6 +1150,7 @@ async function runWorkspaceAgentUnlocked(
 export async function runWorkspaceAgent(
   request: WorkspaceAgentRequest,
   onProgress?: (progress: WorkspaceAgentProgress) => void,
+  onToolApproval?: WorkspaceToolApprovalHandler,
   signal?: AbortSignal
 ): Promise<WorkspaceAgentResult> {
   signal?.throwIfAborted()
@@ -929,7 +1165,7 @@ export async function runWorkspaceAgent(
   }
   workspaceRunLocks.set(lockKey, request.conversationId)
   try {
-    return await runWorkspaceAgentUnlocked(request, onProgress, signal)
+    return await runWorkspaceAgentUnlocked(request, onProgress, onToolApproval, signal)
   } finally {
     if (workspaceRunLocks.get(lockKey) === request.conversationId) workspaceRunLocks.delete(lockKey)
   }

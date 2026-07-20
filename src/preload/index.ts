@@ -41,7 +41,8 @@ import type {
   ToolConfig,
   WorkspaceAgentProgress,
   WorkspaceAgentRequest,
-  WorkspaceAgentResult
+  WorkspaceAgentResult,
+  WorkspaceApprovalPrompt
 } from '../shared/types'
 
 const api = {
@@ -67,6 +68,8 @@ const api = {
     ipcRenderer.invoke('workspace-agent:run', request),
   revealWorkspaceFile: (rootPath: string, relativePath: string): Promise<void> =>
     ipcRenderer.invoke('workspace:reveal-file', rootPath, relativePath),
+  respondWorkspaceApproval: (id: string, approved: boolean): void =>
+    ipcRenderer.send('workspace-agent:approval-response', id, approved),
   deleteProject: (id: string): Promise<AppStateSnapshot> => ipcRenderer.invoke('project:delete', id),
   saveAssistant: (assistant: Assistant): Promise<Assistant> => ipcRenderer.invoke('assistant:save', assistant),
   reorderAssistants: (ids: string[]): Promise<Assistant[]> => ipcRenderer.invoke('assistant:reorder', ids),
@@ -156,6 +159,11 @@ const api = {
     const handler = (_event: Electron.IpcRendererEvent, progress: WorkspaceAgentProgress) => listener(progress)
     ipcRenderer.on('workspace-agent:progress', handler)
     return () => ipcRenderer.removeListener('workspace-agent:progress', handler)
+  },
+  onWorkspaceApprovalRequested: (listener: (prompt: WorkspaceApprovalPrompt) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, prompt: WorkspaceApprovalPrompt) => listener(prompt)
+    ipcRenderer.on('workspace-agent:approval-requested', handler)
+    return () => ipcRenderer.removeListener('workspace-agent:approval-requested', handler)
   },
   onConversationChanged: (listener: (event: ConversationChangeEvent) => void): (() => void) => {
     const handler = (_event: Electron.IpcRendererEvent, change: ConversationChangeEvent) => listener(change)

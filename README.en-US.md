@@ -2,11 +2,11 @@
 
 [简体中文](./README.md) | [English](./README.en-US.md)
 
-Current code version: [V1.2.1](https://github.com/filwu8/g-llm-client/tree/main)
+Current code version: [V1.2.2](https://github.com/filwu8/g-llm-client/tree/main)
 
-Latest stable release: [V1.2.1](https://github.com/filwu8/g-llm-client/releases/tag/v1.2.1), released on 2026-07-16.
+Latest stable release: [V1.2.2](https://github.com/filwu8/g-llm-client/releases/tag/v1.2.2), released on 2026-07-20.
 
-> Starting with V1.1.0, the source is licensed under BUSL-1.1 for free personal and internal business use; the current V1.2.1 release will automatically change to AGPL-3.0-only on 2030-07-14. V1.0.10 and earlier remain under the AGPL-3.0-only license included in their release tags.
+> Starting with V1.1.0, the source is licensed under BUSL-1.1 for free personal and internal business use; the current V1.2.2 release will automatically change to AGPL-3.0-only on 2030-07-14. V1.0.10 and earlier remain under the AGPL-3.0-only license included in their release tags.
 
 [Download](https://llm.gprophet.com/download) | [Full changelog](https://llm.gprophet.com/download/changelog) | [GitHub Releases](https://github.com/filwu8/g-llm-client/releases)
 
@@ -24,17 +24,13 @@ Local file tools can generate, modify, and compress files in a conversation. Lig
 | --- | --- |
 | ![PDF compression task in the dark theme](./docs/images/gllm-dark-file-tools.png) | ![PDF compression task in the light theme](./docs/images/gllm-light-file-tools.png) |
 
-## V1.2.1 Highlights
+## V1.2.2 Workspace Agent Reliability and Approval Experience
 
-- Complete Chinese and English UI: the main window, Quick Chat, tray/menu bar, settings, file tasks, native file dialogs, and errors can follow the system language or a manual selection.
-- Consistent themes and windows: the default theme follows the system light/dark mode and can be overridden manually. The Windows title bar follows the app theme, with a dedicated black-and-gold treatment for Gold mode.
-- Polished dialogs: modal backdrops use a frosted-glass blur with fade, scale, lift, or slide transitions, and the custom title bar stays behind open dialogs.
-- More flexible assistant management: assistants can be reordered by dragging and pinned from the context menu, with per-space persistence. Built-in and custom assistants also share the same hide and delete behavior.
-- Recoverable hidden assistants: a dedicated manager restores or permanently deletes hidden assistants, which are excluded from assistant and conversation-history search while hidden.
-- Stronger web retrieval: Bing Search RSS and Google News RSS are combined, while improved entity and topic extraction handles long Chinese prompts without incorrectly reporting zero sources.
-- Unified time and usage details: both the main window and Quick Chat show the full date, time zone, and total/input/output token counts. The time zone can follow the device or be selected manually from the IANA list.
-- Consistent desktop entry points: a single click on the Windows tray icon, macOS menu-bar icon, or desktop pet opens Quick Chat, while the context menu retains Open Main Window and other actions.
-- Safer localization releases: automated translation completeness checks keep Chinese and English menus, buttons, and messages aligned as features evolve.
+- Streaming workspace requests: model content and tool calls arrive continuously, while the 120-second limit now applies only when no new data arrives, preventing complex file tasks from being mistaken for timeouts at the final step.
+- Full workspace support in Quick Chat: choose and display a folder, invoke workspace tools, review progress and results, and keep conversation state synchronized with the main window.
+- Three approval modes: switch between Ask, Auto Approve, and Full Access at any time above the chat. In-app approval dialogs follow the current theme and explain the operation purpose and permission boundary.
+- More capable script sandbox: safe Base64, Blob, and compression-stream APIs support more document and spreadsheet tasks while network access, system commands, and access outside the workspace remain blocked.
+- Clearer failures: missing runtime capabilities and workbook structure mismatches are translated into user-friendly explanations that distinguish environment limits, changed files, and script errors.
 
 ## Features
 
@@ -135,11 +131,11 @@ Before shipping, use [docs/release-qa-checklist.md](./docs/release-qa-checklist.
 
 ## License
 
-G-LLM Desktop Client is published by GPROPHET LIMITED. The current V1.2.1 development version is licensed under the [Business Source License 1.1](./LICENSE) with an Additional Use Grant.
+G-LLM Desktop Client is published by GPROPHET LIMITED. The current V1.2.2 development version is licensed under the [Business Source License 1.1](./LICENSE) with an Additional Use Grant.
 
 Personal use, research, evaluation, and internal business operations are free. Without a written commercial license from GPROPHET LIMITED, you may not white-label or OEM the client, resell or rent it, release or distribute it as a competing product, or provide it to third parties as a hosted, managed, outsourcing, service-bureau, or application service.
 
-V1.2.1 automatically changes to AGPL-3.0-only on 2030-07-14. V1.0.10 and earlier are unaffected and remain under the license included in each release tag.
+V1.2.2 automatically changes to AGPL-3.0-only on 2030-07-14. V1.0.10 and earlier are unaffected and remain under the license included in each release tag.
 
 See [LICENSE](./LICENSE) and [LICENSE_POLICY.md](./LICENSE_POLICY.md) for the controlling scope, [COMMERCIAL_LICENSE.md](./COMMERCIAL_LICENSE.md) for commercial licensing, and [CONTRIBUTING.md](./CONTRIBUTING.md) before contributing code.
 

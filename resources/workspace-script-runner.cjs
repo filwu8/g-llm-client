@@ -118,6 +118,11 @@ async function main() {
   const sandbox = vm.createContext({
     workspace,
     console: Object.freeze({ log, info: log, warn: log, error: log }),
+    atob: (value) => Buffer.from(String(value), 'base64').toString('binary'),
+    btoa: (value) => Buffer.from(String(value), 'binary').toString('base64'),
+    Blob,
+    CompressionStream,
+    DecompressionStream,
     JSON,
     Math,
     Date,
